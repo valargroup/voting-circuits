@@ -22,5 +22,4 @@ pub mod delegation;
 
 pub mod vote_proof;
 
-#[cfg(feature = "share-reveal")]
 pub mod share_reveal;

@@ -24,7 +24,6 @@ rand = "0.8"
 [features]
 default = ["std"]
 std = []
-share-reveal = []
 
 [lib]
 bench = false

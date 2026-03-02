@@ -74,11 +74,11 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 ### Circuit details
 
-| Circuit | K | Rows | Conditions | Spec | Feature gate |
+| Circuit | K | Rows | Conditions | Spec | Build status |
 |---------|---|------|------------|------|--------------|
 | Delegation | 14 | 16 384 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) | *(always built)* |
 | Vote Proof | 14 | 16 384 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) | *(always built)* |
-| Share Reveal | 11 | 2 048 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) | `share-reveal` |
+| Share Reveal | 11 | 2 048 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) | *(always built)* |
 
 ## Companion crate
 
@@ -87,19 +87,16 @@ The `orchard/` directory at the workspace root is a local fork of the Zcash Orch
 ## Building
 
 ```bash
-cargo build                         # default (std, no share-reveal)
-cargo build --features share-reveal # include share-reveal circuit
+cargo build
 ```
 
 ## Testing
 
 ```bash
 cargo test
-cargo test --features share-reveal
 
 # Row-budget smoke tests (ignored by default, prints utilization)
 cargo test row_budget -- --nocapture --ignored
-cargo test --features share-reveal row_budget -- --nocapture --ignored
 ```
 
 ## Benchmarks
@@ -113,7 +110,6 @@ cargo bench   # runs delegation proving benchmarks via Criterion
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `std` | yes | Enables `std` support |
-| `share-reveal` | no | Compiles the Share Reveal (ZKP 3) circuit |
 
 ## Key dependencies
 

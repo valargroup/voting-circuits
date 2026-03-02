@@ -83,7 +83,7 @@ use crate::shares_hash::{
 /// different columns.
 ///
 /// Run the `row_budget` test to re-measure after circuit changes:
-///   `cargo test --features share-reveal row_budget -- --nocapture --ignored`
+///   `cargo test row_budget -- --nocapture --ignored`
 pub const K: u32 = 11;
 
 // ================================================================
@@ -1095,7 +1095,7 @@ mod tests {
     /// number rather than the theoretical 2^K capacity.
     ///
     /// Run with:
-    ///   cargo test --features share-reveal row_budget -- --nocapture --ignored
+    ///   cargo test row_budget -- --nocapture --ignored
     #[test]
     #[ignore]
     fn row_budget() {
