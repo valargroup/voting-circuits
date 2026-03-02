@@ -74,11 +74,11 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 ### Circuit details
 
-| Circuit | K | Rows | Conditions | Spec | Build status |
-|---------|---|------|------------|------|--------------|
-| Delegation | 14 | 16 384 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) | *(always built)* |
-| Vote Proof | 14 | 16 384 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) | *(always built)* |
-| Share Reveal | 11 | 2 048 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) | *(always built)* |
+| Circuit | K | Rows | Conditions | Spec |
+|---------|---|------|------------|------|
+| Delegation | 14 | 16 384 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) |
+| Vote Proof | 14 | 16 384 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
+| Share Reveal | 11 | 2 048 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
 
 ## Companion crate
 
