@@ -33,6 +33,6 @@ pub use builder::{
     EncryptedShareOutput, VoteProofBuildError, VoteProofBundle,
 };
 pub use prove::{
-    create_vote_proof, verify_vote_proof, verify_vote_proof_raw, vote_proof_params,
+    create_vote_proof, verify_vote_proof, vote_proof_params,
     vote_proof_proving_key,
 };

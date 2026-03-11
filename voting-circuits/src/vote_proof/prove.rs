@@ -13,13 +13,9 @@ use halo2_proofs::{
     poly::commitment::Params,
     transcript::{Blake2bRead, Blake2bWrite, Challenge255},
 };
-use pasta_curves::{pallas, vesta};
 use rand::rngs::OsRng;
 
 use super::circuit::{Circuit, Instance, K};
-
-/// Number of public inputs for the vote proof circuit.
-const NUM_PUBLIC_INPUTS: usize = 9;
 
 // ================================================================
 // Cached params + keys
@@ -35,12 +31,15 @@ static VOTE_PROOF_PK_CACHE: std::sync::OnceLock<(
 )> = std::sync::OnceLock::new();
 
 #[cfg(feature = "std")]
-fn get_vote_proof_keys() -> &'static (Params<EqAffine>, plonk::ProvingKey<EqAffine>, plonk::VerifyingKey<EqAffine>) {
+fn get_vote_proof_keys() -> &'static (
+    Params<EqAffine>,
+    plonk::ProvingKey<EqAffine>,
+    plonk::VerifyingKey<EqAffine>,
+) {
     VOTE_PROOF_PK_CACHE.get_or_init(|| {
         let params = Params::new(K);
         let empty_circuit = Circuit::default();
-        let vk = keygen_vk(&params, &empty_circuit)
-            .expect("vote_proof keygen_vk should not fail");
+        let vk = keygen_vk(&params, &empty_circuit).expect("vote_proof keygen_vk should not fail");
         let pk = keygen_pk(&params, vk.clone(), &empty_circuit)
             .expect("vote_proof keygen_pk should not fail");
         (params, pk, vk)
@@ -69,10 +68,7 @@ pub fn vote_proof_params() -> Params<EqAffine> {
 /// it caches the result across calls.
 pub fn vote_proof_proving_key(
     params: &Params<EqAffine>,
-) -> (
-    plonk::ProvingKey<EqAffine>,
-    plonk::VerifyingKey<EqAffine>,
-) {
+) -> (plonk::ProvingKey<EqAffine>, plonk::VerifyingKey<EqAffine>) {
     let empty_circuit = Circuit::default();
     let vk = keygen_vk(params, &empty_circuit).expect("vote_proof keygen_vk should not fail");
     let pk = keygen_pk(params, vk.clone(), &empty_circuit)
@@ -88,7 +84,7 @@ pub fn vote_proof_proving_key(
 ///
 /// Returns the serialized proof bytes. The caller must have constructed
 /// a valid `Circuit` (with all witnesses populated) and a matching
-/// `Instance` (9 public inputs).
+/// `Instance` (11 public inputs).
 ///
 /// **Expensive**: K=14 proof generation takes ~30-60 seconds in release mode.
 /// Params and keys are cached (with `std`) so only the first call pays keygen.
@@ -125,13 +121,10 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
 // ================================================================
 
 /// Verify a vote proof circuit proof given serialized proof bytes and
-/// the 9 public inputs.
+/// the 11 public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
-pub fn verify_vote_proof(
-    proof: &[u8],
-    instance: &Instance,
-) -> Result<(), String> {
+pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
     #[cfg(feature = "std")]
     let (params, _pk, vk) = get_vote_proof_keys();
 
@@ -151,70 +144,4 @@ pub fn verify_vote_proof(
 
     verify_proof(params, vk, strategy, &[&[&public_inputs]], &mut transcript)
         .map_err(|e| format!("vote proof verification failed: {:?}", e))
-}
-
-/// Verify a vote proof circuit proof from raw field-element bytes.
-///
-/// This is the lower-level entry point used by the FFI layer. It takes
-/// the proof bytes and a flat array of 9 × 32-byte LE-encoded Pallas
-/// base field elements (the public inputs in canonical order).
-///
-/// Returns `Ok(())` if verification succeeds, or an error message.
-pub fn verify_vote_proof_raw(
-    proof: &[u8],
-    public_inputs_bytes: &[u8],
-) -> Result<(), String> {
-    use pasta_curves::group::ff::PrimeField;
-
-    let expected_len = NUM_PUBLIC_INPUTS * 32;
-    if public_inputs_bytes.len() != expected_len {
-        return Err(format!(
-            "expected {} bytes ({} × 32) for public inputs, got {}",
-            expected_len, NUM_PUBLIC_INPUTS, public_inputs_bytes.len()
-        ));
-    }
-
-    // Deserialize each 32-byte chunk as a Pallas Fp element.
-    // The vote proof circuit's public inputs live on the Vesta
-    // scalar field, which is the same as the Pallas base field.
-    let mut public_inputs: Vec<vesta::Scalar> = Vec::with_capacity(NUM_PUBLIC_INPUTS);
-    for i in 0..NUM_PUBLIC_INPUTS {
-        let start = i * 32;
-        let mut repr = [0u8; 32];
-        repr.copy_from_slice(&public_inputs_bytes[start..start + 32]);
-        let fp_opt: Option<pallas::Base> = pallas::Base::from_repr(repr).into();
-        match fp_opt {
-            Some(f) => public_inputs.push(f),
-            None => {
-                return Err(format!(
-                    "public input {} is not a canonical Pallas Fp encoding",
-                    i
-                ))
-            }
-        }
-    }
-
-    #[cfg(feature = "std")]
-    let (params, _pk, vk) = get_vote_proof_keys();
-
-    #[cfg(not(feature = "std"))]
-    let (params_owned, _pk, vk) = {
-        let p = vote_proof_params();
-        let (pk, vk) = vote_proof_proving_key(&p);
-        (p, pk, vk)
-    };
-    #[cfg(not(feature = "std"))]
-    let params = &params_owned;
-
-    let strategy = SingleVerifier::new(params);
-    let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);
-
-    verify_proof(
-        params,
-        vk,
-        strategy,
-        &[&[&public_inputs]],
-        &mut transcript,
-    )
-    .map_err(|e| format!("vote proof verification failed: {:?}", e))
 }

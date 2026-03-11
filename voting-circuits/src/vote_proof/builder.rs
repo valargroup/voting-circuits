@@ -126,6 +126,8 @@ const VOTE_PRF_PERSONALIZATION: &[u8; 16] = b"ZcashVote_Expand";
 const DOMAIN_ELGAMAL: u8 = 0x00;
 /// Domain separator for share commitment blind factors.
 const DOMAIN_BLIND: u8 = 0x01;
+/// Domain separator for deterministic share split randomness.
+const DOMAIN_SPLIT: u8 = 0x02;
 
 /// Core PRF: BLAKE2b-512 keyed by the spending key with voting-specific
 /// personalization and domain-separated inputs.
@@ -330,13 +332,40 @@ pub fn build_vote_proof_from_delegation(
     );
 
     // ---- Shares (split num_ballots into 16 parts) ----
+    // Randomized decomposition via sorted cut points: generate 15 PRF-derived
+    // breakpoints in [0, num_ballots], sort, and take the gaps as share values.
+    // This produces a uniformly random partition that prevents the semi-trusted
+    // share submission server from learning the total ballot count from the
+    // distribution pattern. Deterministic via the existing Blake2b PRF keyed by
+    // (sk, round_id, proposal_id, van_commitment), enabling crash recovery.
     // Each share must be in [0, 2^30) for the range check.
     // Shares sum to num_ballots (ballot count), not raw zatoshi.
 
-    let sixteenth = num_ballots / 16;
-    let remainder = num_ballots - sixteenth * 15;
-    let mut shares_u64: [u64; 16] = [sixteenth; 16];
-    shares_u64[15] = remainder;
+    let shares_u64: [u64; 16] = {
+        let mut cuts = [0u64; 15];
+        if num_ballots > 0 {
+            for i in 0..15 {
+                let hash = vote_share_prf(
+                    sk,
+                    DOMAIN_SPLIT,
+                    voting_round_id,
+                    proposal_id,
+                    vote_authority_note_old,
+                    i as u8,
+                );
+                let rand = u64::from_le_bytes(hash[0..8].try_into().unwrap());
+                cuts[i] = rand % (num_ballots + 1);
+            }
+            cuts.sort_unstable();
+        }
+        let mut shares = [0u64; 16];
+        shares[0] = cuts[0];
+        for i in 1..15 {
+            shares[i] = cuts[i] - cuts[i - 1];
+        }
+        shares[15] = num_ballots - cuts[14];
+        shares
+    };
 
     // Verify all shares are in range
     for (i, &s) in shares_u64.iter().enumerate() {
