@@ -30,6 +30,52 @@ use super::{base_to_scalar, spend_auth_g_affine};
 /// Ballot divisor — must match `delegation::circuit::BALLOT_DIVISOR`.
 const BALLOT_DIVISOR: u64 = 12_500_000;
 
+/// Number of shares per vote.
+const NUM_SHARES: usize = 16;
+
+/// Standard denomination values for share decomposition (ballots, descending).
+///
+/// | Ballots    | ZEC         |
+/// |------------|-------------|
+/// | 10,000,000 | 1,250,000   |
+/// | 1,000,000  | 125,000     |
+/// | 100,000    | 12,500      |
+/// | 10,000     | 1,250       |
+/// | 1,000      | 125         |
+/// | 100        | 12.5        |
+const DENOMINATIONS: [u64; 6] = [10_000_000, 1_000_000, 100_000, 10_000, 1_000, 100];
+
+/// Maximum slots used for denomination shares; the final slot holds the remainder.
+const MAX_DENOM_SHARES: usize = NUM_SHARES - 1;
+
+/// Decompose `num_ballots` into [`NUM_SHARES`] shares using a greedy denomination strategy.
+///
+/// Fills up to [`MAX_DENOM_SHARES`] slots with the largest denominations that
+/// fit, then places any remainder in the final slot. Unused slots are zero.
+/// Every share value is drawn from [`DENOMINATIONS`] except the single
+/// remainder, maximizing the per-share anonymity set: many voters produce
+/// shares of the same denomination, so a decrypting EA cannot attribute
+/// individual shares to specific voters.
+pub fn denomination_split(num_ballots: u64) -> [u64; NUM_SHARES] {
+    let mut shares = [0u64; NUM_SHARES];
+    let mut remaining = num_ballots;
+    let mut idx = 0;
+
+    for &d in &DENOMINATIONS {
+        while remaining >= d && idx < MAX_DENOM_SHARES {
+            shares[idx] = d;
+            remaining -= d;
+            idx += 1;
+        }
+    }
+
+    if remaining > 0 {
+        shares[idx] = remaining;
+    }
+
+    shares
+}
+
 /// Encrypted share output from the vote proof builder.
 ///
 /// Contains the El Gamal ciphertext components (compressed point bytes),
@@ -329,14 +375,11 @@ pub fn build_vote_proof_from_delegation(
         van_comm_rand,
     );
 
-    // ---- Shares (split num_ballots into 16 parts) ----
+    // ---- Shares (denomination-based split of num_ballots into 16 parts) ----
     // Each share must be in [0, 2^30) for the range check.
     // Shares sum to num_ballots (ballot count), not raw zatoshi.
 
-    let sixteenth = num_ballots / 16;
-    let remainder = num_ballots - sixteenth * 15;
-    let mut shares_u64: [u64; 16] = [sixteenth; 16];
-    shares_u64[15] = remainder;
+    let shares_u64 = denomination_split(num_ballots);
 
     // Verify all shares are in range
     for (i, &s) in shares_u64.iter().enumerate() {
@@ -637,6 +680,174 @@ mod tests {
             let b_a = derive_share_blind(&sk, round_id, 1, van_a, i);
             let b_b = derive_share_blind(&sk, round_id, 1, van_b, i);
             assert_ne!(b_a, b_b, "blind_{} must differ across VANs", i);
+        }
+    }
+
+    // ---- denomination_split tests ----
+
+    #[test]
+    fn denom_split_exact_denomination_match() {
+        let shares = denomination_split(3_000_000);
+        assert_eq!(shares[0], 1_000_000);
+        assert_eq!(shares[1], 1_000_000);
+        assert_eq!(shares[2], 1_000_000);
+        for i in 3..16 {
+            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        }
+    }
+
+    #[test]
+    fn denom_split_mixed_denominations() {
+        // 1_234_500 = 1×1M + 2×100K + 3×10K + 4×1K + 5×100
+        let shares = denomination_split(1_234_500);
+        assert_eq!(shares[0], 1_000_000);
+        assert_eq!(shares[1], 100_000);
+        assert_eq!(shares[2], 100_000);
+        assert_eq!(shares[3], 10_000);
+        assert_eq!(shares[4], 10_000);
+        assert_eq!(shares[5], 10_000);
+        assert_eq!(shares[6], 1_000);
+        assert_eq!(shares[7], 1_000);
+        assert_eq!(shares[8], 1_000);
+        assert_eq!(shares[9], 1_000);
+        assert_eq!(shares[10], 100);
+        assert_eq!(shares[11], 100);
+        assert_eq!(shares[12], 100);
+        assert_eq!(shares[13], 100);
+        assert_eq!(shares[14], 100);
+        assert_eq!(shares[15], 0);
+        assert_eq!(shares.iter().sum::<u64>(), 1_234_500);
+    }
+
+    #[test]
+    fn denom_split_small_balance_below_all_denominations() {
+        let shares = denomination_split(50);
+        assert_eq!(shares[0], 50);
+        for i in 1..16 {
+            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        }
+    }
+
+    #[test]
+    fn denom_split_single_ballot() {
+        let shares = denomination_split(1);
+        assert_eq!(shares[0], 1);
+        for i in 1..16 {
+            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        }
+    }
+
+    #[test]
+    fn denom_split_zero_ballots() {
+        let shares = denomination_split(0);
+        for i in 0..16 {
+            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        }
+    }
+
+    #[test]
+    fn denom_split_fills_all_15_denomination_slots() {
+        // 150M = 15 × 10M; all 15 denomination slots used, remainder = 0
+        let shares = denomination_split(150_000_000);
+        for i in 0..15 {
+            assert_eq!(shares[i], 10_000_000, "slot {} should be 10M", i);
+        }
+        assert_eq!(shares[15], 0);
+    }
+
+    #[test]
+    fn denom_split_exceeds_15_slots() {
+        // 160M needs 16 × 10M; 15 fit as denominations, 10M spills to remainder
+        let shares = denomination_split(160_000_000);
+        for i in 0..15 {
+            assert_eq!(shares[i], 10_000_000, "slot {} should be 10M", i);
+        }
+        assert_eq!(shares[15], 10_000_000, "remainder slot should hold the overflow 10M");
+        assert_eq!(shares.iter().sum::<u64>(), 160_000_000);
+    }
+
+    #[test]
+    fn denom_split_10m_zec_whale() {
+        // 10M ZEC = 80M ballots = 8 × 10M denomination shares
+        let shares = denomination_split(80_000_000);
+        assert_eq!(shares[0..8], [10_000_000; 8]);
+        for i in 8..16 {
+            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        }
+        assert_eq!(shares.iter().sum::<u64>(), 80_000_000);
+    }
+
+    #[test]
+    fn denom_split_whale_with_remainder() {
+        // 8,234,567 = 8×1M + 2×100K + 3×10K + 2×1K + remainder 2,567
+        let shares = denomination_split(8_234_567);
+        assert_eq!(shares.iter().sum::<u64>(), 8_234_567);
+        assert_eq!(shares[0..8], [1_000_000; 8]);
+        assert_eq!(shares[8], 100_000);
+        assert_eq!(shares[9], 100_000);
+        assert_eq!(shares[10], 10_000);
+        assert_eq!(shares[11], 10_000);
+        assert_eq!(shares[12], 10_000);
+        assert_eq!(shares[13], 1_000);
+        assert_eq!(shares[14], 1_000);
+        assert_eq!(shares[15], 2_567);
+    }
+
+    #[test]
+    fn denom_split_sum_invariant() {
+        let test_values: [u64; 14] = [
+            0, 1, 50, 99, 100, 999, 1_000, 10_000, 100_000,
+            1_000_000, 8_234_567, 20_000_000, 80_000_000, 168_000_000,
+        ];
+        for &v in &test_values {
+            let shares = denomination_split(v);
+            assert_eq!(
+                shares.iter().sum::<u64>(),
+                v,
+                "sum invariant violated for num_ballots={}",
+                v
+            );
+        }
+    }
+
+    #[test]
+    fn denom_split_all_shares_in_range() {
+        let test_values: [u64; 8] = [
+            1, 10_000, 1_000_000, 8_234_567, 15_000_000, 20_000_000,
+            80_000_000, 168_000_000,
+        ];
+        for &v in &test_values {
+            let shares = denomination_split(v);
+            for (i, &s) in shares.iter().enumerate() {
+                assert!(
+                    s < (1u64 << 30),
+                    "share {} = {} exceeds 2^30 for num_ballots={}",
+                    i, s, v
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn denom_split_medium_holder() {
+        // 4,800 = 4×1000 + 8×100
+        let shares = denomination_split(4_800);
+        assert_eq!(shares[0..4], [1_000; 4]);
+        assert_eq!(shares[4..12], [100; 8]);
+        for i in 12..16 {
+            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        }
+        assert_eq!(shares.iter().sum::<u64>(), 4_800);
+    }
+
+    #[test]
+    fn denom_split_no_equal_shares_for_whale() {
+        let shares = denomination_split(8_000_000);
+        // With equal split this would be 16 × 500,000. With denomination split,
+        // all 8 shares should be 1,000,000 (a standard denomination).
+        assert_eq!(shares[0..8], [1_000_000; 8]);
+        for i in 8..16 {
+            assert_eq!(shares[i], 0, "slot {} should be 0", i);
         }
     }
 }
