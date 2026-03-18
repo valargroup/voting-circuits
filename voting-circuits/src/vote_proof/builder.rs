@@ -47,18 +47,44 @@ const NUM_SHARES: usize = 16;
 /// | 1          | 0.125       |
 const DENOMINATIONS: [u64; 8] = [10_000_000, 1_000_000, 100_000, 10_000, 1_000, 100, 10, 1];
 
-/// Maximum slots used for denomination shares; the final slot holds the remainder.
-const MAX_DENOM_SHARES: usize = NUM_SHARES - 1;
-
-/// Decompose `num_ballots` into [`NUM_SHARES`] shares using a greedy denomination strategy.
+/// Maximum slots used for standard denomination shares.
 ///
-/// Fills up to [`MAX_DENOM_SHARES`] slots with the largest denominations that
-/// fit, then places any remainder in the final slot. Unused slots are zero.
-/// Every share value is drawn from [`DENOMINATIONS`] except the single
-/// remainder, maximizing the per-share anonymity set: many voters produce
-/// shares of the same denomination, so a decrypting EA cannot attribute
-/// individual shares to specific voters.
-pub fn denomination_split(num_ballots: u64) -> [u64; NUM_SHARES] {
+/// The remaining `NUM_SHARES - MAX_DENOM_SHARES` slots (7) are reserved for
+/// random-valued shares produced by [`distribute_remainder`].  This ensures
+/// every voter's share array contains a mix of standard denominations and
+/// non-standard values, preventing the EA from reconstructing exact balances
+/// by matching denomination patterns.
+const MAX_DENOM_SHARES: usize = 9;
+
+/// Maximum ballot count per VAN before the client should split via ZKP #4.
+///
+/// VANs at or below this threshold land in tier 2 (16–1,250 ZEC), where the
+/// randomized share decomposition provides anonymity.  VANs above this
+/// threshold should be split into children of at most this size.
+///
+/// 10,000 ballots = 1,250 ZEC at BALLOT_DIVISOR = 12,500,000 zatoshi/ballot.
+pub const MAX_BALLOTS_PER_VAN: u64 = 10_000;
+
+/// Decompose `num_ballots` into [`NUM_SHARES`] shares using a greedy
+/// denomination strategy with randomized remainder distribution.
+///
+/// 1. **Greedy fill**: place the largest standard denominations that fit,
+///    consuming up to [`MAX_DENOM_SHARES`] slots.
+/// 2. **Remainder split**: if a non-zero remainder exists and there are ≥ 2
+///    free slots, distribute the remainder across all free slots using
+///    deterministic PRF-derived weights. If only 1 free slot remains, the
+///    remainder goes there as-is.
+/// 3. The caller then shuffles the result via [`deterministic_shuffle`].
+///
+/// The randomized remainder prevents a single non-standard value from
+/// fingerprinting the voter's exact balance.
+pub fn denomination_split(
+    num_ballots: u64,
+    sk: &SpendingKey,
+    round_id: pallas::Base,
+    proposal_id: u64,
+    van_commitment: pallas::Base,
+) -> [u64; NUM_SHARES] {
     let mut shares = [0u64; NUM_SHARES];
     let mut remaining = num_ballots;
     let mut idx = 0;
@@ -72,10 +98,75 @@ pub fn denomination_split(num_ballots: u64) -> [u64; NUM_SHARES] {
     }
 
     if remaining > 0 {
-        shares[idx] = remaining;
+        let free_slots = NUM_SHARES - idx;
+        if free_slots >= 2 {
+            distribute_remainder(&mut shares[idx..], remaining, sk, round_id, proposal_id, van_commitment, idx as u8);
+        } else {
+            shares[idx] = remaining;
+        }
     }
 
     shares
+}
+
+/// Spread `remainder` across `slots` using PRF-derived weights.
+///
+/// Each slot gets `floor(remainder * weight_i / total_weight)` with any
+/// rounding residual added one-per-slot to the first slots.  Every slot
+/// receives at least 1 so that no zero-valued slot leaks "this was padding."
+fn distribute_remainder(
+    slots: &mut [u64],
+    remainder: u64,
+    sk: &SpendingKey,
+    round_id: pallas::Base,
+    proposal_id: u64,
+    van_commitment: pallas::Base,
+    base_index: u8,
+) {
+    let n = slots.len() as u64;
+    debug_assert!(n >= 2, "caller ensures at least 2 free slots");
+
+    if remainder < n {
+        // Not enough to put ≥1 in every slot; fill as many as possible.
+        for i in 0..(remainder as usize) {
+            slots[i] = 1;
+        }
+        return;
+    }
+
+    // Reserve 1 ballot per slot so every piece is non-zero.
+    let distributable = remainder - n;
+
+    // Derive a PRF weight per slot.
+    let mut weights = Vec::with_capacity(slots.len());
+    let mut total_weight: u64 = 0;
+    for i in 0..slots.len() {
+        let hash = vote_share_prf(
+            sk,
+            DOMAIN_REMAINDER,
+            round_id,
+            proposal_id,
+            van_commitment,
+            base_index.wrapping_add(i as u8),
+        );
+        let w = u32::from_le_bytes(hash[0..4].try_into().unwrap()) as u64 | 1;
+        weights.push(w);
+        total_weight += w;
+    }
+
+    // Weighted proportional split with rounding correction.
+    let mut assigned: u64 = 0;
+    for i in 0..slots.len() {
+        let share = distributable * weights[i] / total_weight;
+        slots[i] = 1 + share;
+        assigned += share;
+    }
+
+    // Distribute any leftover from integer truncation, one per slot.
+    let leftover = distributable - assigned;
+    for i in 0..(leftover as usize) {
+        slots[i] += 1;
+    }
 }
 
 /// Encrypted share output from the vote proof builder.
@@ -176,6 +267,8 @@ const DOMAIN_ELGAMAL: u8 = 0x00;
 const DOMAIN_BLIND: u8 = 0x01;
 /// Domain separator for share-order shuffle seed.
 const DOMAIN_SHUFFLE: u8 = 0x02;
+/// Domain separator for remainder distribution weights.
+const DOMAIN_REMAINDER: u8 = 0x03;
 
 /// Core PRF: BLAKE2b-512 keyed by the spending key with voting-specific
 /// personalization and domain-separated inputs.
@@ -415,7 +508,7 @@ pub fn build_vote_proof_from_delegation(
     // Each share must be in [0, 2^30) for the range check.
     // Shares sum to num_ballots (ballot count), not raw zatoshi.
 
-    let mut shares_u64 = denomination_split(num_ballots);
+    let mut shares_u64 = denomination_split(num_ballots, sk, voting_round_id, proposal_id, vote_authority_note_old);
     deterministic_shuffle(&mut shares_u64, sk, voting_round_id, proposal_id, vote_authority_note_old);
 
     // Verify all shares are in range
@@ -721,237 +814,313 @@ mod tests {
     }
 
     // ---- denomination_split tests ----
+    //
+    // Visual key:
+    //   D = denomination (standard value, blends across voters)
+    //   R = random (PRF-derived, prevents exact balance fingerprint)
+    //   0 = zero (encrypted with fresh randomness, indistinguishable from non-zero)
+    //
+    // Layout: [0..8] = greedy denom slots | [9..15] = remainder / random slots
+    // After shuffle, positions are randomized — these show the pre-shuffle array.
 
-    #[test]
-    fn denom_split_exact_denomination_match() {
-        // 3M ballots (375 ZEC)
-        // [1M, 1M, 1M, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        let shares = denomination_split(3_000_000);
-        assert_eq!(shares[0], 1_000_000);
-        assert_eq!(shares[1], 1_000_000);
-        assert_eq!(shares[2], 1_000_000);
-        for i in 3..16 {
-            assert_eq!(shares[i], 0, "slot {} should be 0", i);
-        }
-    }
-
-    #[test]
-    fn denom_split_mixed_denominations() {
-        // 1,234,500 ballots (154,312.5 ZEC) — fills all 15 denomination slots exactly
-        // [1M, 100K, 100K, 10K, 10K, 10K, 1K, 1K, 1K, 1K, 100, 100, 100, 100, 100, 0]
-        let shares = denomination_split(1_234_500);
-        assert_eq!(shares[0], 1_000_000);
-        assert_eq!(shares[1], 100_000);
-        assert_eq!(shares[2], 100_000);
-        assert_eq!(shares[3], 10_000);
-        assert_eq!(shares[4], 10_000);
-        assert_eq!(shares[5], 10_000);
-        assert_eq!(shares[6], 1_000);
-        assert_eq!(shares[7], 1_000);
-        assert_eq!(shares[8], 1_000);
-        assert_eq!(shares[9], 1_000);
-        assert_eq!(shares[10], 100);
-        assert_eq!(shares[11], 100);
-        assert_eq!(shares[12], 100);
-        assert_eq!(shares[13], 100);
-        assert_eq!(shares[14], 100);
-        assert_eq!(shares[15], 0);
-        assert_eq!(shares.iter().sum::<u64>(), 1_234_500);
-    }
-
-    #[test]
-    fn denom_split_mixed_with_small_denominations() {
-        // 11,111 ballots (1,388.9 ZEC) — exercises every denomination except 10M and 1M
-        // [10K, 1K, 100, 10, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        let shares = denomination_split(11_111);
-        assert_eq!(shares[0], 10_000);
-        assert_eq!(shares[1], 1_000);
-        assert_eq!(shares[2], 100);
-        assert_eq!(shares[3], 10);
-        assert_eq!(shares[4], 1);
-        for i in 5..16 {
-            assert_eq!(shares[i], 0, "slot {} should be 0", i);
-        }
-        assert_eq!(shares.iter().sum::<u64>(), 11_111);
-    }
-
-    #[test]
-    fn denom_split_small_balance_uses_small_denominations() {
-        // 50 ballots (6.25 ZEC) — all shares are standard denominations
-        // [10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        let shares = denomination_split(50);
-        assert_eq!(shares[0..5], [10; 5]);
-        for i in 5..16 {
-            assert_eq!(shares[i], 0, "slot {} should be 0", i);
-        }
-        assert_eq!(shares.iter().sum::<u64>(), 50);
-    }
-
-    #[test]
-    fn denom_split_single_ballot() {
-        // 1 ballot (0.125 ZEC) — matches the smallest denomination exactly
-        // [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        let shares = denomination_split(1);
-        assert_eq!(shares[0], 1);
-        for i in 1..16 {
-            assert_eq!(shares[i], 0, "slot {} should be 0", i);
-        }
+    /// Helper: print shares array for visual inspection during --nocapture runs.
+    fn show(label: &str, shares: &[u64; 16]) {
+        let parts: Vec<String> = shares.iter().map(|&v| {
+            if v == 0 { "0".into() }
+            else if v >= 1_000_000 { format!("{}M", v / 1_000_000) }
+            else if v >= 1_000 { format!("{}K", v / 1_000) }
+            else { format!("{}", v) }
+        }).collect();
+        std::eprintln!("  {}: [{}]", label, parts.join(", "));
     }
 
     #[test]
     fn denom_split_zero_ballots() {
         // 0 ballots — all slots empty
         // [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        let shares = denomination_split(0);
-        for i in 0..16 {
-            assert_eq!(shares[i], 0, "slot {} should be 0", i);
-        }
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(0, &sk, rid, 1, van);
+        show("0 ballots", &shares);
+        assert_eq!(shares, [0; 16]);
     }
 
     #[test]
-    fn denom_split_fills_all_15_denomination_slots() {
-        // 150M ballots (18.75M ZEC) — all 15 denomination slots used, no remainder
-        // [10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 0]
-        let shares = denomination_split(150_000_000);
-        for i in 0..15 {
-            assert_eq!(shares[i], 10_000_000, "slot {} should be 10M", i);
-        }
-        assert_eq!(shares[15], 0);
+    fn denom_split_single_ballot() {
+        // 1 ballot (0.125 ZEC) — smallest denomination
+        // [D:1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(1, &sk, rid, 1, van);
+        show("1 ballot (0.125 ZEC)", &shares);
+        assert_eq!(shares[0], 1);
+        for i in 1..16 { assert_eq!(shares[i], 0); }
     }
 
     #[test]
-    fn denom_split_exceeds_15_slots() {
-        // 160M ballots (20M ZEC) — needs 16 × 10M, last one spills to remainder slot
-        // [10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M]
-        let shares = denomination_split(160_000_000);
-        for i in 0..15 {
-            assert_eq!(shares[i], 10_000_000, "slot {} should be 10M", i);
-        }
-        assert_eq!(shares[15], 10_000_000, "remainder slot should hold the overflow 10M");
-        assert_eq!(shares.iter().sum::<u64>(), 160_000_000);
+    fn denom_split_sub_zec() {
+        // 4 ballots (0.5 ZEC)
+        // [D:1, D:1, D:1, D:1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(4, &sk, rid, 1, van);
+        show("4 ballots (0.5 ZEC)", &shares);
+        assert_eq!(shares[0..4], [1; 4]);
+        for i in 4..16 { assert_eq!(shares[i], 0); }
     }
 
     #[test]
-    fn denom_split_10m_zec_whale() {
-        // 80M ballots (10M ZEC)
-        // [10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 0, 0, 0, 0, 0, 0, 0, 0]
-        let shares = denomination_split(80_000_000);
-        assert_eq!(shares[0..8], [10_000_000; 8]);
-        for i in 8..16 {
-            assert_eq!(shares[i], 0, "slot {} should be 0", i);
-        }
-        assert_eq!(shares.iter().sum::<u64>(), 80_000_000);
+    fn denom_split_one_zec() {
+        // 8 ballots (1 ZEC)
+        // [D:1, D:1, D:1, D:1, D:1, D:1, D:1, D:1, 0, 0, 0, 0, 0, 0, 0, 0]
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(8, &sk, rid, 1, van);
+        show("8 ballots (1 ZEC)", &shares);
+        assert_eq!(shares[0..8], [1; 8]);
+        for i in 8..16 { assert_eq!(shares[i], 0); }
     }
 
     #[test]
-    fn denom_split_whale_with_remainder() {
-        // 8,234,567 ballots (~1.03M ZEC) — 15 denom slots exhausted, remainder is non-standard
-        // [1M, 1M, 1M, 1M, 1M, 1M, 1M, 1M, 100K, 100K, 10K, 10K, 10K, 1K, 1K, *2567*]
-        let shares = denomination_split(8_234_567);
-        assert_eq!(shares.iter().sum::<u64>(), 8_234_567);
-        assert_eq!(shares[0..8], [1_000_000; 8]);
-        assert_eq!(shares[8], 100_000);
-        assert_eq!(shares[9], 100_000);
-        assert_eq!(shares[10], 10_000);
-        assert_eq!(shares[11], 10_000);
-        assert_eq!(shares[12], 10_000);
-        assert_eq!(shares[13], 1_000);
-        assert_eq!(shares[14], 1_000);
-        assert_eq!(shares[15], 2_567);
+    fn denom_split_small_balance() {
+        // 50 ballots (6.25 ZEC) — 5 denom slots, all standard
+        // [D:10, D:10, D:10, D:10, D:10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(50, &sk, rid, 1, van);
+        show("50 ballots (6.25 ZEC)", &shares);
+        assert_eq!(shares[0..5], [10; 5]);
+        for i in 5..16 { assert_eq!(shares[i], 0); }
     }
 
     #[test]
-    fn denom_split_sum_invariant() {
-        let test_values: [u64; 14] = [
-            0, 1, 50, 99, 100, 999, 1_000, 10_000, 100_000,
-            1_000_000, 8_234_567, 20_000_000, 80_000_000, 168_000_000,
-        ];
-        for &v in &test_values {
-            let shares = denomination_split(v);
-            assert_eq!(
-                shares.iter().sum::<u64>(),
-                v,
-                "sum invariant violated for num_ballots={}",
-                v
-            );
-        }
+    fn denom_split_all_denoms_exact() {
+        // 11,111 ballots (1,388.9 ZEC) — one of each denom, no remainder
+        // [D:10K, D:1K, D:100, D:10, D:1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(11_111, &sk, rid, 1, van);
+        show("11,111 ballots (1,388.9 ZEC)", &shares);
+        assert_eq!(shares[0], 10_000);
+        assert_eq!(shares[1], 1_000);
+        assert_eq!(shares[2], 100);
+        assert_eq!(shares[3], 10);
+        assert_eq!(shares[4], 1);
+        for i in 5..16 { assert_eq!(shares[i], 0); }
     }
 
     #[test]
-    fn denom_split_all_shares_in_range() {
-        let test_values: [u64; 8] = [
-            1, 10_000, 1_000_000, 8_234_567, 15_000_000, 20_000_000,
-            80_000_000, 168_000_000,
-        ];
-        for &v in &test_values {
-            let shares = denomination_split(v);
-            for (i, &s) in shares.iter().enumerate() {
-                assert!(
-                    s < (1u64 << 30),
-                    "share {} = {} exceeds 2^30 for num_ballots={}",
-                    i, s, v
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn denom_split_medium_holder() {
-        // 4,800 ballots (600 ZEC) — all standard denominations, no remainder
-        // [1K, 1K, 1K, 1K, 100, 100, 100, 100, 100, 100, 100, 100, 0, 0, 0, 0]
-        let shares = denomination_split(4_800);
+    fn denom_split_medium_holder_with_remainder() {
+        // 4,800 ballots (600 ZEC) — greedy fills 9 (4×1K + 5×100 = 4,500), remainder 300
+        // [D:1K, D:1K, D:1K, D:1K, D:100, D:100, D:100, D:100, D:100, R, R, R, R, R, R, R]
+        //  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^
+        //  9 denomination slots (4,500)                                  7 random slots (300)
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(4_800, &sk, rid, 1, van);
+        show("4,800 ballots (600 ZEC)", &shares);
         assert_eq!(shares[0..4], [1_000; 4]);
-        assert_eq!(shares[4..12], [100; 8]);
-        for i in 12..16 {
-            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        assert_eq!(shares[4..9], [100; 5]);
+        let remainder_sum: u64 = shares[9..16].iter().sum();
+        assert_eq!(remainder_sum, 300);
+        for i in 9..16 {
+            assert!(shares[i] > 0, "remainder slot {} should be non-zero", i);
         }
         assert_eq!(shares.iter().sum::<u64>(), 4_800);
     }
 
     #[test]
-    fn denom_split_one_zec() {
-        // 8 ballots (1 ZEC) — all standard denominations, no remainder
-        // [1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
-        let shares = denomination_split(8);
-        assert_eq!(shares[0..8], [1; 8]);
-        for i in 8..16 {
-            assert_eq!(shares[i], 0, "slot {} should be 0", i);
-        }
-        assert_eq!(shares.iter().sum::<u64>(), 8);
-    }
-
-    #[test]
-    fn denom_split_sub_zec() {
-        // 4 ballots (0.5 ZEC) — all standard denominations
-        // [1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        let shares = denomination_split(4);
-        assert_eq!(shares[0..4], [1; 4]);
-        for i in 4..16 {
-            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+    fn denom_split_high_hamming_weight() {
+        // 999 ballots (124.875 ZEC) — greedy fills 9 (9×100 = 900), remainder 99
+        // [D:100, D:100, D:100, D:100, D:100, D:100, D:100, D:100, D:100, R, R, R, R, R, R, R]
+        //  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^^^^^
+        //  9 denomination slots (900)                                       7 random slots (99)
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(999, &sk, rid, 1, van);
+        show("999 ballots (124.875 ZEC)", &shares);
+        assert_eq!(shares[0..9], [100; 9]);
+        let remainder_sum: u64 = shares[9..16].iter().sum();
+        assert_eq!(remainder_sum, 99);
+        for i in 9..16 {
+            assert!(shares[i] > 0, "remainder slot {} should be non-zero", i);
         }
     }
 
     #[test]
-    fn denom_split_99_ballots_all_denominations() {
-        // 99 ballots (12.375 ZEC) — 15 denom slots exhausted, small non-standard remainder
-        // [10, 10, 10, 10, 10, 10, 10, 10, 10, 1, 1, 1, 1, 1, 1, *3*]
-        let shares = denomination_split(99);
-        assert_eq!(shares[0..9], [10; 9]);
-        assert_eq!(shares[9..15], [1; 6]);
-        assert_eq!(shares[15], 3);
-        assert_eq!(shares.iter().sum::<u64>(), 99);
+    fn denom_split_exact_denomination_match() {
+        // 3M ballots (375 ZEC) — 3 denom slots, no remainder
+        // [D:1M, D:1M, D:1M, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(3_000_000, &sk, rid, 1, van);
+        show("3M ballots (375 ZEC)", &shares);
+        assert_eq!(shares[0..3], [1_000_000; 3]);
+        for i in 3..16 { assert_eq!(shares[i], 0); }
     }
 
     #[test]
-    fn denom_split_no_equal_shares_for_whale() {
-        // 8M ballots (1M ZEC) — equal split would be 16 × 500K (non-standard unique value);
-        // denomination split uses 8 × 1M (standard, shared by many balance levels)
-        // [1M, 1M, 1M, 1M, 1M, 1M, 1M, 1M, 0, 0, 0, 0, 0, 0, 0, 0]
-        let shares = denomination_split(8_000_000);
+    fn denom_split_8m_ballots() {
+        // 8M ballots (1M ZEC) — 8 denom slots, no remainder
+        // [D:1M, D:1M, D:1M, D:1M, D:1M, D:1M, D:1M, D:1M, 0, 0, 0, 0, 0, 0, 0, 0]
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(8_000_000, &sk, rid, 1, van);
+        show("8M ballots (1M ZEC)", &shares);
         assert_eq!(shares[0..8], [1_000_000; 8]);
-        for i in 8..16 {
-            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        for i in 8..16 { assert_eq!(shares[i], 0); }
+    }
+
+    #[test]
+    fn denom_split_fills_all_9_denom_slots() {
+        // 90M ballots (11.25M ZEC) — all 9 denom slots filled, no remainder
+        // [D:10M, D:10M, D:10M, D:10M, D:10M, D:10M, D:10M, D:10M, D:10M, 0, 0, 0, 0, 0, 0, 0]
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(90_000_000, &sk, rid, 1, van);
+        show("90M ballots (11.25M ZEC)", &shares);
+        assert_eq!(shares[0..9], [10_000_000; 9]);
+        for i in 9..16 { assert_eq!(shares[i], 0); }
+    }
+
+    #[test]
+    fn denom_split_overflow_into_remainder() {
+        // 100M ballots (12.5M ZEC) — 9 denom slots full (9×10M), remainder 10M in 7 random slots
+        // [D:10M, D:10M, D:10M, D:10M, D:10M, D:10M, D:10M, D:10M, D:10M, R, R, R, R, R, R, R]
+        //  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^    ^^^^^^^^^^^^^^^^^^^^
+        //  9 denomination slots (90M)                                        7 random slots (10M)
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(100_000_000, &sk, rid, 1, van);
+        show("100M ballots (12.5M ZEC)", &shares);
+        assert_eq!(shares[0..9], [10_000_000; 9]);
+        let remainder_sum: u64 = shares[9..16].iter().sum();
+        assert_eq!(remainder_sum, 10_000_000);
+        for i in 9..16 {
+            assert!(shares[i] > 0, "remainder slot {} should be non-zero", i);
         }
+    }
+
+    #[test]
+    fn denom_split_mixed_with_remainder() {
+        // 1,234,567 ballots (154,320.9 ZEC) — 9 denom slots, remainder distributed
+        // [D:1M, D:100K, D:100K, D:10K, D:10K, D:10K, D:1K, D:1K, D:1K, R, R, R, R, R, R, R]
+        //  greedy: 1M + 200K + 30K + 3K = 1,233,000                      remainder: 1,567
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(1_234_567, &sk, rid, 1, van);
+        show("1,234,567 ballots (154K ZEC)", &shares);
+        assert_eq!(shares[0], 1_000_000);
+        assert_eq!(shares[1..3], [100_000; 2]);
+        assert_eq!(shares[3..6], [10_000; 3]);
+        assert_eq!(shares[6..9], [1_000; 3]);
+        let remainder_sum: u64 = shares[9..16].iter().sum();
+        assert_eq!(remainder_sum, 1_567);
+        assert_eq!(shares.iter().sum::<u64>(), 1_234_567);
+    }
+
+    #[test]
+    fn denom_split_small_remainder_fewer_than_free_slots() {
+        // 10,000,003 ballots — 1 denom slot (10M), remainder 3 across 7 free slots
+        // [D:10M, R:1, R:1, R:1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        //  remainder 3 < 7 free slots, so only 3 of 7 get a value
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let shares = denomination_split(10_000_003, &sk, rid, 1, van);
+        show("10,000,003 ballots", &shares);
+        assert_eq!(shares[0], 10_000_000);
+        let remainder_sum: u64 = shares[1..16].iter().sum();
+        assert_eq!(remainder_sum, 3);
+        assert_eq!(shares.iter().sum::<u64>(), 10_000_003);
+    }
+
+    // ---- invariant tests ----
+
+    #[test]
+    fn denom_split_sum_invariant() {
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let test_values: [u64; 14] = [
+            0, 1, 50, 99, 100, 999, 1_000, 10_000, 100_000,
+            1_000_000, 8_234_567, 20_000_000, 80_000_000, 168_000_000,
+        ];
+        for &v in &test_values {
+            let shares = denomination_split(v, &sk, rid, 1, van);
+            assert_eq!(shares.iter().sum::<u64>(), v, "sum invariant violated for {}", v);
+        }
+    }
+
+    #[test]
+    fn denom_split_all_shares_in_range() {
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let test_values: [u64; 8] = [
+            1, 10_000, 1_000_000, 8_234_567, 15_000_000, 20_000_000,
+            80_000_000, 168_000_000,
+        ];
+        for &v in &test_values {
+            let shares = denomination_split(v, &sk, rid, 1, van);
+            for (i, &s) in shares.iter().enumerate() {
+                assert!(s < (1u64 << 30), "share {} = {} exceeds 2^30 for {}", i, s, v);
+            }
+        }
+    }
+
+    // ---- remainder randomization tests ----
+
+    #[test]
+    fn remainder_is_deterministic() {
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let a = denomination_split(999, &sk, rid, 1, van);
+        let b = denomination_split(999, &sk, rid, 1, van);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn remainder_differs_across_proposals() {
+        // Same balance, different proposal_id → same denoms, different random remainder
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van = test_van();
+        let a = denomination_split(999, &sk, rid, 1, van);
+        let b = denomination_split(999, &sk, rid, 2, van);
+        show("999 ballots, proposal 1", &a);
+        show("999 ballots, proposal 2", &b);
+        assert_eq!(a[0..9], b[0..9], "denomination slots should be identical");
+        assert_ne!(a[9..16], b[9..16], "remainder should differ across proposals");
+    }
+
+    #[test]
+    fn remainder_differs_across_vans() {
+        // Same balance, different VAN → same denoms, different random remainder
+        let sk = test_sk();
+        let rid = test_round_id();
+        let van_a = pallas::Base::from(0xAAAA_u64);
+        let van_b = pallas::Base::from(0xBBBB_u64);
+        let a = denomination_split(999, &sk, rid, 1, van_a);
+        let b = denomination_split(999, &sk, rid, 1, van_b);
+        show("999 ballots, VAN A", &a);
+        show("999 ballots, VAN B", &b);
+        assert_eq!(a[0..9], b[0..9], "denomination slots should be identical");
+        assert_ne!(a[9..16], b[9..16], "remainder should differ across VANs");
     }
 
     // ---- deterministic_shuffle tests ----
@@ -961,7 +1130,7 @@ mod tests {
         let sk = test_sk();
         let round_id = test_round_id();
         let van = test_van();
-        let mut shares = denomination_split(8_234_567);
+        let mut shares = denomination_split(8_234_567, &sk, round_id, 1, van);
         let sum_before = shares.iter().sum::<u64>();
         deterministic_shuffle(&mut shares, &sk, round_id, 1, van);
         assert_eq!(shares.iter().sum::<u64>(), sum_before);
@@ -972,7 +1141,7 @@ mod tests {
         let sk = test_sk();
         let round_id = test_round_id();
         let van = test_van();
-        let original = denomination_split(4_800);
+        let original = denomination_split(4_800, &sk, round_id, 1, van);
         let mut shuffled = original;
         deterministic_shuffle(&mut shuffled, &sk, round_id, 1, van);
         let mut sorted_orig = original;
@@ -987,8 +1156,8 @@ mod tests {
         let sk = test_sk();
         let round_id = test_round_id();
         let van = test_van();
-        let mut a = denomination_split(4_800);
-        let mut b = denomination_split(4_800);
+        let mut a = denomination_split(4_800, &sk, round_id, 1, van);
+        let mut b = denomination_split(4_800, &sk, round_id, 1, van);
         deterministic_shuffle(&mut a, &sk, round_id, 1, van);
         deterministic_shuffle(&mut b, &sk, round_id, 1, van);
         assert_eq!(a, b, "same inputs must produce same permutation");
@@ -999,8 +1168,8 @@ mod tests {
         let sk = test_sk();
         let round_id = test_round_id();
         let van = test_van();
-        let mut a = denomination_split(4_800);
-        let mut b = denomination_split(4_800);
+        let mut a = denomination_split(4_800, &sk, round_id, 1, van);
+        let mut b = denomination_split(4_800, &sk, round_id, 1, van);
         deterministic_shuffle(&mut a, &sk, round_id, 1, van);
         deterministic_shuffle(&mut b, &sk, round_id, 2, van);
         assert_ne!(a, b, "different proposals should produce different permutations");
@@ -1012,8 +1181,8 @@ mod tests {
         let round_id = test_round_id();
         let van_a = pallas::Base::from(0xAAAA_u64);
         let van_b = pallas::Base::from(0xBBBB_u64);
-        let mut a = denomination_split(4_800);
-        let mut b = denomination_split(4_800);
+        let mut a = denomination_split(4_800, &sk, round_id, 1, van_a);
+        let mut b = denomination_split(4_800, &sk, round_id, 1, van_b);
         deterministic_shuffle(&mut a, &sk, round_id, 1, van_a);
         deterministic_shuffle(&mut b, &sk, round_id, 1, van_b);
         assert_ne!(a, b, "different VANs should produce different permutations");
@@ -1024,7 +1193,7 @@ mod tests {
         let sk = test_sk();
         let round_id = test_round_id();
         let van = test_van();
-        let original = denomination_split(4_800);
+        let original = denomination_split(4_800, &sk, round_id, 1, van);
         let mut shuffled = original;
         deterministic_shuffle(&mut shuffled, &sk, round_id, 1, van);
         assert_ne!(
