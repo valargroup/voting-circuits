@@ -174,6 +174,8 @@ const VOTE_PRF_PERSONALIZATION: &[u8; 16] = b"ZcashVote_Expand";
 const DOMAIN_ELGAMAL: u8 = 0x00;
 /// Domain separator for share commitment blind factors.
 const DOMAIN_BLIND: u8 = 0x01;
+/// Domain separator for share-order shuffle seed.
+const DOMAIN_SHUFFLE: u8 = 0x02;
 
 /// Core PRF: BLAKE2b-512 keyed by the spending key with voting-specific
 /// personalization and domain-separated inputs.
@@ -235,6 +237,38 @@ pub fn derive_share_blind(
 ) -> pallas::Base {
     let hash = vote_share_prf(sk, DOMAIN_BLIND, round_id, proposal_id, van_commitment, share_index);
     pallas::Base::from_uniform_bytes(&hash)
+}
+
+/// Deterministic Fisher-Yates shuffle of the shares array.
+///
+/// Prevents the sorted denomination order from leaking balance information
+/// through share indices. When shares are distributed across multiple helper
+/// servers, a server seeing (index, decrypted_value) would otherwise learn
+/// the denomination's rank in the sorted decomposition, tightening its
+/// estimate of the voter's total balance. Shuffling makes each index
+/// equally likely to hold any denomination.
+///
+/// The permutation is derived from the same PRF used for El Gamal randomness
+/// and blind factors, with a distinct domain separator (`DOMAIN_SHUFFLE`).
+/// Share index 0 is used for the PRF call (the seed depends on the VAN, round,
+/// and proposal — not on the permutation step) to produce 64 bytes of
+/// pseudorandom data, which is consumed 4 bytes at a time for modular indices.
+fn deterministic_shuffle(
+    shares: &mut [u64; NUM_SHARES],
+    sk: &SpendingKey,
+    round_id: pallas::Base,
+    proposal_id: u64,
+    van_commitment: pallas::Base,
+) {
+    let seed = vote_share_prf(sk, DOMAIN_SHUFFLE, round_id, proposal_id, van_commitment, 0);
+    for i in (1..NUM_SHARES).rev() {
+        let byte_offset = (NUM_SHARES - 1 - i) * 4;
+        let rand_bytes: [u8; 4] = seed[byte_offset..byte_offset + 4]
+            .try_into()
+            .expect("64-byte seed has room for 15 × 4-byte draws");
+        let j = (u32::from_le_bytes(rand_bytes) as usize) % (i + 1);
+        shares.swap(i, j);
+    }
 }
 
 /// Build a real vote proof (ZKP #2) from delegation key material.
@@ -381,7 +415,8 @@ pub fn build_vote_proof_from_delegation(
     // Each share must be in [0, 2^30) for the range check.
     // Shares sum to num_ballots (ballot count), not raw zatoshi.
 
-    let shares_u64 = denomination_split(num_ballots);
+    let mut shares_u64 = denomination_split(num_ballots);
+    deterministic_shuffle(&mut shares_u64, sk, voting_round_id, proposal_id, vote_authority_note_old);
 
     // Verify all shares are in range
     for (i, &s) in shares_u64.iter().enumerate() {
@@ -917,5 +952,84 @@ mod tests {
         for i in 8..16 {
             assert_eq!(shares[i], 0, "slot {} should be 0", i);
         }
+    }
+
+    // ---- deterministic_shuffle tests ----
+
+    #[test]
+    fn shuffle_preserves_sum() {
+        let sk = test_sk();
+        let round_id = test_round_id();
+        let van = test_van();
+        let mut shares = denomination_split(8_234_567);
+        let sum_before = shares.iter().sum::<u64>();
+        deterministic_shuffle(&mut shares, &sk, round_id, 1, van);
+        assert_eq!(shares.iter().sum::<u64>(), sum_before);
+    }
+
+    #[test]
+    fn shuffle_preserves_multiset() {
+        let sk = test_sk();
+        let round_id = test_round_id();
+        let van = test_van();
+        let original = denomination_split(4_800);
+        let mut shuffled = original;
+        deterministic_shuffle(&mut shuffled, &sk, round_id, 1, van);
+        let mut sorted_orig = original;
+        sorted_orig.sort();
+        let mut sorted_shuf = shuffled;
+        sorted_shuf.sort();
+        assert_eq!(sorted_orig, sorted_shuf, "shuffle must be a permutation");
+    }
+
+    #[test]
+    fn shuffle_is_deterministic() {
+        let sk = test_sk();
+        let round_id = test_round_id();
+        let van = test_van();
+        let mut a = denomination_split(4_800);
+        let mut b = denomination_split(4_800);
+        deterministic_shuffle(&mut a, &sk, round_id, 1, van);
+        deterministic_shuffle(&mut b, &sk, round_id, 1, van);
+        assert_eq!(a, b, "same inputs must produce same permutation");
+    }
+
+    #[test]
+    fn shuffle_differs_across_proposals() {
+        let sk = test_sk();
+        let round_id = test_round_id();
+        let van = test_van();
+        let mut a = denomination_split(4_800);
+        let mut b = denomination_split(4_800);
+        deterministic_shuffle(&mut a, &sk, round_id, 1, van);
+        deterministic_shuffle(&mut b, &sk, round_id, 2, van);
+        assert_ne!(a, b, "different proposals should produce different permutations");
+    }
+
+    #[test]
+    fn shuffle_differs_across_vans() {
+        let sk = test_sk();
+        let round_id = test_round_id();
+        let van_a = pallas::Base::from(0xAAAA_u64);
+        let van_b = pallas::Base::from(0xBBBB_u64);
+        let mut a = denomination_split(4_800);
+        let mut b = denomination_split(4_800);
+        deterministic_shuffle(&mut a, &sk, round_id, 1, van_a);
+        deterministic_shuffle(&mut b, &sk, round_id, 1, van_b);
+        assert_ne!(a, b, "different VANs should produce different permutations");
+    }
+
+    #[test]
+    fn shuffle_actually_reorders() {
+        let sk = test_sk();
+        let round_id = test_round_id();
+        let van = test_van();
+        let original = denomination_split(4_800);
+        let mut shuffled = original;
+        deterministic_shuffle(&mut shuffled, &sk, round_id, 1, van);
+        assert_ne!(
+            original, shuffled,
+            "shuffle should reorder (vanishingly unlikely to be identity for 12 non-zero shares)"
+        );
     }
 }
