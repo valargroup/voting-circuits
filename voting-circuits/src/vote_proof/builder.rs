@@ -56,15 +56,6 @@ const DENOMINATIONS: [u64; 8] = [10_000_000, 1_000_000, 100_000, 10_000, 1_000, 
 /// by matching denomination patterns.
 const MAX_DENOM_SHARES: usize = 9;
 
-/// Maximum ballot count per VAN before the client should split via ZKP #4.
-///
-/// VANs at or below this threshold land in tier 2 (16–1,250 ZEC), where the
-/// randomized share decomposition provides anonymity.  VANs above this
-/// threshold should be split into children of at most this size.
-///
-/// 10,000 ballots = 1,250 ZEC at BALLOT_DIVISOR = 12,500,000 zatoshi/ballot.
-pub const MAX_BALLOTS_PER_VAN: u64 = 10_000;
-
 /// Decompose `num_ballots` into [`NUM_SHARES`] shares using a greedy
 /// denomination strategy with randomized remainder distribution.
 ///
@@ -100,7 +91,15 @@ pub fn denomination_split(
     if remaining > 0 {
         let free_slots = NUM_SHARES - idx;
         if free_slots >= 2 {
-            distribute_remainder(&mut shares[idx..], remaining, sk, round_id, proposal_id, van_commitment, idx as u8);
+            distribute_remainder(
+                &mut shares[idx..],
+                remaining,
+                sk,
+                round_id,
+                proposal_id,
+                van_commitment,
+                idx as u8,
+            );
         } else {
             shares[idx] = remaining;
         }
@@ -314,7 +313,14 @@ pub fn derive_share_randomness(
     van_commitment: pallas::Base,
     share_index: u8,
 ) -> pallas::Base {
-    let hash = vote_share_prf(sk, DOMAIN_ELGAMAL, round_id, proposal_id, van_commitment, share_index);
+    let hash = vote_share_prf(
+        sk,
+        DOMAIN_ELGAMAL,
+        round_id,
+        proposal_id,
+        van_commitment,
+        share_index,
+    );
     let r = pallas::Base::from_uniform_bytes(&hash);
     debug_assert!(base_to_scalar(r).is_some(), "p < q guarantees Base→Scalar");
     r
@@ -328,7 +334,14 @@ pub fn derive_share_blind(
     van_commitment: pallas::Base,
     share_index: u8,
 ) -> pallas::Base {
-    let hash = vote_share_prf(sk, DOMAIN_BLIND, round_id, proposal_id, van_commitment, share_index);
+    let hash = vote_share_prf(
+        sk,
+        DOMAIN_BLIND,
+        round_id,
+        proposal_id,
+        van_commitment,
+        share_index,
+    );
     pallas::Base::from_uniform_bytes(&hash)
 }
 
@@ -430,10 +443,10 @@ pub fn build_vote_proof_from_delegation(
 
     // ---- Fast key-chain consistency checks (instant, no circuit) ----
     {
-        use orchard::constants::{fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
         use core::iter;
         use group::ff::PrimeFieldBits;
         use halo2_gadgets::sinsemilla::primitives::CommitDomain;
+        use orchard::constants::{fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
 
         // Check 1: [vsk] * SpendAuthG must match the ak from the FullViewingKey.
         let ak_from_vsk = (pallas::Point::from(spend_auth_g_affine()) * vsk).to_affine();
@@ -508,8 +521,20 @@ pub fn build_vote_proof_from_delegation(
     // Each share must be in [0, 2^30) for the range check.
     // Shares sum to num_ballots (ballot count), not raw zatoshi.
 
-    let mut shares_u64 = denomination_split(num_ballots, sk, voting_round_id, proposal_id, vote_authority_note_old);
-    deterministic_shuffle(&mut shares_u64, sk, voting_round_id, proposal_id, vote_authority_note_old);
+    let mut shares_u64 = denomination_split(
+        num_ballots,
+        sk,
+        voting_round_id,
+        proposal_id,
+        vote_authority_note_old,
+    );
+    deterministic_shuffle(
+        &mut shares_u64,
+        sk,
+        voting_round_id,
+        proposal_id,
+        vote_authority_note_old,
+    );
 
     // Verify all shares are in range
     for (i, &s) in shares_u64.iter().enumerate() {
@@ -537,18 +562,23 @@ pub fn build_vote_proof_from_delegation(
     let mut enc_c1_x = [pallas::Base::zero(); 16];
     let mut enc_c2_x = [pallas::Base::zero(); 16];
     let mut share_randomness = [pallas::Base::zero(); 16];
-    let mut enc_share_outputs: [EncryptedShareOutput; 16] = core::array::from_fn(|i| {
-        EncryptedShareOutput {
+    let mut enc_share_outputs: [EncryptedShareOutput; 16] =
+        core::array::from_fn(|i| EncryptedShareOutput {
             c1: [0u8; 32],
             c2: [0u8; 32],
             share_index: i as u32,
             plaintext_value: shares_u64[i],
             randomness: [0u8; 32],
-        }
-    });
+        });
 
     for i in 0..16 {
-        let r = derive_share_randomness(sk, voting_round_id, proposal_id, vote_authority_note_old, i as u8);
+        let r = derive_share_randomness(
+            sk,
+            voting_round_id,
+            proposal_id,
+            vote_authority_note_old,
+            i as u8,
+        );
         share_randomness[i] = r;
         let r_scalar = base_to_scalar(r).expect("derive_share_randomness guarantees scalar-range");
         let v_scalar = base_to_scalar(shares_base[i]).expect("share value in range");
@@ -564,11 +594,17 @@ pub fn build_vote_proof_from_delegation(
         enc_share_outputs[i].randomness = r.to_repr();
     }
 
-    let share_blinds: [pallas::Base; 16] =
-        core::array::from_fn(|i| derive_share_blind(sk, voting_round_id, proposal_id, vote_authority_note_old, i as u8));
-    let share_comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-        share_commitment(share_blinds[i], enc_c1_x[i], enc_c2_x[i])
+    let share_blinds: [pallas::Base; 16] = core::array::from_fn(|i| {
+        derive_share_blind(
+            sk,
+            voting_round_id,
+            proposal_id,
+            vote_authority_note_old,
+            i as u8,
+        )
     });
+    let share_comms: [pallas::Base; 16] =
+        core::array::from_fn(|i| share_commitment(share_blinds[i], enc_c1_x[i], enc_c2_x[i]));
     let shares_hash_val = shares_hash(share_blinds, enc_c1_x, enc_c2_x);
 
     // ---- Condition 4: r_vpk = ak + [alpha_v] * G ----
@@ -583,8 +619,12 @@ pub fn build_vote_proof_from_delegation(
 
     let proposal_id_base = pallas::Base::from(proposal_id);
     let vote_decision_base = pallas::Base::from(vote_decision);
-    let vote_commitment =
-        vote_commitment_hash(voting_round_id, shares_hash_val, proposal_id_base, vote_decision_base);
+    let vote_commitment = vote_commitment_hash(
+        voting_round_id,
+        shares_hash_val,
+        proposal_id_base,
+        vote_decision_base,
+    );
 
     // ---- Vote commitment tree root (from auth path) ----
     // Recompute the root from the leaf + auth path to set as public input.
@@ -825,12 +865,20 @@ mod tests {
 
     /// Helper: print shares array for visual inspection during --nocapture runs.
     fn show(label: &str, shares: &[u64; 16]) {
-        let parts: Vec<String> = shares.iter().map(|&v| {
-            if v == 0 { "0".into() }
-            else if v >= 1_000_000 { format!("{}M", v / 1_000_000) }
-            else if v >= 1_000 { format!("{}K", v / 1_000) }
-            else { format!("{}", v) }
-        }).collect();
+        let parts: Vec<String> = shares
+            .iter()
+            .map(|&v| {
+                if v == 0 {
+                    "0".into()
+                } else if v >= 1_000_000 {
+                    format!("{}M", v / 1_000_000)
+                } else if v >= 1_000 {
+                    format!("{}K", v / 1_000)
+                } else {
+                    format!("{}", v)
+                }
+            })
+            .collect();
         std::eprintln!("  {}: [{}]", label, parts.join(", "));
     }
 
@@ -856,7 +904,9 @@ mod tests {
         let shares = denomination_split(1, &sk, rid, 1, van);
         show("1 ballot (0.125 ZEC)", &shares);
         assert_eq!(shares[0], 1);
-        for i in 1..16 { assert_eq!(shares[i], 0); }
+        for i in 1..16 {
+            assert_eq!(shares[i], 0);
+        }
     }
 
     #[test]
@@ -869,7 +919,9 @@ mod tests {
         let shares = denomination_split(4, &sk, rid, 1, van);
         show("4 ballots (0.5 ZEC)", &shares);
         assert_eq!(shares[0..4], [1; 4]);
-        for i in 4..16 { assert_eq!(shares[i], 0); }
+        for i in 4..16 {
+            assert_eq!(shares[i], 0);
+        }
     }
 
     #[test]
@@ -882,7 +934,9 @@ mod tests {
         let shares = denomination_split(8, &sk, rid, 1, van);
         show("8 ballots (1 ZEC)", &shares);
         assert_eq!(shares[0..8], [1; 8]);
-        for i in 8..16 { assert_eq!(shares[i], 0); }
+        for i in 8..16 {
+            assert_eq!(shares[i], 0);
+        }
     }
 
     #[test]
@@ -895,7 +949,9 @@ mod tests {
         let shares = denomination_split(50, &sk, rid, 1, van);
         show("50 ballots (6.25 ZEC)", &shares);
         assert_eq!(shares[0..5], [10; 5]);
-        for i in 5..16 { assert_eq!(shares[i], 0); }
+        for i in 5..16 {
+            assert_eq!(shares[i], 0);
+        }
     }
 
     #[test]
@@ -912,7 +968,9 @@ mod tests {
         assert_eq!(shares[2], 100);
         assert_eq!(shares[3], 10);
         assert_eq!(shares[4], 1);
-        for i in 5..16 { assert_eq!(shares[i], 0); }
+        for i in 5..16 {
+            assert_eq!(shares[i], 0);
+        }
     }
 
     #[test]
@@ -965,7 +1023,9 @@ mod tests {
         let shares = denomination_split(3_000_000, &sk, rid, 1, van);
         show("3M ballots (375 ZEC)", &shares);
         assert_eq!(shares[0..3], [1_000_000; 3]);
-        for i in 3..16 { assert_eq!(shares[i], 0); }
+        for i in 3..16 {
+            assert_eq!(shares[i], 0);
+        }
     }
 
     #[test]
@@ -978,7 +1038,9 @@ mod tests {
         let shares = denomination_split(8_000_000, &sk, rid, 1, van);
         show("8M ballots (1M ZEC)", &shares);
         assert_eq!(shares[0..8], [1_000_000; 8]);
-        for i in 8..16 { assert_eq!(shares[i], 0); }
+        for i in 8..16 {
+            assert_eq!(shares[i], 0);
+        }
     }
 
     #[test]
@@ -991,7 +1053,9 @@ mod tests {
         let shares = denomination_split(90_000_000, &sk, rid, 1, van);
         show("90M ballots (11.25M ZEC)", &shares);
         assert_eq!(shares[0..9], [10_000_000; 9]);
-        for i in 9..16 { assert_eq!(shares[i], 0); }
+        for i in 9..16 {
+            assert_eq!(shares[i], 0);
+        }
     }
 
     #[test]
@@ -1056,12 +1120,29 @@ mod tests {
         let rid = test_round_id();
         let van = test_van();
         let test_values: [u64; 14] = [
-            0, 1, 50, 99, 100, 999, 1_000, 10_000, 100_000,
-            1_000_000, 8_234_567, 20_000_000, 80_000_000, 168_000_000,
+            0,
+            1,
+            50,
+            99,
+            100,
+            999,
+            1_000,
+            10_000,
+            100_000,
+            1_000_000,
+            8_234_567,
+            20_000_000,
+            80_000_000,
+            168_000_000,
         ];
         for &v in &test_values {
             let shares = denomination_split(v, &sk, rid, 1, van);
-            assert_eq!(shares.iter().sum::<u64>(), v, "sum invariant violated for {}", v);
+            assert_eq!(
+                shares.iter().sum::<u64>(),
+                v,
+                "sum invariant violated for {}",
+                v
+            );
         }
     }
 
@@ -1071,13 +1152,25 @@ mod tests {
         let rid = test_round_id();
         let van = test_van();
         let test_values: [u64; 8] = [
-            1, 10_000, 1_000_000, 8_234_567, 15_000_000, 20_000_000,
-            80_000_000, 168_000_000,
+            1,
+            10_000,
+            1_000_000,
+            8_234_567,
+            15_000_000,
+            20_000_000,
+            80_000_000,
+            168_000_000,
         ];
         for &v in &test_values {
             let shares = denomination_split(v, &sk, rid, 1, van);
             for (i, &s) in shares.iter().enumerate() {
-                assert!(s < (1u64 << 30), "share {} = {} exceeds 2^30 for {}", i, s, v);
+                assert!(
+                    s < (1u64 << 30),
+                    "share {} = {} exceeds 2^30 for {}",
+                    i,
+                    s,
+                    v
+                );
             }
         }
     }
@@ -1105,7 +1198,11 @@ mod tests {
         show("999 ballots, proposal 1", &a);
         show("999 ballots, proposal 2", &b);
         assert_eq!(a[0..9], b[0..9], "denomination slots should be identical");
-        assert_ne!(a[9..16], b[9..16], "remainder should differ across proposals");
+        assert_ne!(
+            a[9..16],
+            b[9..16],
+            "remainder should differ across proposals"
+        );
     }
 
     #[test]
@@ -1172,7 +1269,10 @@ mod tests {
         let mut b = denomination_split(4_800, &sk, round_id, 1, van);
         deterministic_shuffle(&mut a, &sk, round_id, 1, van);
         deterministic_shuffle(&mut b, &sk, round_id, 2, van);
-        assert_ne!(a, b, "different proposals should produce different permutations");
+        assert_ne!(
+            a, b,
+            "different proposals should produce different permutations"
+        );
     }
 
     #[test]
