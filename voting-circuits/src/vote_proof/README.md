@@ -226,6 +226,27 @@ Where:
 
 **Constructions:** `van_integrity::van_integrity_poseidon` (shared gadget from `circuit::van_integrity`).
 
+## Share Decomposition (builder)
+
+The builder decomposes `num_ballots` into 16 shares using a three-phase algorithm that maximizes per-share anonymity while remaining compatible with the circuit constraints (conditions 8–9).
+
+**Phase 1 — Greedy fill (up to 9 slots).** Place the largest standard denominations from `[10M, 1M, 100K, 10K, 1K, 100, 10, 1]` (in ballots) that fit into the remaining balance. At most `MAX_DENOM_SHARES = 9` slots are consumed, leaving at least 7 free.
+
+**Phase 2 — Remainder distribution (free slots).** If a non-zero remainder exists after greedy fill, spread it across all remaining slots using PRF-derived weights (`DOMAIN_REMAINDER = 0x03`). Each slot receives a weighted proportion of the remainder (with at least 1 ballot per slot when the remainder allows), preventing any single non-standard value from fingerprinting the voter's exact balance.
+
+**Phase 3 — Deterministic shuffle.** A Fisher-Yates permutation seeded by the PRF (`DOMAIN_SHUFFLE = 0x02`) randomizes all 16 slot positions. Without this, share indices would encode denomination rank (e.g. index 0 = largest denomination), leaking balance information to any server that decrypts a single share.
+
+All PRF derivations are keyed by the spending key and bound to `(voting_round_id, proposal_id, van_commitment)`. This means:
+- Two voters with the **same balance** produce different remainder weights and shuffle orders (different `sk`).
+- The same voter with **multiple VANs** produces different patterns per VAN (different `van_commitment`).
+- Secrets are deterministically re-derivable after a crash without persisting them.
+
+The denomination slots use values common across all voters at a given balance tier, so they blend into the anonymity set. The remainder slots use unique PRF-derived splits that prevent exact-balance fingerprinting. After shuffling, the position of each value is uniformly random.
+
+**Invariants enforced by the circuit:**
+- Sum of all 16 shares equals `num_ballots` (condition 8).
+- Each share is in `[0, 2^30)` (condition 9).
+
 ## Condition 8: Shares Sum Correctness ✅
 
 Purpose: voting shares decomposition is consistent with the total delegated weight (in ballots).
@@ -235,7 +256,7 @@ sum(share_0, ..., share_15) = total_note_value
 ```
 
 Where:
-- **share_0..share_15**: the 16 plaintext voting shares (private witnesses). Each share is a random portion of the voter's total delegated weight — the decomposition is chosen by the prover and serves as an amount-privacy mechanism: the on-chain El Gamal ciphertexts reveal no useful fingerprint about the weight, since the same total can be split in exponentially many ways. These cells will also be used by condition 9 (range check) and condition 11 (El Gamal encryption inputs).
+- **share_0..share_15**: the 16 plaintext voting shares (private witnesses). Each share is produced by the denomination-based decomposition described above. These cells will also be used by condition 9 (range check) and condition 11 (El Gamal encryption inputs).
 - **total_note_value**: the voter's total delegated weight in ballots (1 ballot = 0.125 ZEC). Cell-equality-linked to the same witness cell used in condition 2 (VAN integrity), binding the shares decomposition to the authenticated VAN.
 
 **Structure:** Fifteen chained `AddChip` additions (15 rows):
