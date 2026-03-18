@@ -43,7 +43,9 @@ const NUM_SHARES: usize = 16;
 /// | 10,000     | 1,250       |
 /// | 1,000      | 125         |
 /// | 100        | 12.5        |
-const DENOMINATIONS: [u64; 6] = [10_000_000, 1_000_000, 100_000, 10_000, 1_000, 100];
+/// | 10         | 1.25        |
+/// | 1          | 0.125       |
+const DENOMINATIONS: [u64; 8] = [10_000_000, 1_000_000, 100_000, 10_000, 1_000, 100, 10, 1];
 
 /// Maximum slots used for denomination shares; the final slot holds the remainder.
 const MAX_DENOM_SHARES: usize = NUM_SHARES - 1;
@@ -687,6 +689,8 @@ mod tests {
 
     #[test]
     fn denom_split_exact_denomination_match() {
+        // 3M ballots (375 ZEC)
+        // [1M, 1M, 1M, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         let shares = denomination_split(3_000_000);
         assert_eq!(shares[0], 1_000_000);
         assert_eq!(shares[1], 1_000_000);
@@ -698,7 +702,8 @@ mod tests {
 
     #[test]
     fn denom_split_mixed_denominations() {
-        // 1_234_500 = 1×1M + 2×100K + 3×10K + 4×1K + 5×100
+        // 1,234,500 ballots (154,312.5 ZEC) — fills all 15 denomination slots exactly
+        // [1M, 100K, 100K, 10K, 10K, 10K, 1K, 1K, 1K, 1K, 100, 100, 100, 100, 100, 0]
         let shares = denomination_split(1_234_500);
         assert_eq!(shares[0], 1_000_000);
         assert_eq!(shares[1], 100_000);
@@ -720,16 +725,37 @@ mod tests {
     }
 
     #[test]
-    fn denom_split_small_balance_below_all_denominations() {
-        let shares = denomination_split(50);
-        assert_eq!(shares[0], 50);
-        for i in 1..16 {
+    fn denom_split_mixed_with_small_denominations() {
+        // 11,111 ballots (1,388.9 ZEC) — exercises every denomination except 10M and 1M
+        // [10K, 1K, 100, 10, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        let shares = denomination_split(11_111);
+        assert_eq!(shares[0], 10_000);
+        assert_eq!(shares[1], 1_000);
+        assert_eq!(shares[2], 100);
+        assert_eq!(shares[3], 10);
+        assert_eq!(shares[4], 1);
+        for i in 5..16 {
             assert_eq!(shares[i], 0, "slot {} should be 0", i);
         }
+        assert_eq!(shares.iter().sum::<u64>(), 11_111);
+    }
+
+    #[test]
+    fn denom_split_small_balance_uses_small_denominations() {
+        // 50 ballots (6.25 ZEC) — all shares are standard denominations
+        // [10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        let shares = denomination_split(50);
+        assert_eq!(shares[0..5], [10; 5]);
+        for i in 5..16 {
+            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        }
+        assert_eq!(shares.iter().sum::<u64>(), 50);
     }
 
     #[test]
     fn denom_split_single_ballot() {
+        // 1 ballot (0.125 ZEC) — matches the smallest denomination exactly
+        // [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         let shares = denomination_split(1);
         assert_eq!(shares[0], 1);
         for i in 1..16 {
@@ -739,6 +765,8 @@ mod tests {
 
     #[test]
     fn denom_split_zero_ballots() {
+        // 0 ballots — all slots empty
+        // [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         let shares = denomination_split(0);
         for i in 0..16 {
             assert_eq!(shares[i], 0, "slot {} should be 0", i);
@@ -747,7 +775,8 @@ mod tests {
 
     #[test]
     fn denom_split_fills_all_15_denomination_slots() {
-        // 150M = 15 × 10M; all 15 denomination slots used, remainder = 0
+        // 150M ballots (18.75M ZEC) — all 15 denomination slots used, no remainder
+        // [10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 0]
         let shares = denomination_split(150_000_000);
         for i in 0..15 {
             assert_eq!(shares[i], 10_000_000, "slot {} should be 10M", i);
@@ -757,7 +786,8 @@ mod tests {
 
     #[test]
     fn denom_split_exceeds_15_slots() {
-        // 160M needs 16 × 10M; 15 fit as denominations, 10M spills to remainder
+        // 160M ballots (20M ZEC) — needs 16 × 10M, last one spills to remainder slot
+        // [10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M]
         let shares = denomination_split(160_000_000);
         for i in 0..15 {
             assert_eq!(shares[i], 10_000_000, "slot {} should be 10M", i);
@@ -768,7 +798,8 @@ mod tests {
 
     #[test]
     fn denom_split_10m_zec_whale() {
-        // 10M ZEC = 80M ballots = 8 × 10M denomination shares
+        // 80M ballots (10M ZEC)
+        // [10M, 10M, 10M, 10M, 10M, 10M, 10M, 10M, 0, 0, 0, 0, 0, 0, 0, 0]
         let shares = denomination_split(80_000_000);
         assert_eq!(shares[0..8], [10_000_000; 8]);
         for i in 8..16 {
@@ -779,7 +810,8 @@ mod tests {
 
     #[test]
     fn denom_split_whale_with_remainder() {
-        // 8,234,567 = 8×1M + 2×100K + 3×10K + 2×1K + remainder 2,567
+        // 8,234,567 ballots (~1.03M ZEC) — 15 denom slots exhausted, remainder is non-standard
+        // [1M, 1M, 1M, 1M, 1M, 1M, 1M, 1M, 100K, 100K, 10K, 10K, 10K, 1K, 1K, *2567*]
         let shares = denomination_split(8_234_567);
         assert_eq!(shares.iter().sum::<u64>(), 8_234_567);
         assert_eq!(shares[0..8], [1_000_000; 8]);
@@ -830,7 +862,8 @@ mod tests {
 
     #[test]
     fn denom_split_medium_holder() {
-        // 4,800 = 4×1000 + 8×100
+        // 4,800 ballots (600 ZEC) — all standard denominations, no remainder
+        // [1K, 1K, 1K, 1K, 100, 100, 100, 100, 100, 100, 100, 100, 0, 0, 0, 0]
         let shares = denomination_split(4_800);
         assert_eq!(shares[0..4], [1_000; 4]);
         assert_eq!(shares[4..12], [100; 8]);
@@ -841,10 +874,45 @@ mod tests {
     }
 
     #[test]
+    fn denom_split_one_zec() {
+        // 8 ballots (1 ZEC) — all standard denominations, no remainder
+        // [1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+        let shares = denomination_split(8);
+        assert_eq!(shares[0..8], [1; 8]);
+        for i in 8..16 {
+            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        }
+        assert_eq!(shares.iter().sum::<u64>(), 8);
+    }
+
+    #[test]
+    fn denom_split_sub_zec() {
+        // 4 ballots (0.5 ZEC) — all standard denominations
+        // [1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        let shares = denomination_split(4);
+        assert_eq!(shares[0..4], [1; 4]);
+        for i in 4..16 {
+            assert_eq!(shares[i], 0, "slot {} should be 0", i);
+        }
+    }
+
+    #[test]
+    fn denom_split_99_ballots_all_denominations() {
+        // 99 ballots (12.375 ZEC) — 15 denom slots exhausted, small non-standard remainder
+        // [10, 10, 10, 10, 10, 10, 10, 10, 10, 1, 1, 1, 1, 1, 1, *3*]
+        let shares = denomination_split(99);
+        assert_eq!(shares[0..9], [10; 9]);
+        assert_eq!(shares[9..15], [1; 6]);
+        assert_eq!(shares[15], 3);
+        assert_eq!(shares.iter().sum::<u64>(), 99);
+    }
+
+    #[test]
     fn denom_split_no_equal_shares_for_whale() {
+        // 8M ballots (1M ZEC) — equal split would be 16 × 500K (non-standard unique value);
+        // denomination split uses 8 × 1M (standard, shared by many balance levels)
+        // [1M, 1M, 1M, 1M, 1M, 1M, 1M, 1M, 0, 0, 0, 0, 0, 0, 0, 0]
         let shares = denomination_split(8_000_000);
-        // With equal split this would be 16 × 500,000. With denomination split,
-        // all 8 shares should be 1,000,000 (a standard denomination).
         assert_eq!(shares[0..8], [1_000_000; 8]);
         for i in 8..16 {
             assert_eq!(shares[i], 0, "slot {} should be 0", i);
