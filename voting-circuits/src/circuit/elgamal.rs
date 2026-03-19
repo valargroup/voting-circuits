@@ -74,12 +74,15 @@ pub fn base_to_scalar(b: pallas::Base) -> Option<pallas::Scalar> {
 /// Out-of-circuit El Gamal encryption under SpendAuthG.
 ///
 /// Computes C1 = [r]*SpendAuthG, C2 = [v]*SpendAuthG + [r]*ea_pk.
-/// Returns (c1_x, c2_x). Used by the builder and tests.
+/// Returns (c1_x, c2_x, c1_y, c2_y). Used by the builder and tests.
+///
+/// Both coordinates are returned so that share commitments can bind to the
+/// full curve point, preventing ciphertext sign-malleability attacks.
 pub fn elgamal_encrypt(
     share_value: pallas::Base,
     randomness: pallas::Base,
     ea_pk: pallas::Point,
-) -> (pallas::Base, pallas::Base) {
+) -> (pallas::Base, pallas::Base, pallas::Base, pallas::Base) {
     use group::Curve;
 
     let g = pallas::Point::from(spend_auth_g_affine());
@@ -91,9 +94,9 @@ pub fn elgamal_encrypt(
     let c1 = g * r_scalar;
     let c2 = g * v_scalar + ea_pk * r_scalar;
 
-    let c1_x = *c1.to_affine().coordinates().unwrap().x();
-    let c2_x = *c2.to_affine().coordinates().unwrap().x();
-    (c1_x, c2_x)
+    let c1_coords = c1.to_affine().coordinates().unwrap();
+    let c2_coords = c2.to_affine().coordinates().unwrap();
+    (*c1_coords.x(), *c2_coords.x(), *c1_coords.y(), *c2_coords.y())
 }
 
 // ================================================================
@@ -137,6 +140,8 @@ pub(crate) fn prove_elgamal_encryptions(
     r_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
     enc_c1_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
     enc_c2_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
+    enc_c1_y_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
+    enc_c2_y_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
 ) -> Result<(), Error> {
     // Election Authority's public key as a Pallas curve point, wrapped in Value.
     // ea_pk must be witnessed into advice cells to compute [r_i] * ea_pk.
@@ -190,17 +195,18 @@ pub(crate) fn prove_elgamal_encryptions(
                 r_cells[i].clone(),
             )?;
 
-        // Only the x-coordinate of C1 is constrained as a public input. This
-        // is the standard Halo2 `extract_p` convention (Pallas x-coord as Fp).
-        // The y-coordinate is not exposed; the transaction carries the full
-        // compressed point (x || sign_bit). The chain-side verifier
-        // (VerifyShareRevealProof) decompresses the compressed point to confirm
-        // it is on the Pallas curve before stripping the sign bit to obtain the
-        // x-coordinate that is fed back here as a public input.
+        // Both coordinates of C1 are constrained: x via extract_p, y via
+        // the inner point. The y-coordinate binding prevents ciphertext
+        // sign-malleability (negating a point preserves x but flips y).
         let c1_x = c1_point.extract_p().inner().clone();
         layouter.assign_region(
             || alloc::format!("{namespace} C1[{i}] x == enc_c1_x[{i}]"),
             |mut region| region.constrain_equal(c1_x.cell(), enc_c1_cells[i].cell()),
+        )?;
+        let c1_y = c1_point.inner().y();
+        layouter.assign_region(
+            || alloc::format!("{namespace} C1[{i}] y == enc_c1_y[{i}]"),
+            |mut region| region.constrain_equal(c1_y.cell(), enc_c1_y_cells[i].cell()),
         )?;
 
         // --- C2_i = [v_i] * G + [r_i] * ea_pk ---
@@ -252,11 +258,15 @@ pub(crate) fn prove_elgamal_encryptions(
             &r_ea_pk_point,
         )?;
 
-        // Same x-only public input convention as C1 above.
         let c2_x = c2_point.extract_p().inner().clone();
         layouter.assign_region(
             || alloc::format!("{namespace} C2[{i}] x == enc_c2_x[{i}]"),
             |mut region| region.constrain_equal(c2_x.cell(), enc_c2_cells[i].cell()),
+        )?;
+        let c2_y = c2_point.inner().y();
+        layouter.assign_region(
+            || alloc::format!("{namespace} C2[{i}] y == enc_c2_y[{i}]"),
+            |mut region| region.constrain_equal(c2_y.cell(), enc_c2_y_cells[i].cell()),
         )?;
     }
     Ok(())

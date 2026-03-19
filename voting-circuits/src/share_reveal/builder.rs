@@ -31,10 +31,12 @@ pub struct ShareRevealBundle {
 /// - `merkle_auth_path`: The 24 sibling hashes from the vote commitment tree.
 /// - `merkle_position`: Leaf position in the vote commitment tree.
 /// - `share_comms`: Pre-computed per-share Poseidon commitments
-///   (`share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x)`).
+///   (`share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`).
 /// - `primary_blind`: Blind factor for the revealed share (at `share_index`).
 /// - `enc_c1_x`: X-coordinate of the revealed share's El Gamal C1.
 /// - `enc_c2_x`: X-coordinate of the revealed share's El Gamal C2.
+/// - `enc_c1_y`: Y-coordinate of the revealed share's El Gamal C1.
+/// - `enc_c2_y`: Y-coordinate of the revealed share's El Gamal C2.
 /// - `share_index`: Which of the 16 shares is being revealed (0..15).
 /// - `proposal_id`: Proposal identifier (as a field element).
 /// - `vote_decision`: The voter's choice (as a field element).
@@ -47,6 +49,8 @@ pub fn build_share_reveal(
     primary_blind: pallas::Base,
     enc_c1_x: pallas::Base,
     enc_c2_x: pallas::Base,
+    enc_c1_y: pallas::Base,
+    enc_c2_y: pallas::Base,
     share_index: u32,
     proposal_id: pallas::Base,
     vote_decision: pallas::Base,
@@ -94,6 +98,8 @@ pub fn build_share_reveal(
         vote_decision,
         vote_comm_tree_root,
         voting_round_id,
+        enc_c1_y,
+        enc_c2_y,
     );
 
     ShareRevealBundle { circuit, instance }
@@ -124,14 +130,18 @@ mod tests {
         });
         let mut c1_x = [pallas::Base::zero(); 16];
         let mut c2_x = [pallas::Base::zero(); 16];
+        let mut c1_y = [pallas::Base::zero(); 16];
+        let mut c2_y = [pallas::Base::zero(); 16];
         for i in 0..16 {
-            let (c1, c2) = elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk);
-            c1_x[i] = c1;
-            c2_x[i] = c2;
+            let (cx1, cx2, cy1, cy2) = elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk);
+            c1_x[i] = cx1;
+            c2_x[i] = cx2;
+            c1_y[i] = cy1;
+            c2_y[i] = cy2;
         }
 
         let share_comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-            share_commitment(share_blinds[i], c1_x[i], c2_x[i])
+            share_commitment(share_blinds[i], c1_x[i], c2_x[i], c1_y[i], c2_y[i])
         });
 
         let mut empty_roots = [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH];
@@ -148,6 +158,8 @@ mod tests {
             share_blinds[share_idx as usize],
             c1_x[share_idx as usize],
             c2_x[share_idx as usize],
+            c1_y[share_idx as usize],
+            c2_y[share_idx as usize],
             share_idx,
             pallas::Base::from(3u64),
             pallas::Base::from(1u64),
