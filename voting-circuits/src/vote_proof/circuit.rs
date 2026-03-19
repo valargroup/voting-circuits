@@ -240,19 +240,31 @@ pub fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base {
 
 /// Out-of-circuit per-share blinded commitment (condition 10).
 ///
-/// Computes `Poseidon(blind, c1_x, c2_x)` for a single share.
+/// Computes `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` for a single share.
+///
+/// The y-coordinates bind the commitment to the exact curve point, not just
+/// the x-coordinate. Without them, an attacker can negate the ElGamal
+/// ciphertext (flip sign bits) without invalidating the ZKP — corrupting
+/// the homomorphic tally. See: ciphertext sign-malleability fix.
+///
 /// The blind factor prevents anyone who sees the encrypted shares on-chain
 /// from recomputing shares_hash and linking it to a specific vote commitment.
-pub fn share_commitment(blind: pallas::Base, c1_x: pallas::Base, c2_x: pallas::Base) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init()
-        .hash([blind, c1_x, c2_x])
+pub fn share_commitment(
+    blind: pallas::Base,
+    c1_x: pallas::Base,
+    c2_x: pallas::Base,
+    c1_y: pallas::Base,
+    c2_y: pallas::Base,
+) -> pallas::Base {
+    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2>::init()
+        .hash([blind, c1_x, c2_x, c1_y, c2_y])
 }
 
 /// Out-of-circuit shares hash (condition 10).
 ///
 /// Computes blinded per-share commitments and hashes them together:
 /// ```text
-/// share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x)   for i in 0..16
+/// share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i in 0..16
 /// shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
 /// ```
 ///
@@ -264,9 +276,17 @@ pub fn shares_hash(
     share_blinds: [pallas::Base; 16],
     enc_share_c1_x: [pallas::Base; 16],
     enc_share_c2_x: [pallas::Base; 16],
+    enc_share_c1_y: [pallas::Base; 16],
+    enc_share_c2_y: [pallas::Base; 16],
 ) -> pallas::Base {
     let comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-        share_commitment(share_blinds[i], enc_share_c1_x[i], enc_share_c2_x[i])
+        share_commitment(
+            share_blinds[i],
+            enc_share_c1_x[i],
+            enc_share_c2_x[i],
+            enc_share_c1_y[i],
+            enc_share_c2_y[i],
+        )
     });
     poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<16>, 3, 2>::init().hash(comms)
 }
@@ -466,17 +486,22 @@ pub struct Circuit {
     /// on-chain El Gamal ciphertexts reveal no weight fingerprint.
     pub(crate) shares: [Value<pallas::Base>; 16],
 
-    // Condition 10 (Shares Hash Integrity): El Gamal ciphertext x-coordinates.
-    // These are the x-coordinates of the curve points comprising each
+    // Condition 10 (Shares Hash Integrity): El Gamal ciphertext coordinates.
+    // These are the coordinates of the curve points comprising each
     // El Gamal ciphertext. Condition 11 constrains these to be correct
-    // encryptions; condition 10 hashes them.
+    // encryptions; condition 10 hashes them (including y-coordinates to
+    // prevent ciphertext sign-malleability).
     /// X-coordinates of C1_i = r_i * G for each share (via ExtractP).
     pub(crate) enc_share_c1_x: [Value<pallas::Base>; 16],
     /// X-coordinates of C2_i = shares_i * G + r_i * ea_pk for each share (via ExtractP).
     pub(crate) enc_share_c2_x: [Value<pallas::Base>; 16],
+    /// Y-coordinates of C1_i (bound to the exact curve point, preventing sign-malleability).
+    pub(crate) enc_share_c1_y: [Value<pallas::Base>; 16],
+    /// Y-coordinates of C2_i (bound to the exact curve point, preventing sign-malleability).
+    pub(crate) enc_share_c2_y: [Value<pallas::Base>; 16],
 
     // Condition 10 (Shares Hash Integrity): per-share blind factors for blinded commitments.
-    /// Random blind factors: share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x).
+    /// Random blind factors: share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y).
     pub(crate) share_blinds: [Value<pallas::Base>; 16],
 
     // Condition 11 (Encryption Integrity): El Gamal randomness and public key.
@@ -542,10 +567,10 @@ impl Circuit {
     }
 }
 
-/// In-circuit Poseidon hash for one share commitment: `Poseidon(blind, c1_x, c2_x)`.
+/// In-circuit Poseidon hash for one share commitment: `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
 ///
 /// Uses the same parameters as the out-of-circuit [`share_commitment`] (P128Pow5T3,
-/// ConstantLength<3>, width 3, rate 2) so that native and in-circuit hashes match.
+/// ConstantLength<5>, width 3, rate 2) so that native and in-circuit hashes match.
 
 impl plonk::Circuit<pallas::Base> for Circuit {
     type Config = Config;
@@ -1145,20 +1170,20 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // ---------------------------------------------------------------
         // Condition 10: Shares Hash Integrity (blinded commitments).
         //
-        // share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x)   for i in 0..16
+        // share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)
         // shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
         //
-        // The blind factors prevent anyone who sees the encrypted shares
-        // on-chain from recomputing shares_hash and linking it to a
-        // specific vote commitment. shares_hash is an internal wire;
-        // it is not bound to the instance column. Condition 11 constrains
-        // that each (c1_i_x, c2_i_x) is a valid El Gamal encryption of
-        // shares_i. Condition 12 computes the full vote commitment
-        // H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision) and
-        // binds that value to the VOTE_COMMITMENT public input.
+        // The y-coordinates bind each share commitment to the exact curve
+        // point, preventing ciphertext sign-malleability attacks.
+        // The blind factors prevent on-chain observers from recomputing
+        // shares_hash. shares_hash is an internal wire; it is not bound to
+        // the instance column. Condition 11 constrains that each
+        // (c1_i_x, c2_i_x, c1_i_y, c2_i_y) is a valid El Gamal encryption
+        // of shares_i. Condition 12 computes the full vote commitment
+        // H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)
+        // and binds that value to the VOTE_COMMITMENT public input.
         // ---------------------------------------------------------------
 
-        // Witness the 16 blind factors and 32 El Gamal ciphertext x-coordinates.
         let blinds: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
             .map(|i| {
                 assign_free_advice(
@@ -1171,7 +1196,6 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             .try_into()
             .expect("always 16 elements");
 
-        // Witness the 16 El Gamal c1 ciphertext x-coordinates.
         let enc_c1: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
             .map(|i| assign_free_advice(
                 layouter.namespace(|| alloc::format!("witness enc_c1_x[{i}]")),
@@ -1182,7 +1206,6 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             .try_into()
             .expect("always 16 elements");
 
-        // Witness the 16 El Gamal c2 ciphertext x-coordinates.
         let enc_c2: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
             .map(|i| assign_free_advice(
                 layouter.namespace(|| alloc::format!("witness enc_c2_x[{i}]")),
@@ -1193,27 +1216,51 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             .try_into()
             .expect("always 16 elements");
 
+        let enc_c1_y: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
+            .map(|i| assign_free_advice(
+                layouter.namespace(|| alloc::format!("witness enc_c1_y[{i}]")),
+                config.advices[0],
+                self.enc_share_c1_y[i],
+            ))
+            .collect::<Result<Vec<_>, _>>()?
+            .try_into()
+            .expect("always 16 elements");
+
+        let enc_c2_y: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
+            .map(|i| assign_free_advice(
+                layouter.namespace(|| alloc::format!("witness enc_c2_y[{i}]")),
+                config.advices[0],
+                self.enc_share_c2_y[i],
+            ))
+            .collect::<Result<Vec<_>, _>>()?
+            .try_into()
+            .expect("always 16 elements");
+
         // Clone for Condition 11 before compute_shares_hash_in_circuit takes ownership.
         let enc_c1_cond11: [AssignedCell<pallas::Base, pallas::Base>; 16] =
             core::array::from_fn(|i| enc_c1[i].clone());
         let enc_c2_cond11: [AssignedCell<pallas::Base, pallas::Base>; 16] =
             core::array::from_fn(|i| enc_c2[i].clone());
+        let enc_c1_y_cond11: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+            core::array::from_fn(|i| enc_c1_y[i].clone());
+        let enc_c2_y_cond11: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+            core::array::from_fn(|i| enc_c2_y[i].clone());
 
-        // Compute share_comm_i = Poseidon(blind_i, c1_i, c2_i) for each share,
-        // then shares_hash = Poseidon(share_comm_0, ..., share_comm_15).
         let shares_hash = compute_shares_hash_in_circuit(
             || config.poseidon_chip(),
             layouter.namespace(|| "cond10: shares hash"),
             blinds,
             enc_c1,
             enc_c2,
+            enc_c1_y,
+            enc_c2_y,
         )?;
 
         // ---------------------------------------------------------------
         // Condition 11: Encryption Integrity.
         //
         // For each share i: C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk;
-        // ExtractP(C1_i) and ExtractP(C2_i) are constrained to the
+        // Both coordinates of C1_i and C2_i are constrained to the
         // witnessed enc_share cells. Implemented by the shared
         // circuit::elgamal::prove_elgamal_encryptions gadget.
         // ---------------------------------------------------------------
@@ -1243,6 +1290,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 r_cells,
                 enc_c1_cond11,
                 enc_c2_cond11,
+                enc_c1_y_cond11,
+                enc_c2_y_cond11,
             )?;
         }
 
@@ -1429,17 +1478,28 @@ mod tests {
 
     /// Computes real El Gamal encryptions for 16 shares.
     ///
-    /// Returns `(c1_x, c2_x, randomness, share_blinds, shares_hash_value)` where:
+    /// Returns `(c1_x, c2_x, c1_y, c2_y, randomness, share_blinds, shares_hash_value)` where:
     /// - `c1_x[i]` and `c2_x[i]` are correct ciphertext x-coordinates
+    /// - `c1_y[i]` and `c2_y[i]` are correct ciphertext y-coordinates
     /// - `randomness[i]` is the base field randomness used for each share
     /// - `share_blinds[i]` is the blind factor for each share commitment
     /// - `shares_hash_value` is the blinded Poseidon hash of all shares
     fn encrypt_shares(
         shares: [u64; 16],
         ea_pk: pallas::Point,
-    ) -> ([pallas::Base; 16], [pallas::Base; 16], [pallas::Base; 16], [pallas::Base; 16], pallas::Base) {
+    ) -> (
+        [pallas::Base; 16],
+        [pallas::Base; 16],
+        [pallas::Base; 16],
+        [pallas::Base; 16],
+        [pallas::Base; 16],
+        [pallas::Base; 16],
+        pallas::Base,
+    ) {
         let mut c1_x = [pallas::Base::zero(); 16];
         let mut c2_x = [pallas::Base::zero(); 16];
+        let mut c1_y = [pallas::Base::zero(); 16];
+        let mut c2_y = [pallas::Base::zero(); 16];
         // Use small deterministic randomness (fits in both Base and Scalar).
         let randomness: [pallas::Base; 16] = core::array::from_fn(|i| {
             pallas::Base::from((i as u64 + 1) * 101)
@@ -1449,16 +1509,18 @@ mod tests {
             pallas::Base::from(1001u64 + i as u64)
         });
         for i in 0..16 {
-            let (c1, c2) = elgamal_encrypt(
+            let (cx1, cx2, cy1, cy2) = elgamal_encrypt(
                 pallas::Base::from(shares[i]),
                 randomness[i],
                 ea_pk,
             );
-            c1_x[i] = c1;
-            c2_x[i] = c2;
+            c1_x[i] = cx1;
+            c2_x[i] = cx2;
+            c1_y[i] = cy1;
+            c2_y[i] = cy2;
         }
-        let hash = shares_hash(share_blinds, c1_x, c2_x);
-        (c1_x, c2_x, randomness, share_blinds, hash)
+        let hash = shares_hash(share_blinds, c1_x, c2_x, c1_y, c2_y);
+        (c1_x, c2_x, c1_y, c2_y, randomness, share_blinds, hash)
     }
 
     /// Out-of-circuit voting key derivation for tests.
@@ -1617,7 +1679,7 @@ mod tests {
         let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
         let ea_pk_x = *ea_pk_affine.coordinates().unwrap().x();
         let ea_pk_y = *ea_pk_affine.coordinates().unwrap().y();
-        let (enc_c1_x, enc_c2_x, randomness, share_blinds, shares_hash_val) =
+        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
         let mut circuit = Circuit::with_van_witnesses(
@@ -1638,6 +1700,8 @@ mod tests {
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
         circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
         circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
@@ -1709,7 +1773,7 @@ mod tests {
 
         let shares_u64: [u64; 16] = [625; 16];
         let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, randomness, share_blinds, shares_hash_val) =
+        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
         // Use authority 13 (bit 3 set) and one_shifted = 8 so condition 6 is consistent;
@@ -1734,6 +1798,8 @@ mod tests {
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
         circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
         circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
@@ -1833,7 +1899,7 @@ mod tests {
 
         let shares_u64: [u64; 16] = [625; 16];
         let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, randomness, share_blinds, shares_hash_val) =
+        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
         let wrong_vsk = pallas::Scalar::random(&mut rng);
@@ -1862,6 +1928,8 @@ mod tests {
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
         circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
         circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
@@ -1932,7 +2000,7 @@ mod tests {
 
         let shares_u64: [u64; 16] = [625; 16];
         let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, randomness, share_blinds, shares_hash_val) =
+        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
         let alpha_v = pallas::Scalar::random(&mut rng);
@@ -1959,6 +2027,8 @@ mod tests {
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
         circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
         circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
@@ -2065,7 +2135,7 @@ mod tests {
 
         // Condition 11: real El Gamal encryption.
         let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, randomness, share_blinds, shares_hash_val) =
+        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
         let mut circuit = Circuit::with_van_witnesses(
@@ -2086,6 +2156,8 @@ mod tests {
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
         circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
         circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
@@ -2354,7 +2426,7 @@ mod tests {
 
         // Condition 11: real El Gamal encryption.
         let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, randomness, share_blinds, shares_hash_val) =
+        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
         let mut circuit = Circuit::with_van_witnesses(
@@ -2375,6 +2447,8 @@ mod tests {
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
         circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
         circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
@@ -2472,7 +2546,7 @@ mod tests {
         let max_share_u64 = (1u64 << 30) - 1;
         let shares_u64: [u64; 16] = [max_share_u64; 16];
         let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, randomness, share_blinds, shares_hash_val) =
+        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
         let alpha_v = pallas::Scalar::random(&mut rng);
@@ -2499,6 +2573,8 @@ mod tests {
         circuit.shares = [Value::known(max_share); 16];
         circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
         circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
@@ -2599,7 +2675,7 @@ mod tests {
             arr
         };
         let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, randomness, share_blinds, shares_hash_val) =
+        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
         let g = pallas::Point::from(spend_auth_g_affine());
@@ -2623,6 +2699,8 @@ mod tests {
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
         circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
         circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
@@ -2704,48 +2782,55 @@ mod tests {
             core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let c2_x: [pallas::Base; 16] =
             core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let c1_y: [pallas::Base; 16] =
+            core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let c2_y: [pallas::Base; 16] =
+            core::array::from_fn(|_| pallas::Base::random(&mut rng));
 
-        let h1 = shares_hash(blinds, c1_x, c2_x);
-        let h2 = shares_hash(blinds, c1_x, c2_x);
+        let h1 = shares_hash(blinds, c1_x, c2_x, c1_y, c2_y);
+        let h2 = shares_hash(blinds, c1_x, c2_x, c1_y, c2_y);
         assert_eq!(h1, h2);
 
         // Changing any component changes the hash.
         let mut c1_x_alt = c1_x;
         c1_x_alt[2] = pallas::Base::random(&mut rng);
-        let h3 = shares_hash(blinds, c1_x_alt, c2_x);
+        let h3 = shares_hash(blinds, c1_x_alt, c2_x, c1_y, c2_y);
         assert_ne!(h1, h3);
 
         // Swapping c1 and c2 also changes the hash.
-        let h4 = shares_hash(blinds, c2_x, c1_x);
+        let h4 = shares_hash(blinds, c2_x, c1_x, c2_y, c1_y);
         assert_ne!(h1, h4);
 
         // Different blinds produce different hash.
         let blinds_alt: [pallas::Base; 16] =
             core::array::from_fn(|_| pallas::Base::random(&mut rng));
-        let h5 = shares_hash(blinds_alt, c1_x, c2_x);
+        let h5 = shares_hash(blinds_alt, c1_x, c2_x, c1_y, c2_y);
         assert_ne!(h1, h5);
     }
 
     /// Verifies the out-of-circuit share_commitment helper is deterministic
-    /// and that input order matters (Poseidon(blind, c1, c2) ≠ Poseidon(blind, c2, c1)).
+    /// and that input order matters (Poseidon(blind, c1_x, c2_x, c1_y, c2_y) ≠
+    /// Poseidon(blind, c2_x, c1_x, c2_y, c1_y)).
     #[test]
     fn share_commitment_deterministic() {
         let mut rng = OsRng;
         let blind = pallas::Base::random(&mut rng);
         let c1_x = pallas::Base::random(&mut rng);
         let c2_x = pallas::Base::random(&mut rng);
+        let c1_y = pallas::Base::random(&mut rng);
+        let c2_y = pallas::Base::random(&mut rng);
 
-        let h1 = share_commitment(blind, c1_x, c2_x);
-        let h2 = share_commitment(blind, c1_x, c2_x);
+        let h1 = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
+        let h2 = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
         assert_eq!(h1, h2);
 
         // Swapping c1 and c2 changes the hash.
-        let h3 = share_commitment(blind, c2_x, c1_x);
+        let h3 = share_commitment(blind, c2_x, c1_x, c2_y, c1_y);
         assert_ne!(h1, h3);
 
         // Different blind changes the hash.
         let blind_alt = pallas::Base::random(&mut rng);
-        let h4 = share_commitment(blind_alt, c1_x, c2_x);
+        let h4 = share_commitment(blind_alt, c1_x, c2_x, c1_y, c2_y);
         assert_ne!(h1, h4);
     }
 
@@ -2757,6 +2842,8 @@ mod tests {
         blind: pallas::Base,
         c1_x: pallas::Base,
         c2_x: pallas::Base,
+        c1_y: pallas::Base,
+        c2_y: pallas::Base,
     }
 
     #[derive(Clone)]
@@ -2810,23 +2897,35 @@ mod tests {
                 config.advices[0],
                 Value::known(self.blind),
             )?;
-            let c1_cell = assign_free_advice(
+            let c1_x_cell = assign_free_advice(
                 layouter.namespace(|| "c1_x"),
                 config.advices[0],
                 Value::known(self.c1_x),
             )?;
-            let c2_cell = assign_free_advice(
+            let c2_x_cell = assign_free_advice(
                 layouter.namespace(|| "c2_x"),
                 config.advices[0],
                 Value::known(self.c2_x),
+            )?;
+            let c1_y_cell = assign_free_advice(
+                layouter.namespace(|| "c1_y"),
+                config.advices[0],
+                Value::known(self.c1_y),
+            )?;
+            let c2_y_cell = assign_free_advice(
+                layouter.namespace(|| "c2_y"),
+                config.advices[0],
+                Value::known(self.c2_y),
             )?;
             let chip = PoseidonChip::construct(config.poseidon_config.clone());
             let result = hash_share_commitment_in_circuit(
                 chip,
                 layouter.namespace(|| "share_comm"),
                 blind_cell,
-                c1_cell,
-                c2_cell,
+                c1_x_cell,
+                c2_x_cell,
+                c1_y_cell,
+                c2_y_cell,
                 0,
             )?;
             layouter.constrain_instance(result.cell(), config.primary, 0)?;
@@ -2835,7 +2934,7 @@ mod tests {
     }
 
     /// Verifies that the in-circuit share commitment hash matches the native
-    /// share_commitment(blind, c1_x, c2_x). The test builds a minimal circuit
+    /// share_commitment(blind, c1_x, c2_x, c1_y, c2_y). The test builds a minimal circuit
     /// that computes the hash and constrains it to the instance column, then
     /// runs MockProver with the native hash as the public input.
     #[test]
@@ -2844,12 +2943,16 @@ mod tests {
         let blind = pallas::Base::random(&mut rng);
         let c1_x = pallas::Base::random(&mut rng);
         let c2_x = pallas::Base::random(&mut rng);
+        let c1_y = pallas::Base::random(&mut rng);
+        let c2_y = pallas::Base::random(&mut rng);
 
-        let expected = share_commitment(blind, c1_x, c2_x);
+        let expected = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
         let circuit = ShareCommitmentTestCircuit {
             blind,
             c1_x,
             c2_x,
+            c1_y,
+            c2_y,
         };
         let instance = vec![vec![expected]];
         // K=10 (1024 rows) is enough for one Poseidon(3) region.
@@ -2936,13 +3039,13 @@ mod tests {
         let v = pallas::Base::from(1000u64);
         let r = pallas::Base::from(42u64);
 
-        let (c1_a, c2_a) = elgamal_encrypt(v, r, ea_pk_point);
-        let (c1_b, c2_b) = elgamal_encrypt(v, r, ea_pk_point);
+        let (c1_a, c2_a, _, _) = elgamal_encrypt(v, r, ea_pk_point);
+        let (c1_b, c2_b, _, _) = elgamal_encrypt(v, r, ea_pk_point);
         assert_eq!(c1_a, c1_b);
         assert_eq!(c2_a, c2_b);
 
         // Different randomness → different C1.
-        let (c1_c, _) = elgamal_encrypt(v, pallas::Base::from(99u64), ea_pk_point);
+        let (c1_c, _, _, _) = elgamal_encrypt(v, pallas::Base::from(99u64), ea_pk_point);
         assert_ne!(c1_a, c1_c);
     }
 

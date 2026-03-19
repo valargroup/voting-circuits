@@ -86,7 +86,7 @@ pub fn create_share_reveal_proof(circuit: Circuit, instance: &Instance) -> Vec<u
 // ================================================================
 
 /// Verify a share reveal circuit proof given serialized proof bytes and
-/// the 7 public inputs.
+/// the 9 public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
 pub fn verify_share_reveal_proof(
@@ -108,7 +108,7 @@ pub fn verify_share_reveal_proof(
 /// Verify a share reveal circuit proof from raw field-element bytes.
 ///
 /// This is the lower-level entry point used by the FFI layer. It takes
-/// the proof bytes and a flat array of 7 × 32-byte LE-encoded Pallas
+/// the proof bytes and a flat array of 9 × 32-byte LE-encoded Pallas
 /// base field elements (the public inputs in canonical order).
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
@@ -118,7 +118,7 @@ pub fn verify_share_reveal_proof_raw(
 ) -> Result<(), String> {
     use pasta_curves::group::ff::PrimeField;
 
-    const NUM_PUBLIC_INPUTS: usize = 7;
+    const NUM_PUBLIC_INPUTS: usize = 9;
     const EXPECTED_BYTES: usize = NUM_PUBLIC_INPUTS * 32;
 
     if public_inputs_bytes.len() != EXPECTED_BYTES {

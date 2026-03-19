@@ -363,6 +363,8 @@ pub fn build_vote_proof_from_delegation(
     let g = pallas::Point::from(spend_auth_g_affine());
     let mut enc_c1_x = [pallas::Base::zero(); 16];
     let mut enc_c2_x = [pallas::Base::zero(); 16];
+    let mut enc_c1_y = [pallas::Base::zero(); 16];
+    let mut enc_c2_y = [pallas::Base::zero(); 16];
     let mut share_randomness = [pallas::Base::zero(); 16];
     let mut enc_share_outputs: [EncryptedShareOutput; 16] = core::array::from_fn(|i| {
         EncryptedShareOutput {
@@ -385,6 +387,8 @@ pub fn build_vote_proof_from_delegation(
 
         enc_c1_x[i] = *c1_point.coordinates().unwrap().x();
         enc_c2_x[i] = *c2_point.coordinates().unwrap().x();
+        enc_c1_y[i] = *c1_point.coordinates().unwrap().y();
+        enc_c2_y[i] = *c2_point.coordinates().unwrap().y();
 
         enc_share_outputs[i].c1 = c1_point.to_bytes();
         enc_share_outputs[i].c2 = c2_point.to_bytes();
@@ -394,9 +398,9 @@ pub fn build_vote_proof_from_delegation(
     let share_blinds: [pallas::Base; 16] =
         core::array::from_fn(|i| derive_share_blind(sk, voting_round_id, proposal_id, vote_authority_note_old, i as u8));
     let share_comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-        share_commitment(share_blinds[i], enc_c1_x[i], enc_c2_x[i])
+        share_commitment(share_blinds[i], enc_c1_x[i], enc_c2_x[i], enc_c1_y[i], enc_c2_y[i])
     });
-    let shares_hash_val = shares_hash(share_blinds, enc_c1_x, enc_c2_x);
+    let shares_hash_val = shares_hash(share_blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y);
 
     // ---- Condition 4: r_vpk = ak + [alpha_v] * G ----
     // alpha_v is now provided by the caller so they can sign with rsk_v.
@@ -451,6 +455,8 @@ pub fn build_vote_proof_from_delegation(
     circuit.shares = shares_base.map(Value::known);
     circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
     circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+    circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+    circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
     circuit.share_blinds = share_blinds.map(Value::known);
     circuit.share_randomness = share_randomness.map(Value::known);
     circuit.ea_pk = Value::known(ea_pk);

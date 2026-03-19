@@ -38,7 +38,7 @@
 //! - 9 advice columns: advices\[0..4\] general + Merkle swap, \[5\] Poseidon partial
 //!   S-box, \[6..8\] Poseidon state.
 //! - 8 fixed columns for Poseidon round constants + constants.
-//! - 1 instance column (7 public inputs).
+//! - 1 instance column (9 public inputs).
 //! - K = 11 (2,048 rows).
 
 use alloc::vec::Vec;
@@ -87,21 +87,29 @@ use crate::shares_hash::{
 pub const K: u32 = 11;
 
 // ================================================================
-// Public input offsets (7 field elements).
+// Public input offsets (9 field elements).
 // ================================================================
 
 /// Public input offset for the share nullifier (prevents double-counting).
 const SHARE_NULLIFIER: usize = 0;
 /// Public input offset for the revealed share's C1 x-coordinate.
 const ENC_SHARE_C1_X: usize = 1;
+/// Public input offset for the revealed share's C1 y-coordinate.
+///
+/// Binds the proof to the exact curve point (not just x-coordinate),
+/// preventing ciphertext sign-malleability attacks where an adversary
+/// negates ElGamal ciphertext points without invalidating the ZKP.
+const ENC_SHARE_C1_Y: usize = 2;
 /// Public input offset for the revealed share's C2 x-coordinate.
-const ENC_SHARE_C2_X: usize = 2;
+const ENC_SHARE_C2_X: usize = 3;
+/// Public input offset for the revealed share's C2 y-coordinate.
+const ENC_SHARE_C2_Y: usize = 4;
 /// Public input offset for the proposal identifier.
-const PROPOSAL_ID: usize = 3;
+const PROPOSAL_ID: usize = 5;
 /// Public input offset for the vote decision.
-const VOTE_DECISION: usize = 4;
+const VOTE_DECISION: usize = 6;
 /// Public input offset for the vote commitment tree root.
-const VOTE_COMM_TREE_ROOT: usize = 5;
+const VOTE_COMM_TREE_ROOT: usize = 7;
 /// Public input offset for the voting round identifier.
 ///
 /// Constrained in-circuit: `voting_round_id` is hashed into the share
@@ -110,7 +118,7 @@ const VOTE_COMM_TREE_ROOT: usize = 5;
 /// so `vote_comm_tree_root` alone does not provide round scoping. The chain
 /// also validates that `voting_round_id` matches an active session (Gov Steps
 /// V1 §5.4 "Out-of-circuit checks").
-const VOTING_ROUND_ID: usize = 6;
+const VOTING_ROUND_ID: usize = 8;
 
 // ================================================================
 // Out-of-circuit helpers
@@ -164,7 +172,7 @@ pub fn share_nullifier_hash(
 /// and the share commitment multiplexer gate selector.
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// Public input column (7 field elements).
+    /// Public input column (9 field elements).
     primary: Column<InstanceColumn>,
     /// 9 advice columns for private witness data.
     advices: [Column<Advice>; 9],
@@ -536,10 +544,12 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Condition 4: Primary Share Binding.
         //
         // Proves the prover knows the blind for the revealed share:
-        //   derived_comm = Poseidon(primary_blind, enc_c1_x, enc_c2_x)
+        //   derived_comm = Poseidon(primary_blind, enc_c1_x, enc_c2_x,
+        //                          enc_c1_y, enc_c2_y)
         //   share_comms[share_index] == derived_comm
         //
-        // enc_c1_x and enc_c2_x come from the public instance column.
+        // All ciphertext coordinates come from the public instance column.
+        // Including y-coordinates prevents sign-malleability attacks.
         // ---------------------------------------------------------------
 
         let enc_c1_x = layouter.assign_region(
@@ -568,13 +578,40 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             },
         )?;
 
-        // derive the commitment from primary blind
+        let enc_c1_y = layouter.assign_region(
+            || "copy enc_share_c1_y from instance",
+            |mut region| {
+                region.assign_advice_from_instance(
+                    || "enc_c1_y",
+                    config.primary,
+                    ENC_SHARE_C1_Y,
+                    config.advices[0],
+                    0,
+                )
+            },
+        )?;
+
+        let enc_c2_y = layouter.assign_region(
+            || "copy enc_share_c2_y from instance",
+            |mut region| {
+                region.assign_advice_from_instance(
+                    || "enc_c2_y",
+                    config.primary,
+                    ENC_SHARE_C2_Y,
+                    config.advices[0],
+                    0,
+                )
+            },
+        )?;
+
         let derived_comm = hash_share_commitment_in_circuit(
             config.poseidon_chip(),
-            layouter.namespace(|| "cond4: Poseidon(blind, c1, c2)"),
+            layouter.namespace(|| "cond4: Poseidon(blind, c1_x, c2_x, c1_y, c2_y)"),
             primary_blind,
             enc_c1_x,
             enc_c2_x,
+            enc_c1_y,
+            enc_c2_y,
             0,
         )?;
 
@@ -786,7 +823,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 // Instance (public inputs)
 // ================================================================
 
-/// Public inputs to the Share Reveal circuit (7 field elements).
+/// Public inputs to the Share Reveal circuit (9 field elements).
 ///
 /// These are the values posted to the vote chain that both the prover
 /// and verifier agree on. The verifier checks the proof against these
@@ -807,10 +844,17 @@ pub struct Instance {
     pub vote_comm_tree_root: pallas::Base,
     /// The voting round identifier.
     pub voting_round_id: pallas::Base,
+    /// Y-coordinate of the revealed share's El Gamal C1 component.
+    ///
+    /// Binds the proof to the exact curve point, preventing sign-malleability.
+    pub enc_share_c1_y: pallas::Base,
+    /// Y-coordinate of the revealed share's El Gamal C2 component.
+    pub enc_share_c2_y: pallas::Base,
 }
 
 impl Instance {
     /// Constructs an [`Instance`] from its constituent parts.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_parts(
         share_nullifier: pallas::Base,
         enc_share_c1_x: pallas::Base,
@@ -819,6 +863,8 @@ impl Instance {
         vote_decision: pallas::Base,
         vote_comm_tree_root: pallas::Base,
         voting_round_id: pallas::Base,
+        enc_share_c1_y: pallas::Base,
+        enc_share_c2_y: pallas::Base,
     ) -> Self {
         Instance {
             share_nullifier,
@@ -828,6 +874,8 @@ impl Instance {
             vote_decision,
             vote_comm_tree_root,
             voting_round_id,
+            enc_share_c1_y,
+            enc_share_c2_y,
         }
     }
 
@@ -839,7 +887,9 @@ impl Instance {
         alloc::vec![
             self.share_nullifier,
             self.enc_share_c1_x,
+            self.enc_share_c1_y,
             self.enc_share_c2_x,
+            self.enc_share_c2_y,
             self.proposal_id,
             self.vote_decision,
             self.vote_comm_tree_root,
@@ -873,7 +923,7 @@ mod tests {
         (ea_sk, ea_pk, ea_pk_affine)
     }
 
-    /// Returns `(c1_x, c2_x, share_blinds, share_comms, shares_hash_value)`.
+    /// Returns `(c1_x, c2_x, c1_y, c2_y, share_blinds, share_comms, shares_hash_value)`.
     fn encrypt_shares(
         shares: [u64; 16],
         ea_pk: pallas::Point,
@@ -882,10 +932,14 @@ mod tests {
         [pallas::Base; 16],
         [pallas::Base; 16],
         [pallas::Base; 16],
+        [pallas::Base; 16],
+        [pallas::Base; 16],
         pallas::Base,
     ) {
         let mut c1_x = [pallas::Base::zero(); 16];
         let mut c2_x = [pallas::Base::zero(); 16];
+        let mut c1_y = [pallas::Base::zero(); 16];
+        let mut c2_y = [pallas::Base::zero(); 16];
         let randomness: [pallas::Base; 16] = core::array::from_fn(|i| {
             pallas::Base::from((i as u64 + 1) * 101)
         });
@@ -893,19 +947,21 @@ mod tests {
             pallas::Base::from(1001u64 + i as u64)
         });
         for i in 0..16 {
-            let (c1, c2) = elgamal_encrypt(
+            let (cx1, cx2, cy1, cy2) = elgamal_encrypt(
                 pallas::Base::from(shares[i]),
                 randomness[i],
                 ea_pk,
             );
-            c1_x[i] = c1;
-            c2_x[i] = c2;
+            c1_x[i] = cx1;
+            c2_x[i] = cx2;
+            c1_y[i] = cy1;
+            c2_y[i] = cy2;
         }
         let comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-            share_commitment(share_blinds[i], c1_x[i], c2_x[i])
+            share_commitment(share_blinds[i], c1_x[i], c2_x[i], c1_y[i], c2_y[i])
         });
-        let hash = compute_shares_hash(share_blinds, c1_x, c2_x);
-        (c1_x, c2_x, share_blinds, comms, hash)
+        let hash = compute_shares_hash(share_blinds, c1_x, c2_x, c1_y, c2_y);
+        (c1_x, c2_x, c1_y, c2_y, share_blinds, comms, hash)
     }
 
     fn make_test_data(
@@ -917,7 +973,7 @@ mod tests {
 
         let (_ea_sk, ea_pk_point, _ea_pk_affine) = generate_ea_keypair();
         let shares_u64: [u64; 16] = [625; 16];
-        let (enc_c1_x, enc_c2_x, share_blinds, share_comms, shares_hash_val) =
+        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, share_blinds, share_comms, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
         let vote_commitment =
@@ -950,6 +1006,8 @@ mod tests {
             vote_decision,
             vote_comm_tree_root,
             voting_round_id,
+            enc_c1_y[share_idx as usize],
+            enc_c2_y[share_idx as usize],
         );
 
         (circuit, instance)
@@ -1034,6 +1092,8 @@ mod tests {
             instance.vote_decision,
             instance.vote_comm_tree_root,
             instance.voting_round_id,
+            instance.enc_share_c1_y,
+            instance.enc_share_c2_y,
         );
         let prover = MockProver::run(K, &circuit, vec![bad_instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
@@ -1051,6 +1111,17 @@ mod tests {
     fn test_share_reveal_wrong_voting_round_id() {
         let (circuit, mut instance) = make_test_data(0);
         instance.voting_round_id = pallas::Base::from(12345u64);
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert!(prover.verify().is_err());
+    }
+
+    /// Proves that flipping c1_y to -c1_y (sign malleability) is detected.
+    /// The share reveal circuit binds to the full curve point via share_commitment(blind, c1_x, c2_x, c1_y, c2_y).
+    /// Negating c1_y changes the commitment, so the proof must fail.
+    #[test]
+    fn test_share_reveal_sign_flip_detected() {
+        let (circuit, mut instance) = make_test_data(0);
+        instance.enc_share_c1_y = -instance.enc_share_c1_y;
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
     }
