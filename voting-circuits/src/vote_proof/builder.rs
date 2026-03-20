@@ -238,6 +238,7 @@ pub fn build_vote_proof_from_delegation(
     ea_pk: pallas::Affine,
     alpha_v: pallas::Scalar,
     proposal_authority_old_u64: u64,
+    single_share: bool,
 ) -> Result<VoteProofBundle, VoteProofBuildError> {
     // ---- Key derivation (matches delegation's key hierarchy) ----
 
@@ -333,10 +334,23 @@ pub fn build_vote_proof_from_delegation(
     // Each share must be in [0, 2^30) for the range check.
     // Shares sum to num_ballots (ballot count), not raw zatoshi.
 
-    let sixteenth = num_ballots / 16;
-    let remainder = num_ballots - sixteenth * 15;
-    let mut shares_u64: [u64; 16] = [sixteenth; 16];
-    shares_u64[15] = remainder;
+    let shares_u64: [u64; 16] = if single_share {
+        // Last-moment mode: put entire weight in share[0], rest are zero.
+        // Only one share is revealed to the helper, minimizing latency
+        // when voting near the deadline.
+        let mut s = [0u64; 16];
+        s[0] = num_ballots;
+        s
+    } else {
+        // Normal mode: split weight roughly evenly across all 16 shares.
+        // Each of the first 15 shares gets floor(num_ballots/16);
+        // share[15] absorbs the remainder so the sum is exact.
+        let sixteenth = num_ballots / 16;
+        let remainder = num_ballots - sixteenth * 15;
+        let mut s = [sixteenth; 16];
+        s[15] = remainder;
+        s
+    };
 
     // Verify all shares are in range
     for (i, &s) in shares_u64.iter().enumerate() {
