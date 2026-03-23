@@ -184,7 +184,7 @@ Single `ConstantLength<4>` call matching ZKP 1 condition 14's governance nullifi
 - **`voting_round_id`**: cell-equality-linked to condition 2's instance copy, scoping the nullifier to this round.
 - **`vote_authority_note_old`**: cell-equality-linked to condition 2's derived VAN hash, binding conditions 2 and 5 together.
 
-**Structure:** Single `ConstantLength<4>` Poseidon hash (2 permutations at rate 2, ~130 rows). This is the same flat 4-input structure used by ZKP 1 condition 14 (`gov_null_hash` in `delegation/imt.rs`).
+**Structure:** Single `ConstantLength<4>` Poseidon hash (2 permutations at rate 2, ~130 rows).
 
 **Constraint:** The circuit computes the nested hash and enforces `constrain_instance(result, VAN_NULLIFIER)` — binding the derived value to the public input at offset 0. This is the first `constrain_instance` call in the circuit.
 

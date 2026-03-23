@@ -2,12 +2,12 @@
 
 A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384 rows). The circuit handles the keystone note (conditions 1–8) and five per-note slots (conditions 9–15 ×5) in one proof.
 
-**Public inputs:** 13 field elements.
+**Public inputs:** 14 field elements.
 **Per-note slots:** 5 (unused slots are padded with zero-value notes).
 
 ## Inputs
 
-- Public (13 field elements)
+- Public (14 field elements)
    * **nf_signed** (offset 0): the derived nullifier of the keystone note.
    * **rk** (offsets 1–2): the randomized public key for spend authorization (x, y coordinates).
    * **cmx_new** (offset 3): the extracted note commitment (`ExtractP(cm_new)`) of the output note.
@@ -15,7 +15,8 @@ A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384
    * **vote_round_id** (offset 5): the vote round identifier — prevents cross-round replay.
    * **nc_root** (offset 6): the note commitment tree root (shared anchor for Merkle path verification).
    * **nf_imt_root** (offset 7): the nullifier Indexed Merkle Tree root (for non-membership proofs).
-   * **gov_null_1..5** (offsets 8–12): per-note governance nullifiers, one per note slot.
+   * **gov_null_1..5** (offsets 8–12): per-note alternate nullifiers, one per note slot.
+   * **dom** (offset 13): the nullifier domain — derived out-of-circuit as Poseidon("governance authorization", vote_round_id).
 
 - Private (keystone note)
    * **rho_signed** ("rho"): the nullifier of the note that was spent to create the signed note.
@@ -46,7 +47,6 @@ A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384
    * **cm**: note commitment, witnessed as an ECC point.
    * **path**: Sinsemilla-based Merkle authentication path (32 siblings).
    * **pos**: leaf position in the note commitment tree.
-   * **is_note_real**: boolean flag — 1 for real notes, 0 for padded notes.
    * **is_internal**: boolean flag — 1 for internal (change) scope notes, 0 for external scope notes.
    * **imt_low**: the interval start (low bound of the bracketing leaf).
    * **imt_width**: the interval width (`high - low`, pre-computed during tree construction).
@@ -267,16 +267,16 @@ The `v` cell is a `NoteValue` inside NoteCommit. A separate `v_base` cell (as `p
 
 ## 10. Merkle Path Validity (x5)
 
-Purpose: prove that the note's commitment exists in the note commitment tree, gated by `is_note_real`.
+Purpose: prove that the note's commitment exists in the note commitment tree. Uses Orchard's standard dummy note mechanism: the check is gated by value (ZIP §Note Padding).
 
 ```
 root = MerklePath(cmx, pos, path)
-is_note_real * (root - nc_root) = 0
+v * (root - nc_root) = 0
 ```
 
-The `GadgetMerklePath` gadget computes the Merkle root from the leaf (`cmx`) and the 32-level authentication path using Sinsemilla hashing. The `q_per_note` custom gate then enforces that either the computed root equals the public `nc_root` anchor or `is_note_real = 0` (padded note — root mismatch is allowed).
+The `GadgetMerklePath` gadget computes the Merkle root from the leaf (`cmx`) and the 32-level authentication path using Sinsemilla hashing. The `q_per_note` custom gate then enforces that either the computed root equals the public `nc_root` anchor or `v = 0` (dummy note — root mismatch is allowed).
 
-For padded notes, the path can be all-zeros; the Merkle computation still runs but the root-check gate is gated off.
+For dummy notes (v=0), the path can be all-zeros; the Merkle computation still runs but the root-check gate is gated off.
 
 **Constructions:** `MerkleChip` (configs 1+2), `SinsemillaChip` (configs 1+2 via MerkleChip), `q_per_note`.
 
@@ -328,7 +328,7 @@ Purpose: prove the note's nullifier has NOT been spent, using a Poseidon-based I
    - `left + right = current + sibling`
    - `bool_check(pos_bit)`
 
-3. **Root check**: The `q_per_note` gate constrains `imt_root = nf_imt_root` (the public input). Unlike the Merkle root check in condition 10, this is **not gated** by `is_note_real` — padded notes must also provide a valid IMT non-membership proof.
+3. **Root check**: The `q_per_note` gate constrains `imt_root = nf_imt_root` (the public input). This is unconditional — dummy notes must also provide a valid IMT non-membership proof.
 
 4. **Interval check** (`q_interval` gate): Proves `low <= real_nf <= low + width` using 2 constraints:
    - `x = real_nf - low` (offset into interval)
@@ -342,40 +342,22 @@ Purpose: prove the note's nullifier has NOT been spent, using a Poseidon-based I
 
 **Constructions:** `PoseidonChip`, `LookupRangeCheckConfig`, `q_imt_swap`, `q_interval`, `q_per_note`.
 
-## 14. Governance Nullifier Publication (x5)
+## 14. Alternate Nullifier Integrity (x5)
 
-Purpose: derive a domain-separated governance nullifier that is published as a public input. This prevents double-voting without revealing the note's true Orchard nullifier.
+Purpose: derive an alternate nullifier (ZIP §Alternate Nullifier Derivation) that is published as a public input. This prevents double-delegation without revealing the note's true Orchard nullifier.
 
 ```
-gov_null = Poseidon(nk, domain_tag, vote_round_id, real_nf)
+nf_dom = Poseidon(nk, dom, real_nf)
 ```
 
-Single Poseidon hash (`ConstantLength<4>`, 2 permutations at rate 2):
+Single Poseidon hash (`ConstantLength<3>`, 2 permutations at rate 2):
 - **nk** — the nullifier deriving key, making the result unforgeable.
-- **domain_tag** — `"governance authorization"` encoded as a little-endian Pallas field element, assigned via `assign_constant` so the value is baked into the verification key. Separates from other nullifier domains.
-- **vote_round_id** — binds to the voting round.
+- **dom** — the nullifier domain (public input at offset 13), derived out-of-circuit as `Poseidon("governance authorization", vote_round_id)`. Scopes the alternate nullifier to this application instance and voting round.
 - **real_nf** — the note's true nullifier from condition 12.
 
 The result is constrained to the public input at offset `GOV_NULL_1..5`.
 
 **Constructions:** `PoseidonChip`.
-
-## 15. Padded-Note Zero-Value Enforcement (x5)
-
-Purpose: ensure padded (unused) note slots contribute zero voting weight.
-
-```
-(1 - is_note_real) * v = 0
-bool_check(is_note_real)
-```
-
-The `q_per_note` custom gate enforces:
-1. `is_note_real` is boolean (0 or 1).
-2. If `is_note_real = 0`, then `v = 0`. A padded note cannot carry value.
-
-For real notes (`is_note_real = 1`), the constraint is trivially satisfied and `v` can be any value.
-
-**Constructions:** `q_per_note`.
 
 ## FAQ
 
@@ -387,4 +369,4 @@ For real notes (`is_note_real = 1`), the constraint is trivially satisfied and `
 
 - **"Why two Sinsemilla configs (and two NoteCommitChips)?"** — This mirrors the audited Orchard action circuit, which uses two Sinsemilla configs (one for spend-side NoteCommit, one for output-side NoteCommit) with column assignments `advices[..5]` and `advices[5..]`. Each `SinsemillaChip::configure` call creates its own selectors and gates, and each `NoteCommitChip::configure` creates decomposition/canonicity gates tied to the Sinsemilla config it receives — so two Sinsemilla configs require two NoteCommitChips. We replicate this exact layout so the delegation circuit inherits the audited chip wiring without modification. It may be possible to collapse to a single config (condition 9 already runs 5 NoteCommits on config 1 without conflict), but reusing the known-correct pattern avoids the need for a separate audit of the chip interaction.
 
-- **"Why do padded notes use the real ivk?"** — Padded notes must pass condition 11 (`pk_d = [selected_ivk] * g_d`) using the same ivk (or ivk_internal) derived in condition 5. The builder creates padded notes with `fvk.address_at(...)` so their addresses are valid under the real ivk. This is safe because padded notes have `v = 0` (enforced by condition 15) and `is_note_real = 0` (so condition 10 skips the Merkle root check). They contribute nothing to the vote weight but their governance nullifiers are still published (condition 14), which is harmless — the consuming protocol can ignore nullifiers for zero-value notes or treat them as no-ops.
+- **"Why do dummy notes use the real ivk?"** — Dummy notes must pass condition 11 (`pk_d = [selected_ivk] * g_d`) using the same ivk (or ivk_internal) derived in condition 5. The builder creates dummy notes with `fvk.address_at(...)` so their addresses are valid under the real ivk. This is safe because dummy notes have `v = 0` (so condition 10 skips the Merkle root check via `v * (root - anchor) = 0`). They contribute nothing to the vote weight but their alternate nullifiers are still published (condition 14), which is harmless — the consuming protocol can ignore nullifiers for zero-value notes or treat them as no-ops.
