@@ -16,9 +16,8 @@ use pasta_curves::pallas;
 /// Total Poseidon calls per proof = 1 (leaf hash) + 29 (path) = 30.
 pub const IMT_DEPTH: usize = 29;
 
-/// Domain tag for governance authorization nullifier (per spec §1.3.2, condition 14).
-///
-/// `"governance authorization"` encoded as a little-endian Pallas field element.
+/// Protocol identifier for governance authorization, encoded as a little-endian
+/// Pallas field element. Used to derive the nullifier domain for this application.
 pub(crate) fn gov_auth_domain_tag() -> pallas::Base {
     let mut bytes = [0u8; 32];
     bytes[..24].copy_from_slice(b"governance authorization");
@@ -30,21 +29,31 @@ pub(crate) fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base 
     poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([a, b])
 }
 
-/// Compute governance nullifier out-of-circuit (per spec §1.3.2, condition 14).
+/// Derive the nullifier domain for a voting round (out of circuit).
 ///
-/// `gov_null = Poseidon(nk, domain_tag, vote_round_id, real_nf)`
+/// `dom = Poseidon("governance authorization", vote_round_id)`
 ///
-/// where `domain_tag` = `"governance authorization"` as a field element.
-/// Single ConstantLength<4> call (2 permutations at rate=2).
+/// The nullifier domain scopes alternate nullifiers to a specific application
+/// instance (ZIP §Nullifier Domains). This application hashes its protocol
+/// identifier with the vote round ID to produce a unique domain per round.
+pub fn derive_nullifier_domain(vote_round_id: pallas::Base) -> pallas::Base {
+    poseidon_hash_2(gov_auth_domain_tag(), vote_round_id)
+}
+
+/// Compute alternate nullifier out-of-circuit (ZIP §Alternate Nullifier Derivation).
+///
+/// `nf_dom = Poseidon(nk, dom, nf^old)`
+///
+/// where `dom` is the nullifier domain (see [`derive_nullifier_domain`]).
+/// Single ConstantLength<3> call (2 permutations at rate=2).
 pub(crate) fn gov_null_hash(
     nk: pallas::Base,
-    vote_round_id: pallas::Base,
+    dom: pallas::Base,
     real_nf: pallas::Base,
 ) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<4>, 3, 2>::init().hash([
+    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
         nk,
-        gov_auth_domain_tag(),
-        vote_round_id,
+        dom,
         real_nf,
     ])
 }

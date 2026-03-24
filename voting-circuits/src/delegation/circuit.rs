@@ -1,6 +1,6 @@
 //! The Delegation circuit implementation.
 //!
-//! A single circuit proving all 15 conditions of the delegation ZKP:
+//! A single circuit proving all 14 conditions of the delegation ZKP:
 //!
 //! - **Condition 1**: Signed note commitment integrity.
 //! - **Condition 2**: Nullifier integrity.
@@ -11,12 +11,11 @@
 //! - **Condition 7**: Governance commitment integrity (hashes `num_ballots`).
 //! - **Condition 8**: Ballot scaling (`num_ballots = floor(v_total / 12,500,000)`).
 //! - **Condition 9** (×5): Note commitment integrity.
-//! - **Condition 10** (×5): Merkle path validity.
+//! - **Condition 10** (×5): Merkle path validity (gated by value; dummy notes skip).
 //! - **Condition 11** (×5): Diversified address integrity.
 //! - **Condition 12** (×5): Private nullifier derivation.
 //! - **Condition 13** (×5): IMT non-membership.
-//! - **Condition 14** (×5): Governance nullifier publication.
-//! - **Condition 15** (×5): Padded-note zero-value enforcement.
+//! - **Condition 14** (×5): Alternate nullifier integrity.
 
 use alloc::vec::Vec;
 use group::{Curve, GroupEncoding};
@@ -92,7 +91,7 @@ use orchard::constants::MERKLE_DEPTH_ORCHARD;
 pub const K: u32 = 14;
 
 // ================================================================
-// Public input offsets (13 field elements).
+// Public input offsets (14 field elements).
 // ================================================================
 
 /// Public input offset for the derived nullifier.
@@ -120,6 +119,8 @@ const GOV_NULL_5: usize = 12;
 
 /// Gov null offsets indexed by note slot.
 const GOV_NULL_OFFSETS: [usize; 5] = [GOV_NULL_1, GOV_NULL_2, GOV_NULL_3, GOV_NULL_4, GOV_NULL_5];
+/// Public input offset for the nullifier domain.
+const DOM: usize = 13;
 
 /// Maximum proposal authority — the default for a fresh delegation.
 ///
@@ -231,9 +232,9 @@ pub struct Config {
     // Uses advices[5..]. Two configs are required because MerkleChip alternates between
     // them at each tree level (even levels use config 1, odd levels use config 2).
     merkle_config_2: MerkleConfig<OrchardHashDomains, OrchardCommitDomains, OrchardFixedBases>,
-    // Per-note custom gate selector (conditions 10, 13, 15).
-    // Enforces: is_note_real is boolean, padded notes have v=0,
-    // real notes' Merkle root matches nc_root, IMT root matches nf_imt_root.
+    // Per-note custom gate selector (conditions 10, 13).
+    // Enforces: v * (root - nc_root) = 0 (Merkle check, skipped for v=0 dummy notes),
+    // imt_root = nf_imt_root.
     q_per_note: Selector,
     // Per-note scope selection gate (condition 11).
     // Muxes between ivk (external) and ivk_internal based on is_internal flag.
@@ -308,7 +309,7 @@ impl Config {
 // NoteSlotWitness
 // ================================================================
 
-/// Private witness data for a single note slot (conditions 9–15).
+/// Private witness data for a single note slot (conditions 9–14).
 #[derive(Clone, Debug, Default)]
 pub struct NoteSlotWitness {
     pub(crate) g_d: Value<NonIdentityPallasPoint>,
@@ -320,7 +321,6 @@ pub struct NoteSlotWitness {
     pub(crate) cm: Value<NoteCommitment>,
     pub(crate) path: Value<[MerkleHashOrchard; MERKLE_DEPTH_ORCHARD]>,
     pub(crate) pos: Value<u32>,
-    pub(crate) is_note_real: Value<bool>,
     pub(crate) imt_low: Value<pallas::Base>,
     pub(crate) imt_width: Value<pallas::Base>,
     pub(crate) imt_leaf_pos: Value<u32>,
@@ -357,7 +357,7 @@ pub struct Circuit {
     pk_d_new: Value<DiversifiedTransmissionKey>,
     psi_new: Value<pallas::Base>,
     rcm_new: Value<NoteCommitTrapdoor>,
-    // Per-note slots (conditions 9–15).
+    // Per-note slots (conditions 9–14).
     notes: [NoteSlotWitness; 5],
     // Gov commitment blinding factor (condition 7).
     van_comm_rand: Value<pallas::Base>,
@@ -402,7 +402,7 @@ impl Circuit {
         self
     }
 
-    /// Sets the five per-note slot witnesses (conditions 9–15).
+    /// Sets the five per-note slot witnesses (conditions 9–14).
     pub fn with_notes(mut self, notes: [NoteSlotWitness; 5]) -> Self {
         self.notes = notes;
         self
@@ -505,40 +505,31 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // ── Custom gates ─────────────────────────────────────────────────
 
-        // Per-note custom gates (conditions 10, 13, 15).
+        // Per-note custom gates (conditions 10, 13).
         // q_per_note is a selector that activates these constraints only on rows
         // where note data is assigned. Each of the (up to 5) input notes gets one
         // such row; on all other rows the selector is 0 and the gate is inactive.
         let q_per_note = meta.selector();
         meta.create_gate("Per-note checks", |meta| {
             let q_per_note = meta.query_selector(q_per_note);
-            let is_note_real = meta.query_advice(advices[0], Rotation::cur());
-            let v = meta.query_advice(advices[1], Rotation::cur());
-            let root = meta.query_advice(advices[2], Rotation::cur());
-            let anchor = meta.query_advice(advices[3], Rotation::cur());
-            let imt_root = meta.query_advice(advices[4], Rotation::cur());
-            let nf_imt_root = meta.query_advice(advices[5], Rotation::cur());
-
-            let one = Expression::Constant(pallas::Base::one());
+            let v = meta.query_advice(advices[0], Rotation::cur());
+            let root = meta.query_advice(advices[1], Rotation::cur());
+            let anchor = meta.query_advice(advices[2], Rotation::cur());
+            let imt_root = meta.query_advice(advices[3], Rotation::cur());
+            let nf_imt_root = meta.query_advice(advices[4], Rotation::cur());
 
             Constraints::with_selector(
                 q_per_note,
                 [
-                    // Cond 15: padded notes must have v=0. Real notes pass trivially.
+                    // Cond 10: Merkle root must match the public nc_root for notes
+                    // with non-zero value. Dummy notes (v=0) skip this check, matching
+                    // Orchard's standard dummy note mechanism (ZIP §Note Padding).
                     (
-                        "(1 - is_note_real) * v = 0",
-                        (one.clone() - is_note_real.clone()) * v,
-                    ),
-                    // Prevent is_note_real from being an arbitrary field element.
-                    ("bool_check is_note_real", bool_check(is_note_real.clone())),
-                    // Cond 10: real notes' Merkle root must match the public nc_root.
-                    // Padded notes skip this (is_note_real=0 zeroes the expression).
-                    (
-                        "is_note_real * (root - anchor) = 0",
-                        is_note_real * (root - anchor),
+                        "v * (root - anchor) = 0",
+                        v * (root - anchor),
                     ),
                     // Cond 13: IMT root from non-membership proof must match public
-                    // nf_imt_root. Not gated — padded notes check too (§1.3.5).
+                    // nf_imt_root. Not gated — dummy notes check too.
                     ("imt_root = nf_imt_root", imt_root - nf_imt_root),
                 ],
             )
@@ -874,19 +865,20 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 self.rcm_signed.as_ref().map(|rcm| rcm.inner()),
             )?;
 
-            // The signed note's value is always 0.
-            // Zero is enforced transitively: v_signed feeds into NoteCommit -> cm_signed
+            // The signed note's value is always 1 (ZIP §Dummy Signed Note).
+            // Value 1 ensures hardware wallets render the transaction on screen.
+            // The value is enforced transitively: v_signed feeds into NoteCommit -> cm_signed
             // -> derive_nullifier -> nf_signed, which is constrained to the public input.
-            // Any non-zero value would produce a different nf_signed, breaking the proof.
+            // Any different value would produce a different nf_signed, breaking the proof.
             let v_signed = assign_free_advice(
-                layouter.namespace(|| "v_signed = 0"),
+                layouter.namespace(|| "v_signed = 1"),
                 config.advices[0],
-                Value::known(NoteValue::zero()),
+                Value::known(NoteValue::from_raw(1)),
             )?;
 
             // Compute NoteCommit from witness data.
             let derived_cm_signed = note_commit(
-                layouter.namespace(|| "NoteCommit_rcm_signed(g_d, pk_d, 0, rho, psi)"),
+                layouter.namespace(|| "NoteCommit_rcm_signed(g_d, pk_d, 1, rho, psi)"),
                 config.sinsemilla_chip_1(),
                 config.ecc_chip(),
                 config.note_commit_chip_signed(),
@@ -941,6 +933,22 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                     || "vote_round_id",
                     config.primary,
                     VOTE_ROUND_ID,
+                    config.advices[0],
+                    0,
+                )
+            },
+        )?;
+
+        // dom: the nullifier domain (ZIP §Nullifier Domains). Used in condition 14
+        // (alternate nullifier derivation). Derived out-of-circuit as
+        // Poseidon("governance authorization", vote_round_id).
+        let dom_cell = layouter.assign_region(
+            || "copy dom from instance",
+            |mut region| {
+                region.assign_advice_from_instance(
+                    || "dom",
+                    config.primary,
+                    DOM,
                     config.advices[0],
                     0,
                 )
@@ -1007,7 +1015,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 &ivk_cell,
                 &ivk_internal_cell,
                 &nk,
-                &vote_round_id_cell,
+                &dom_cell,
                 &nc_root_cell,
                 &nf_imt_root_cell,
                 &self.notes[i],
@@ -1376,10 +1384,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 }
 
 // ================================================================
-// Per-note slot synthesis (conditions 9–15).
+// Per-note slot synthesis (conditions 9–14).
 // ================================================================
 
-/// Synthesize conditions 9–15 for a single note slot.
+/// Synthesize conditions 9–14 for a single note slot.
 ///
 /// Returns `(cmx_cell, v_cell, gov_null_cell)` — the extracted commitment,
 /// value, and governance nullifier for use in the rho binding (condition 3),
@@ -1392,7 +1400,7 @@ fn synthesize_note_slot(
     ivk_cell: &AssignedCell<pallas::Base, pallas::Base>,
     ivk_internal_cell: &AssignedCell<pallas::Base, pallas::Base>,
     nk_cell: &AssignedCell<pallas::Base, pallas::Base>,
-    vote_round_id_cell: &AssignedCell<pallas::Base, pallas::Base>,
+    dom_cell: &AssignedCell<pallas::Base, pallas::Base>,
     nc_root_cell: &AssignedCell<pallas::Base, pallas::Base>,
     nf_imt_root_cell: &AssignedCell<pallas::Base, pallas::Base>,
     note: &NoteSlotWitness,
@@ -1574,39 +1582,31 @@ fn synthesize_note_slot(
     )?;
 
     // ---------------------------------------------------------------
-    // Condition 14: Governance nullifier integrity.
-    // gov_null = Poseidon(nk, domain_tag, vote_round_id, real_nf)
+    // Condition 14: Alternate nullifier integrity.
+    // nf_dom = Poseidon(nk, dom, real_nf)
     // ---------------------------------------------------------------
 
-    // Derives a governance-domain nullifier published on the vote chain to prevent
-    // double-delegation. Single ConstantLength<4> Poseidon hash (2 permutations
-    // at rate=2) that:
+    // Derives an alternate nullifier published on the vote chain to prevent
+    // double-delegation (ZIP §Alternate Nullifier Derivation). Single
+    // ConstantLength<3> Poseidon hash (2 permutations at rate=2) that:
     //   - Is keyed by nk, so it can't be linked to real_nf even when real_nf is
     //     later revealed on mainchain
-    //   - Is domain-separated from other nullifier uses ("governance authorization" tag)
-    //   - Is scoped to this voting round (vote_round_id)
+    //   - Is scoped to this application instance via dom (a public input derived
+    //     out-of-circuit from the protocol identifier and vote_round_id)
     //
     // The result is constrained to the public instance so the vote chain can
     // track which notes have already been delegated this round.
 
-    // Domain tag = "governance authorization" as a field element, baked into
-    // the verification key.
-    let domain_tag = assign_constant(
-        layouter.namespace(|| format!("note {s} gov_auth domain tag")),
-        config.advices[0],
-        crate::delegation::imt::gov_auth_domain_tag(),
-    )?;
-
-    // Poseidon(nk, domain_tag, vote_round_id, real_nf)
+    // Poseidon(nk, dom, real_nf)
     let gov_null = {
         let poseidon_hasher =
-            PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<4>, 3, 2>::init(
+            PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init(
                 config.poseidon_chip(),
                 layouter.namespace(|| format!("note {s} gov_null init")),
             )?;
         poseidon_hasher.hash(
-            layouter.namespace(|| format!("note {s} Poseidon(nk, domain_tag, vote_round_id, real_nf)")),
-            [nk_cell.clone(), domain_tag, vote_round_id_cell.clone(), real_nf.inner().clone()],
+            layouter.namespace(|| format!("note {s} Poseidon(nk, dom, real_nf)")),
+            [nk_cell.clone(), dom_cell.clone(), real_nf.inner().clone()],
         )?
     };
 
@@ -1658,35 +1658,27 @@ fn synthesize_note_slot(
     )?;
 
     // ---------------------------------------------------------------
-    // Custom gate region: conditions 10 + 13 + 15.
+    // Custom gate region: conditions 10 + 13.
     // ---------------------------------------------------------------
 
     // Activates the q_per_note gate, which ties together results from the
     // preceding conditions into a single row of checks:
-    //   - Cond 15: padded notes (is_note_real=0) must have v=0
-    //   - Cond 10: real notes' Merkle root must match the public nc_root
+    //   - Cond 10: v * (root - nc_root) = 0 — Merkle membership (skipped for dummy notes)
     //   - Cond 13: IMT root must match public nf_imt_root
     //
-    // All six values are copied from earlier regions via copy constraints,
+    // All five values are copied from earlier regions via copy constraints,
     // so the gate operates on the same cells that the upstream gadgets produced.
-
-    let is_note_real = assign_free_advice(
-        layouter.namespace(|| format!("note {s} witness is_note_real")),
-        config.advices[0],
-        note.is_note_real.map(|b| pallas::Base::from(b as u64)),
-    )?;
 
     layouter.assign_region(
         || format!("note {s} per-note checks"),
         |mut region| {
             config.q_per_note.enable(&mut region, 0)?;
 
-            is_note_real.copy_advice(|| "is_note_real", &mut region, config.advices[0], 0)?;
-            v.copy_advice(|| "v", &mut region, config.advices[1], 0)?;
-            root.copy_advice(|| "calculated root", &mut region, config.advices[2], 0)?;
-            nc_root_cell.copy_advice(|| "nc_root (anchor)", &mut region, config.advices[3], 0)?;
-            imt_root.copy_advice(|| "imt_root", &mut region, config.advices[4], 0)?;
-            nf_imt_root_cell.copy_advice(|| "nf_imt_root", &mut region, config.advices[5], 0)?;
+            v.copy_advice(|| "v", &mut region, config.advices[0], 0)?;
+            root.copy_advice(|| "calculated root", &mut region, config.advices[1], 0)?;
+            nc_root_cell.copy_advice(|| "nc_root (anchor)", &mut region, config.advices[2], 0)?;
+            imt_root.copy_advice(|| "imt_root", &mut region, config.advices[3], 0)?;
+            nf_imt_root_cell.copy_advice(|| "nf_imt_root", &mut region, config.advices[4], 0)?;
 
             Ok(())
         },
@@ -1703,7 +1695,7 @@ fn synthesize_note_slot(
 // Instance
 // ================================================================
 
-/// Public inputs to the delegation circuit (13 field elements).
+/// Public inputs to the delegation circuit (14 field elements).
 ///
 /// These are the values posted to the vote chain (§2.4) that both the prover
 /// and verifier agree on. The verifier checks the proof against these values
@@ -1726,6 +1718,8 @@ pub struct Instance {
     pub nf_imt_root: pallas::Base,
     /// Per-note governance nullifiers (5 slots).
     pub gov_null: [pallas::Base; 5],
+    /// The nullifier domain (ZIP §Nullifier Domains).
+    pub dom: pallas::Base,
 }
 
 impl Instance {
@@ -1739,6 +1733,7 @@ impl Instance {
         nc_root: pallas::Base,
         nf_imt_root: pallas::Base,
         gov_null: [pallas::Base; 5],
+        dom: pallas::Base,
     ) -> Self {
         Instance {
             nf_signed,
@@ -1749,6 +1744,7 @@ impl Instance {
             nc_root,
             nf_imt_root,
             gov_null,
+            dom,
         }
     }
 
@@ -1782,6 +1778,7 @@ impl Instance {
             self.gov_null[2],
             self.gov_null[3],
             self.gov_null[4],
+            self.dom,
         ]
     }
 }
@@ -1794,7 +1791,7 @@ impl Instance {
 mod tests {
     use alloc::string::{String, ToString};
     use super::*;
-    use crate::delegation::imt::{gov_null_hash, ImtProofData, ImtProvider, SpacedLeafImtProvider};
+    use crate::delegation::imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider, SpacedLeafImtProvider};
     use orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
         note::{commitment::ExtractedNoteCommitment, Note, Rho},
@@ -1814,7 +1811,6 @@ mod tests {
         auth_path: &[MerkleHashOrchard; MERKLE_DEPTH_ORCHARD],
         pos: u32,
         imt: &ImtProofData,
-        is_real: bool,
         is_internal: bool,
     ) -> NoteSlotWitness {
         let rho = note.rho();
@@ -1835,7 +1831,6 @@ mod tests {
             cm: Value::known(cm),
             path: Value::known(*auth_path),
             pos: Value::known(pos),
-            is_note_real: Value::known(is_real),
             imt_low: Value::known(imt.low),
             imt_width: Value::known(imt.width),
             imt_leaf_pos: Value::known(imt.leaf_pos),
@@ -1863,6 +1858,7 @@ mod tests {
         let ak: SpendValidatingKey = fvk.clone().into();
 
         let vote_round_id = pallas::Base::random(&mut rng);
+        let dom = derive_nullifier_domain(vote_round_id);
         let van_comm_rand = pallas::Base::random(&mut rng);
 
         // Shared IMT provider (consistent root for all notes).
@@ -1910,9 +1906,9 @@ mod tests {
         // IMT proof for real note (from shared provider).
         let real_nf = real_note.nullifier(&fvk);
         let imt_0 = imt_provider.non_membership_proof(real_nf.0).unwrap();
-        let gov_null_0 = gov_null_hash(nk_val, vote_round_id, real_nf.0);
+        let gov_null_0 = gov_null_hash(nk_val, dom, real_nf.0);
 
-        let slot_0 = make_note_slot(&real_note, &auth_path_0, 0u32, &imt_0, true, false);
+        let slot_0 = make_note_slot(&real_note, &auth_path_0, 0u32, &imt_0, false);
 
         // Padded notes (slots 1-4): zero-value notes with addresses from the real ivk.
         let mut note_slots = vec![slot_0];
@@ -1935,14 +1931,13 @@ mod tests {
             let pad_cmx = ExtractedNoteCommitment::from(pad_note.commitment()).inner();
             let pad_nf = pad_note.nullifier(&fvk);
             let pad_imt = imt_provider.non_membership_proof(pad_nf.0).unwrap();
-            let pad_gov_null = gov_null_hash(nk_val, vote_round_id, pad_nf.0);
+            let pad_gov_null = gov_null_hash(nk_val, dom, pad_nf.0);
 
             note_slots.push(make_note_slot(
                 &pad_note,
                 &dummy_auth_path,
                 0u32,
                 &pad_imt,
-                false,
                 false,
             ));
             cmx_values.push(pad_cmx);
@@ -1986,11 +1981,11 @@ mod tests {
             vote_round_id,
         );
 
-        // Create signed note with this rho.
+        // Create signed note with this rho (value = 1 per ZIP §Dummy Signed Note).
         let sender_address = fvk.address_at(0u32, Scope::External);
         let signed_note = Note::new(
             sender_address,
-            NoteValue::zero(),
+            NoteValue::from_raw(1),
             Rho::from_nf_old(Nullifier(rho)),
             &mut rng,
         );
@@ -2026,6 +2021,7 @@ mod tests {
             nc_root,
             nf_imt_root,
             [gov_nulls[0], gov_nulls[1], gov_nulls[2], gov_nulls[3], gov_nulls[4]],
+            dom,
         );
 
         TestData { circuit, instance }
@@ -2128,13 +2124,14 @@ mod tests {
     fn instance_to_halo2_roundtrip() {
         let t = make_test_data();
         let pi = t.instance.to_halo2_instance();
-        assert_eq!(pi.len(), 13, "Expected exactly 13 public inputs");
+        assert_eq!(pi.len(), 14, "Expected exactly 14 public inputs");
         assert_eq!(pi[NF_SIGNED], t.instance.nf_signed.0);
         assert_eq!(pi[CMX_NEW], t.instance.cmx_new);
         assert_eq!(pi[VAN_COMM], t.instance.van_comm);
         assert_eq!(pi[NC_ROOT], t.instance.nc_root);
         assert_eq!(pi[NF_IMT_ROOT], t.instance.nf_imt_root);
         assert_eq!(pi[GOV_NULL_1], t.instance.gov_null[0]);
+        assert_eq!(pi[DOM], t.instance.dom);
     }
 
     #[test]
@@ -2149,9 +2146,9 @@ mod tests {
         );
     }
 
-    // Condition 10: is_note_real = 1 with a non-existent note claiming non-zero value.
-    // The Merkle path check is the only guard here — condition 15 allows v > 0 on
-    // "real" notes, but condition 10 requires the commitment to open to nc_root.
+    // Condition 10: v > 0 with a non-existent note claiming non-zero value.
+    // The Merkle path check gates on v: v * (root - anchor) = 0.
+    // When v > 0, root must equal nc_root — a fake auth path fails.
     #[test]
     fn fake_real_note_nonzero_value_fails() {
         let mut rng = OsRng;
@@ -2178,22 +2175,22 @@ mod tests {
 
         // All empty siblings — this auth path does not open to nc_root.
         let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
-        // is_note_real = true activates condition 10: is_note_real * (root - nc_root) = 0.
-        let fake_slot = make_note_slot(&fake_note, &dummy_auth_path, 0u32, &fake_imt, true, false);
+        // v > 0 activates condition 10: v * (root - nc_root) = 0.
+        let fake_slot = make_note_slot(&fake_note, &dummy_auth_path, 0u32, &fake_imt, false);
 
-        // Replace slot 1 (was padded, v=0, is_note_real=false) with the fake claim.
+        // Replace slot 1 (was padded, v=0) with the fake claim.
         circuit.notes[1] = fake_slot;
 
         let prover = MockProver::run(K, &circuit, vec![pi]).unwrap();
         // Condition 10: the dummy auth path produces a computed root ≠ nc_root,
-        // so the Merkle path check rejects the non-existent "real" note.
+        // and v > 0, so the Merkle path check rejects the non-existent note.
         assert!(prover.verify().is_err());
     }
 
     // Condition 11 copy-constraint: confirms that ivk from condition 5 (the signed
     // note's key) is enforced in ALL per-note pk_d ownership checks via copy constraint.
     // If the per-note addresses use a different key, condition 11 fails even though
-    // condition 10 (Merkle path) is skipped (is_note_real = false).
+    // condition 10 (Merkle path) is skipped (v=0 dummy note).
     #[test]
     fn different_ivk_per_note_fails() {
         let mut rng = OsRng;
@@ -2221,14 +2218,13 @@ mod tests {
         let foreign_imt = imt_provider.non_membership_proof(foreign_nf.0).unwrap();
 
         let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
-        // is_note_real = false: condition 10 (Merkle root check) is skipped.
+        // v=0: condition 10 (Merkle root check) is skipped.
         // Condition 11 still applies to all slots and cannot be bypassed.
         let foreign_slot = make_note_slot(
             &foreign_note,
             &dummy_auth_path,
             0u32,
             &foreign_imt,
-            false,
             false,
         );
 

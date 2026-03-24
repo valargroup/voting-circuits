@@ -21,7 +21,7 @@ use orchard::{
 
 use super::{
     circuit::{self, van_commitment_hash, rho_binding_hash, NoteSlotWitness},
-    imt::{gov_null_hash, ImtProofData, ImtProvider},
+    imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
 };
 
 /// Rho and rseed for a single padded note, captured during Phase 1 (PCZT construction).
@@ -66,7 +66,7 @@ pub struct RealNoteInput {
 pub struct DelegationBundle {
     /// The merged delegation circuit.
     pub circuit: circuit::Circuit,
-    /// Public inputs (13 field elements).
+    /// Public inputs (14 field elements).
     pub instance: circuit::Instance,
 }
 
@@ -139,6 +139,9 @@ pub fn build_delegation_bundle(
     let nk_val = fvk.nk().inner();
     let ak: SpendValidatingKey = fvk.clone().into();
 
+    // Derive the nullifier domain for this round (ZIP §Nullifier Domains).
+    let dom = derive_nullifier_domain(vote_round_id);
+
     // Collect per-note data.
     let mut note_slots = Vec::with_capacity(5);
     let mut cmx_values = Vec::with_capacity(5);
@@ -159,8 +162,8 @@ pub fn build_delegation_bundle(
 
         // Condition 12: real nullifier for IMT non-membership.
         let real_nf = note.nullifier(fvk);
-        // Condition 14: governance nullifier = Poseidon(nk, domain_tag, vote_round_id, real_nf).
-        let gov_null = gov_null_hash(nk_val, vote_round_id, real_nf.0);
+        // Condition 14: alternate nullifier = Poseidon(nk, dom, real_nf).
+        let gov_null = gov_null_hash(nk_val, dom, real_nf.0);
 
         let slot = NoteSlotWitness {
             g_d: Value::known(recipient.g_d()),
@@ -174,7 +177,6 @@ pub fn build_delegation_bundle(
             cm: Value::known(cm),
             path: Value::known(input.merkle_path.auth_path()),
             pos: Value::known(input.merkle_path.position()),
-            is_note_real: Value::known(true),
             imt_low: Value::known(input.imt_proof.low),
             imt_width: Value::known(input.imt_proof.width),
             imt_leaf_pos: Value::known(input.imt_proof.leaf_pos),
@@ -188,10 +190,9 @@ pub fn build_delegation_bundle(
         gov_nulls.push(gov_null);
     }
 
-    // Pad remaining slots to 5 with zero-value dummy notes (§1.3.5).
-    // Padded notes use random rho/psi/rcm, v=0, and is_note_real=false.
-    // The circuit still runs all constraints uniformly; condition 10 (Merkle path)
-    // and condition 15 (v=0) are gated by is_note_real.
+    // Pad remaining slots to 5 with zero-value dummy notes (ZIP §Note Padding).
+    // Dummy notes use v=0, which gates condition 10 (Merkle path) via
+    // v * (root - anchor) = 0. All other conditions run unconditionally.
     for i in n_real..5 {
         // Use a high diversifier index to avoid collision with real notes.
         let pad_addr = fvk.address_at((1000 + i) as u32, Scope::External);
@@ -223,12 +224,12 @@ pub fn build_delegation_bundle(
         let cmx = ExtractedNoteCommitment::from(cm.clone()).inner();
 
         let real_nf = pad_note.nullifier(fvk);
-        let gov_null = gov_null_hash(nk_val, vote_round_id, real_nf.0);
+        let gov_null = gov_null_hash(nk_val, dom, real_nf.0);
 
         // Get IMT non-membership proof for this padded note's nullifier.
         let imt_proof = imt_provider.non_membership_proof(real_nf.0)?;
 
-        // Merkle path: zeros (condition 10 is skipped for padded notes).
+        // Merkle path: dummy (condition 10 is skipped for v=0 notes).
         let merkle_path = MerklePath::dummy(&mut *rng);
 
         let slot = NoteSlotWitness {
@@ -243,7 +244,6 @@ pub fn build_delegation_bundle(
             cm: Value::known(cm),
             path: Value::known(merkle_path.auth_path()),
             pos: Value::known(merkle_path.position()),
-            is_note_real: Value::known(false),
             imt_low: Value::known(imt_proof.low),
             imt_width: Value::known(imt_proof.width),
             imt_leaf_pos: Value::known(imt_proof.leaf_pos),
@@ -300,19 +300,20 @@ pub fn build_delegation_bundle(
         vote_round_id,
     );
 
-    // Construct the keystone (signed) note (§1.3.4).
-    // This is a zero-value dummy note whose rho is bound to the delegation via condition 3.
+    // Construct the keystone (signed) note (ZIP §Dummy Signed Note).
+    // Value is 1 so that hardware wallets (Keystone) render the transaction.
+    // The rho is bound to the delegation via condition 3.
     let sender_address = fvk.address_at(0u32, Scope::External);
     let signed_rho = Rho::from_nf_old(Nullifier(rho));
     let signed_note = if let Some(pre) = precomputed {
         let rseed = RandomSeed::from_bytes(pre.rseed_signed, &signed_rho)
             .expect("precomputed rseed_signed must be valid");
-        Note::from_parts(sender_address, NoteValue::zero(), signed_rho, rseed)
+        Note::from_parts(sender_address, NoteValue::from_raw(1), signed_rho, rseed)
             .expect("precomputed signed note must be valid")
     } else {
         Note::new(
             sender_address,
-            NoteValue::zero(),
+            NoteValue::from_raw(1),
             signed_rho,
             &mut *rng,
         )
@@ -364,6 +365,7 @@ pub fn build_delegation_bundle(
         nc_root,
         nf_imt_root,
         [gov_nulls[0], gov_nulls[1], gov_nulls[2], gov_nulls[3], gov_nulls[4]],
+        dom,
     );
 
     Ok(DelegationBundle { circuit, instance })
