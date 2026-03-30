@@ -1,10 +1,12 @@
 //! IMT (Indexed Merkle Tree) utilities for the delegation proof system.
 //!
 //! Provides out-of-circuit helpers for building and verifying Poseidon-based
-//! Indexed Merkle Tree non-membership proofs using the (low, width) leaf model.
-//! Each leaf stores a (low, width) pair where width = high - low; the leaf hash
-//! is Poseidon(low, width), then a standard Merkle path authenticates the leaf.
-//! A non-membership proof shows that a nullifier falls within the interval.
+//! Indexed Merkle Tree non-membership proofs using K=2 punctured-range leaves.
+//! Each leaf stores three sorted nullifier boundaries `[nf_lo, nf_mid, nf_hi]`
+//! and the leaf hash is `Poseidon3(nf_lo, nf_mid, nf_hi)`, followed by a
+//! standard Merkle path authenticating the leaf.
+//! A non-membership proof shows that a nullifier falls strictly inside
+//! `(nf_lo, nf_hi)` and is not equal to `nf_mid`.
 //! Used by the delegation circuit and builder.
 
 use alloc::string::String;
@@ -13,7 +15,7 @@ use halo2_gadgets::poseidon::primitives::{self as poseidon, ConstantLength};
 use pasta_curves::pallas;
 
 /// Depth of the nullifier Indexed Merkle Tree Merkle path (Poseidon-based).
-/// Total Poseidon calls per proof = 1 (leaf hash) + 29 (path) = 30.
+/// Total Poseidon calls per proof = 2 (leaf hash, ConstantLength<3>) + 29 (path) = 31.
 pub const IMT_DEPTH: usize = 29;
 
 /// Protocol identifier for governance authorization, encoded as a little-endian
@@ -27,6 +29,12 @@ pub(crate) fn gov_auth_domain_tag() -> pallas::Base {
 /// Compute Poseidon hash of two field elements (out of circuit).
 pub(crate) fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base {
     poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([a, b])
+}
+
+/// Compute Poseidon hash of three field elements (out of circuit).
+/// Uses `ConstantLength<3>` (width-3 sponge, 2 absorption blocks).
+pub(crate) fn poseidon_hash_3(a: pallas::Base, b: pallas::Base, c: pallas::Base) -> pallas::Base {
+    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([a, b, c])
 }
 
 /// Derive the nullifier domain for a voting round (out of circuit).
@@ -51,26 +59,22 @@ pub(crate) fn gov_null_hash(
     dom: pallas::Base,
     real_nf: pallas::Base,
 ) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([
-        nk,
-        dom,
-        real_nf,
-    ])
+    poseidon_hash_3(nk, dom, real_nf)
 }
 
-/// IMT non-membership proof data ((low, width) leaf model).
+/// IMT non-membership proof data (K=2 punctured-range leaf model).
 ///
-/// Each leaf stores a (low, width) pair where width = high - low.
-/// The leaf hash is `Poseidon(low, width)`, followed by a standard
-/// 29-level Merkle path to the root.
+/// Each leaf stores three sorted nullifier boundaries `[nf_lo, nf_mid, nf_hi]`.
+/// The leaf hash is `Poseidon3(nf_lo, nf_mid, nf_hi)`, followed by a standard
+/// 29-level Merkle path to the root. Non-membership is proven by showing:
+///   1. `nf_lo < value < nf_hi` (strict interval)
+///   2. `value != nf_mid` (non-equality with interior nullifier)
 #[derive(Clone, Debug)]
 pub struct ImtProofData {
     /// The Merkle root of the IMT.
     pub root: pallas::Base,
-    /// Interval start (low bound of the bracketing leaf).
-    pub low: pallas::Base,
-    /// Interval width (`high - low`, pre-computed during tree construction).
-    pub width: pallas::Base,
+    /// Three sorted nullifier boundaries: `[nf_lo, nf_mid, nf_hi]`.
+    pub nf_bounds: [pallas::Base; 3],
     /// Position of the leaf in the tree.
     pub leaf_pos: u32,
     /// Sibling hashes along the 29-level Merkle path (pure siblings).
@@ -110,10 +114,10 @@ use ff::Field;
 
 /// Precomputed empty subtree hashes for the IMT (Poseidon-based).
 ///
-/// `empty[0] = Poseidon(0, 0)` (hash of an empty (low=0, width=0) leaf),
+/// `empty[0] = Poseidon3(0, 0, 0)` (hash of an all-zero punctured-range leaf),
 /// `empty[i] = Poseidon(empty[i-1], empty[i-1])` for i >= 1.
 pub fn empty_imt_hashes() -> Vec<pallas::Base> {
-    let empty_leaf = poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
+    let empty_leaf = poseidon_hash_3(pallas::Base::zero(), pallas::Base::zero(), pallas::Base::zero());
     let mut hashes = vec![empty_leaf];
     for _ in 1..=IMT_DEPTH {
         let prev = *hashes.last().unwrap();
@@ -122,55 +126,120 @@ pub fn empty_imt_hashes() -> Vec<pallas::Base> {
     hashes
 }
 
-/// IMT provider with evenly-spaced brackets ((low, width) leaf model).
+/// Sentinel spacing exponent: sentinels are placed at `k * 2^249`.
+/// With K=2 punctured ranges each leaf spans two consecutive intervals,
+/// giving outer span `2 * 2^249 = 2^250` — matching the circuit's 250-bit
+/// range check.
+const SENTINEL_EXPONENT: u64 = 249;
+
+/// Number of sentinel multiples: `0, 1*step, 2*step, ..., 32*step`.
+/// `32 * 2^249 = 2^254` covers the Pallas field (p ≈ 2^254.9).
+const SENTINEL_COUNT: u64 = 32;
+
+/// Build the sorted, deduplicated, odd-count sentinel list used by both
+/// [`SpacedLeafImtProvider`] and the production `prepare_nullifiers` path.
 ///
-/// Creates 17 brackets at intervals of 2^250, covering the entire Pallas field
-/// (p ~= 16.something x 2^250). Each bracket k has low = k*step + 1 and
-/// width = (k+1)*step - 1 - low, stored as (low, width) leaves at positions
-/// 0..16 in a 32-leaf subtree. Any hash-derived nullifier will fall within one
-/// bracket.
+/// Sentinels: `k * 2^249` for `k = 0..=32`, plus `p - 1` to close the tail.
+/// If the count is even after dedup, `Fp::from(2)` is inserted after sentinel 0
+/// to make it odd (collision probability ≈ 2^{-254}).
+fn build_sentinel_list() -> Vec<pallas::Base> {
+    let step = pallas::Base::from(2u64).pow([SENTINEL_EXPONENT, 0, 0, 0]);
+    let mut nfs: Vec<pallas::Base> = (0u64..=SENTINEL_COUNT)
+        .map(|k| step * pallas::Base::from(k))
+        .collect();
+    nfs.push(-pallas::Base::one()); // p - 1
+    nfs.sort();
+    nfs.dedup();
+    if nfs.len() % 2 == 0 {
+        debug_assert_eq!(nfs[0], pallas::Base::zero(), "sentinel 0 must be first");
+        nfs.insert(1, pallas::Base::from(2u64));
+    }
+    nfs
+}
+
+/// Build punctured-range triples from a sorted, deduplicated, odd-count
+/// nullifier list. Mirrors `imt_tree::tree::build_punctured_ranges` so the
+/// test fixture is protected by the same ordering invariant as production.
+fn build_punctured_ranges_local(sorted_nfs: &[pallas::Base]) -> Vec<[pallas::Base; 3]> {
+    let n = sorted_nfs.len();
+    assert!(n >= 3, "need at least 3 sorted nullifiers, got {n}");
+    assert!(n % 2 == 1, "sorted nullifier count must be odd (got {n})");
+
+    let num_leaves = (n - 1) / 2;
+    (0..num_leaves)
+        .map(|i| {
+            let base = i * 2;
+            let (lo, mid, hi) = (sorted_nfs[base], sorted_nfs[base + 1], sorted_nfs[base + 2]);
+            assert!(
+                lo < mid && mid < hi,
+                "punctured range {i} violates strict ordering: \
+                 nf_lo={lo:?}, nf_mid={mid:?}, nf_hi={hi:?}"
+            );
+            [lo, mid, hi]
+        })
+        .collect()
+}
+
+/// Find the punctured-range index containing `value`. Mirrors
+/// `imt_tree::tree::find_punctured_range_for_value`.
+fn find_range_for_value(ranges: &[[pallas::Base; 3]], value: pallas::Base) -> Option<usize> {
+    let i = ranges.partition_point(|[nf_lo, _, _]| *nf_lo < value);
+    if i == 0 {
+        return None;
+    }
+    let idx = i - 1;
+    let [nf_lo, nf_mid, nf_hi] = ranges[idx];
+    let offset = value - nf_lo;
+    let span = nf_hi - nf_lo;
+    if offset == pallas::Base::zero() || offset >= span {
+        return None;
+    }
+    if value == nf_mid {
+        return None;
+    }
+    Some(idx)
+}
+
+/// IMT provider with evenly-spaced K=2 punctured-range brackets.
+///
+/// Mirrors the production sentinel injection path: sentinels at `k * 2^249`
+/// for `k = 0..=32`, plus `p - 1`, sorted, deduplicated, and padded to odd
+/// count with `Fp::from(2)`. Each interior leaf spans exactly `2^250`,
+/// satisfying the circuit's 250-bit range check. The tail leaf covers
+/// `[32*step, p-1]` with span `≈ 2^126`, well under the bound.
 ///
 /// Used for proof generation (fixture generators) and testing.
 #[derive(Debug)]
 pub struct SpacedLeafImtProvider {
     /// The root of the IMT.
     root: pallas::Base,
-    /// Bracket data: `(low, width)` for each of the 17 brackets.
-    leaves: Vec<(pallas::Base, pallas::Base)>,
-    /// Bottom 5 levels of the 32-leaf subtree.
-    /// `subtree_levels[0]` has 32 leaf hashes Poseidon(low, width),
+    /// Punctured-range triples: `[nf_lo, nf_mid, nf_hi]` for each leaf.
+    leaves: Vec<[pallas::Base; 3]>,
+    /// Bottom levels of the subtree (32-leaf subtree → 5 levels).
+    /// `subtree_levels[0]` has 32 leaf hashes Poseidon3(nf_lo, nf_mid, nf_hi),
     /// `subtree_levels[5]` has 1 subtree root.
     subtree_levels: Vec<Vec<pallas::Base>>,
 }
 
 impl SpacedLeafImtProvider {
-    /// Create a new spaced-leaf IMT provider ((low, width) leaf model).
+    /// Create a new spaced-leaf IMT provider (K=2 punctured-range model).
     ///
-    /// Builds 17 brackets at positions 0..16 in a 32-leaf subtree:
-    /// - Bracket k (k=0..15): low = k*step+1, width = (k+1)*step-1 - low
-    /// - Bracket 16: low = 16*step+1, width = (p-1) - low
+    /// Builds the same sentinel layout as the production `prepare_nullifiers`
+    /// path: sorted, deduplicated, padded to odd count, then grouped into
+    /// punctured-range triples with strict ordering validation.
     pub fn new() -> Self {
-        let step = pallas::Base::from(2u64).pow([250, 0, 0, 0]);
+        let sorted_nfs = build_sentinel_list();
+        let leaves = build_punctured_ranges_local(&sorted_nfs);
         let empty = empty_imt_hashes();
 
-        // Build 17 brackets.
-        let mut leaves = Vec::with_capacity(17);
-        for k in 0u64..17 {
-            let low = step * pallas::Base::from(k) + pallas::Base::one();
-            let high = if k < 16 {
-                step * pallas::Base::from(k + 1) - pallas::Base::one()
-            } else {
-                -pallas::Base::one() // p - 1
-            };
-            let width = high - low;
-            leaves.push((low, width));
-        }
-
-        // Build 32-leaf subtree. Each leaf is Poseidon(low, width).
-        let empty_leaf_hash = poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
+        let empty_leaf_hash = poseidon_hash_3(
+            pallas::Base::zero(),
+            pallas::Base::zero(),
+            pallas::Base::zero(),
+        );
         let mut level0 = vec![empty_leaf_hash; 32];
-        for (k, (low, width)) in leaves.iter().enumerate() {
-            level0[k] = poseidon_hash_2(*low, *width);
+        for (k, bounds) in leaves.iter().enumerate() {
+            level0[k] = poseidon_hash_3(bounds[0], bounds[1], bounds[2]);
         }
 
         let mut subtree_levels = vec![level0];
@@ -183,7 +252,6 @@ impl SpacedLeafImtProvider {
             subtree_levels.push(current);
         }
 
-        // Compute full root: hash subtree root up through levels 5..30 with empty siblings.
         let mut root = subtree_levels[5][0];
         for l in 5..IMT_DEPTH {
             root = poseidon_hash_2(root, empty[l]);
@@ -203,21 +271,18 @@ impl ImtProvider for SpacedLeafImtProvider {
     }
 
     fn non_membership_proof(&self, nf: pallas::Base) -> Result<ImtProofData, ImtError> {
-        // Determine which bracket nf falls in: k = nf >> 250.
-        // In the LE byte repr, bit 250 is bit 2 of byte 31.
-        let repr = nf.to_repr();
-        let k = (repr.as_ref()[31] >> 2) as usize;
-        let k = k.min(16); // clamp to valid range
+        let k = find_range_for_value(&self.leaves, nf).ok_or_else(|| {
+            ImtError(alloc::format!(
+                "nullifier {nf:?} not in any punctured range"
+            ))
+        })?;
 
-        let (low, width) = self.leaves[k];
+        let nf_bounds = self.leaves[k];
         let leaf_pos = k as u32;
 
         let empty = empty_imt_hashes();
-
-        // Build Merkle path (29 pure siblings).
         let mut path = [pallas::Base::zero(); IMT_DEPTH];
 
-        // Levels 0..4: siblings from the 32-leaf subtree.
         let mut idx = k;
         for l in 0..5 {
             let sibling_idx = idx ^ 1;
@@ -225,15 +290,13 @@ impl ImtProvider for SpacedLeafImtProvider {
             idx >>= 1;
         }
 
-        // Levels 5..28: empty subtree hashes (all leaves beyond position 31 are empty).
         for l in 5..IMT_DEPTH {
             path[l] = empty[l];
         }
 
         Ok(ImtProofData {
             root: self.root,
-            low,
-            width,
+            nf_bounds,
             leaf_pos,
             path,
         })
