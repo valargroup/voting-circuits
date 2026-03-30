@@ -48,8 +48,7 @@ A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384
    * **path**: Sinsemilla-based Merkle authentication path (32 siblings).
    * **pos**: leaf position in the note commitment tree.
    * **is_internal**: boolean flag — 1 for internal (change) scope notes, 0 for external scope notes.
-   * **imt_low**: the interval start (low bound of the bracketing leaf).
-   * **imt_width**: the interval width (`high - low`, pre-computed during tree construction).
+   * **imt_nf_bounds**: three sorted nullifier boundaries `[nf_lo, nf_mid, nf_hi]` from the K=2 punctured-range leaf.
    * **imt_leaf_pos**: position of the leaf in the IMT.
    * **imt_path**: Poseidon-based IMT Merkle authentication path (29 pure siblings).
 
@@ -317,11 +316,11 @@ Same `DeriveNullifier` construction as condition 2, but applied to each delegate
 
 ## 13. IMT Non-Membership (x5)
 
-Purpose: prove the note's nullifier has NOT been spent, using a Poseidon-based Indexed Merkle Tree with a (low, width) leaf model. Each leaf stores `(low, width)` where `width = high - low` is pre-computed during tree construction.
+Purpose: prove the note's nullifier has NOT been spent, using a Poseidon-based Indexed Merkle Tree with K=2 punctured-range leaves. Each leaf stores three sorted nullifier boundaries `[nf_lo, nf_mid, nf_hi]` and covers the punctured interval `(nf_lo, nf_hi) \ {nf_mid}`.
 
 **Approach:**
 
-1. **Leaf hash**: `leaf_hash = Poseidon(low, width)` — authenticates both interval bounds via the Merkle root.
+1. **Leaf hash**: `leaf_hash = Poseidon3(nf_lo, nf_mid, nf_hi)` — a `ConstantLength<3>` Poseidon hash (two permutations) that authenticates all three boundaries via the Merkle root.
 
 2. **Merkle path** (29 levels, starting from `leaf_hash`): At each level, a `q_imt_swap` gate conditionally swaps `(current, sibling)` into `(left, right)` based on the position bit, then `Poseidon(left, right)` computes the parent. The swap gate constrains:
    - `left = current + pos_bit * (sibling - current)`
@@ -330,17 +329,20 @@ Purpose: prove the note's nullifier has NOT been spent, using a Poseidon-based I
 
 3. **Root check**: The `q_per_note` gate constrains `imt_root = nf_imt_root` (the public input). This is unconditional — dummy notes must also provide a valid IMT non-membership proof.
 
-4. **Interval check** (`q_interval` gate): Proves `low <= real_nf <= low + width` using 2 constraints:
-   - `x = real_nf - low` (offset into interval)
-   - `x_shifted = 2^250 - width + x - 1` (shifted for upper bound check)
-   - `x` is range-checked to `[0, 2^250)` → `real_nf >= low`
-   - `x_shifted` is range-checked to `[0, 2^250)` → `real_nf <= low + width`
+4. **Punctured interval check** (`q_interval` + `q_neq` gates): Proves `nf_lo < real_nf < nf_hi` AND `real_nf != nf_mid` using 3 constraints:
+   - `x_lo = real_nf - nf_lo - 1` (strict lower bound offset)
+   - `x_hi = nf_hi - real_nf - 1` (strict upper bound offset)
+   - `(real_nf - nf_mid) * diff_inv = 1` (non-equality via inverse witness)
+   - `x_lo` is range-checked to `[0, 2^250)` → `real_nf > nf_lo`
+   - `x_hi` is range-checked to `[0, 2^250)` → `real_nf < nf_hi`
 
-**Leaf authentication**: `width` is authenticated via `Poseidon(low, width) → Merkle root` — a forged `width` produces the wrong root.
+**Leaf authentication**: All three boundaries are authenticated via `Poseidon3(nf_lo, nf_mid, nf_hi) → Merkle root` — forging any boundary produces the wrong root. The strict ordering `nf_lo < nf_mid < nf_hi` is enforced by tree construction (sorted nullifier input) and locked by the Merkle commitment.
 
-**250-bit range bound assumption:** The 250-bit range check constrains bracket intervals to `< 2^250`. Since the Pallas field has order `p ≈ 2^254.9`, the IMT operator must pre-populate sentinel leaves at intervals of at most `2^250` to ensure every nullifier falls within a valid bracket. With ~17 evenly-spaced brackets (at multiples of `2^250`), the entire field is covered. The `SpacedLeafImtProvider` implements this strategy.
+**250-bit range bound assumption:** The 250-bit range check requires `nf_hi - nf_lo < 2^250`. Since the Pallas field has order `p ≈ 2^254.9`, the IMT operator must pre-populate sentinel nullifiers at intervals of at most `2^249` (so each K=2 leaf spans at most `2 * 2^249 = 2^250`). With 33 evenly-spaced sentinels at multiples of `2^249` plus `p-1` to close the tail, the entire field is covered. The `SpacedLeafImtProvider` implements this strategy.
 
-**Constructions:** `PoseidonChip`, `LookupRangeCheckConfig`, `q_imt_swap`, `q_interval`, `q_per_note`.
+**Why outer-interval + non-equality instead of two sub-interval checks:** An alternative design would check `nf_lo < value < nf_mid` OR `nf_mid < value < nf_hi` separately, which would bound each sub-span independently and allow coarser sentinel spacing. However, OR requires a witness selector bit and two MUX constraints in-circuit (5 custom constraints total), whereas the current approach checks the single outer interval `(nf_lo, nf_hi)` and patches the hole with a cheap inverse-witness non-equality `(value - nf_mid) * inv = 1` (3 custom constraints total). The trade-off is 16 extra off-chain sentinels (33 vs 17) in exchange for a simpler gate and 2 fewer constraints per note slot (10 fewer across all 5 slots).
+
+**Constructions:** `PoseidonChip`, `LookupRangeCheckConfig`, `q_imt_swap`, `q_interval`, `q_neq`, `q_per_note`.
 
 ## 14. Alternate Nullifier Integrity (x5)
 
