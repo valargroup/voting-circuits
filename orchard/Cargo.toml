@@ -100,11 +100,8 @@ harness = false
 name = "circuit"
 harness = false
 
-[profile.dev]
-opt-level = 1       # Faster runtime for ZK circuits without full release optimization cost
-
 [profile.release]
-debug = false
+debug = true
 
 [profile.bench]
-debug = false
+debug = true
