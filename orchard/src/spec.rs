@@ -287,7 +287,7 @@ pub(crate) fn extract_p_bottom(point: CtOption<pallas::Point>) -> CtOption<palla
 
 /// The field element representation of a u64 integer represented by
 /// an L-bit little-endian bitstring.
-pub fn lebs2ip_field<F: PrimeField, const L: usize>(bits: &[bool; L]) -> F {
+pub(crate) fn lebs2ip_field<F: PrimeField, const L: usize>(bits: &[bool; L]) -> F {
     F::from(lebs2ip::<L>(bits))
 }
 
@@ -296,7 +296,7 @@ pub fn lebs2ip_field<F: PrimeField, const L: usize>(bits: &[bool; L]) -> F {
 /// # Panics
 ///
 /// Panics if the bitstring is longer than 64 bits.
-pub fn lebs2ip<const L: usize>(bits: &[bool; L]) -> u64 {
+pub(crate) fn lebs2ip<const L: usize>(bits: &[bool; L]) -> u64 {
     assert!(L <= 64);
     bits.iter()
         .enumerate()
@@ -309,7 +309,7 @@ pub fn lebs2ip<const L: usize>(bits: &[bool; L]) -> u64 {
 ///
 /// Panics if the expected length of the sequence `NUM_BITS` exceeds
 /// 64.
-pub fn i2lebsp<const NUM_BITS: usize>(int: u64) -> [bool; NUM_BITS] {
+pub(crate) fn i2lebsp<const NUM_BITS: usize>(int: u64) -> [bool; NUM_BITS] {
     assert!(NUM_BITS <= 64);
     gen_const_array(|mask: usize| (int & (1 << mask)) != 0)
 }

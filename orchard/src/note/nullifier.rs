@@ -30,8 +30,7 @@ impl Nullifier {
     ///
     /// Instead of explicitly sampling for a unique nullifier, we rely here on the size of
     /// the base field to make the chance of sampling a colliding nullifier negligible.
-    /// Generates a random dummy nullifier.
-    pub fn dummy(rng: &mut impl RngCore) -> Self {
+    pub(crate) fn dummy(rng: &mut impl RngCore) -> Self {
         Nullifier(extract_p(&pallas::Point::random(rng)))
     }
 

@@ -905,10 +905,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // The out-of-circuit verifier checks that the vote signature is valid under r_vpk,
         // so this links the ZKP to the signature without revealing ak.
         //
-        // Uses the shared gadget from orchard::shared_primitives – a 1:1 copy of
+        // Uses the shared gadget from crate::circuit::spend_authority – a 1:1 copy of
         // the upstream Orchard spend authority check:
         //   https://github.com/zcash/orchard/blob/main/src/circuit.rs#L542-L558
-        orchard::shared_primitives::spend_authority::prove_spend_authority(
+        crate::circuit::spend_authority::prove_spend_authority(
             ecc_chip.clone(),
             layouter.namespace(|| "cond4 spend authority"),
             self.alpha_v,

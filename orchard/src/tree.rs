@@ -69,7 +69,7 @@ impl Anchor {
     }
 
     /// Returns the inner base field element.
-    pub fn inner(&self) -> pallas::Base {
+    pub(crate) fn inner(&self) -> pallas::Base {
         self.0
     }
 

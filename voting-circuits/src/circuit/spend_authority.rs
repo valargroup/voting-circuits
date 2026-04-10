@@ -18,8 +18,8 @@
 //!            (§ 4.15, Spend Authorization Signature)
 //!
 //! This module extracts that logic into a reusable gadget so that both the
-//! Orchard action circuit and the voting delegation/vote-proof circuits can
-//! share the exact same constraint code.
+//! voting delegation and vote-proof circuits can share the exact same
+//! constraint code as the upstream Orchard action circuit.
 
 use halo2_proofs::{
     circuit::{Layouter, Value},
@@ -27,7 +27,7 @@ use halo2_proofs::{
 };
 use pasta_curves::pallas;
 
-use crate::constants::{OrchardFixedBases, OrchardFixedBasesFull};
+use orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
 use halo2_gadgets::ecc::{
     chip::EccChip, FixedPoint, Point, ScalarFixed,
 };
