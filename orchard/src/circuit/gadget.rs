@@ -122,7 +122,7 @@ pub fn assign_constant<F: Field>(
 /// `ValueCommit^Orchard` from [Section 5.4.8.3 Homomorphic Pedersen commitments (Sapling and Orchard)].
 ///
 /// [Section 5.4.8.3 Homomorphic Pedersen commitments (Sapling and Orchard)]: https://zips.z.cash/protocol/protocol.pdf#concretehomomorphiccommit
-pub fn value_commit_orchard<
+pub(in crate::circuit) fn value_commit_orchard<
     EccChip: EccInstructions<
         pallas::Affine,
         FixedPoints = OrchardFixedBases,
