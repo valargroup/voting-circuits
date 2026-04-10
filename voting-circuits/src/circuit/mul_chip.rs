@@ -3,9 +3,19 @@ use halo2_proofs::{
     plonk::{self, Advice, Column, ConstraintSystem, Constraints, Selector},
     poly::Rotation,
 };
+use ff::Field;
 use pasta_curves::pallas;
 
-use super::MulInstruction;
+/// An instruction set for multiplying two circuit words (field elements).
+pub trait MulInstruction<F: Field>: Chip<F> {
+    /// Constraints `a * b` and returns the product.
+    fn mul(
+        &self,
+        layouter: impl Layouter<F>,
+        a: &AssignedCell<F, F>,
+        b: &AssignedCell<F, F>,
+    ) -> Result<AssignedCell<F, F>, plonk::Error>;
+}
 
 /// Configuration for the multiplication chip.
 #[derive(Clone, Debug)]

@@ -27,14 +27,13 @@ use halo2_proofs::{
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
 
 use crate::circuit::address_ownership::prove_address_ownership;
+use crate::circuit::mul_chip::{MulChip, MulConfig, MulInstruction};
 use orchard::{
     circuit::{
         commit_ivk::{CommitIvkChip, CommitIvkConfig},
         gadget::{
             add_chip::{AddChip, AddConfig},
-            mul_chip::{MulChip, MulConfig},
             assign_constant, assign_free_advice, derive_nullifier, note_commit, AddInstruction,
-            MulInstruction,
         },
         note_commit::{NoteCommitChip, NoteCommitConfig},
     },
