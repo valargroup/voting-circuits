@@ -33,8 +33,8 @@ use halo2_gadgets::sinsemilla::chip::SinsemillaChip;
 
 /// Computes `[scalar] * SpendAuthG` using the Orchard fixed base.
 ///
-/// Thin wrapper around the shared gadget in `orchard::shared_primitives` –
-/// see [`orchard::shared_primitives::spend_authority`] for the upstream reference.
+/// Thin wrapper around the shared gadget in `crate::circuit::spend_authority` –
+/// see [`crate::circuit::spend_authority`] for the upstream reference.
 ///
 /// Used by delegation (condition 4: alpha), vote proof (condition 3: vsk).
 /// Returns the resulting curve point so the caller can e.g. add `ak_P` for rk

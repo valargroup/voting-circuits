@@ -243,17 +243,17 @@ impl From<&SpendingKey> for NullifierDerivingKey {
 
 impl NullifierDerivingKey {
     /// Computes PRF^nf on the given rho value.
-    pub fn prf_nf(&self, rho: pallas::Base) -> pallas::Base {
+    pub(crate) fn prf_nf(&self, rho: pallas::Base) -> pallas::Base {
         prf_nf(self.0, rho)
     }
 
     /// Converts this nullifier deriving key to its serialized form.
-    pub fn to_bytes(self) -> [u8; 32] {
+    pub(crate) fn to_bytes(self) -> [u8; 32] {
         <[u8; 32]>::from(self.0)
     }
 
     /// Parses a nullifier deriving key from a byte slice.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let nk_bytes = <[u8; 32]>::try_from(bytes).ok()?;
         let nk = pallas::Base::from_repr(nk_bytes).map(NullifierDerivingKey);
         if nk.is_some().into() {
@@ -285,12 +285,12 @@ impl CommitIvkRandomness {
     }
 
     /// Converts this commit-ivk randomness to its serialized form.
-    pub fn to_bytes(self) -> [u8; 32] {
+    pub(crate) fn to_bytes(self) -> [u8; 32] {
         <[u8; 32]>::from(self.0)
     }
 
     /// Parses commit-ivk randomness from a byte slice.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let rivk_bytes = <[u8; 32]>::try_from(bytes).ok()?;
         let rivk = pallas::Scalar::from_repr(rivk_bytes).map(CommitIvkRandomness);
         if rivk.is_some().into() {

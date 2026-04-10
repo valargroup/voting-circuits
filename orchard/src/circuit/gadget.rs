@@ -25,7 +25,6 @@ use halo2_proofs::{
 };
 
 pub mod add_chip;
-pub mod mul_chip;
 
 impl super::Config {
     pub(super) fn add_chip(&self) -> add_chip::AddChip {
@@ -88,17 +87,6 @@ pub trait AddInstruction<F: Field>: Chip<F> {
     ) -> Result<AssignedCell<F, F>, plonk::Error>;
 }
 
-/// An instruction set for multiplying two circuit words (field elements).
-pub trait MulInstruction<F: Field>: Chip<F> {
-    /// Constraints `a * b` and returns the product.
-    fn mul(
-        &self,
-        layouter: impl Layouter<F>,
-        a: &AssignedCell<F, F>,
-        b: &AssignedCell<F, F>,
-    ) -> Result<AssignedCell<F, F>, plonk::Error>;
-}
-
 /// Witnesses the given value in a standalone region.
 ///
 /// Usages of this helper are technically superfluous, as the single-cell region is only
@@ -134,7 +122,7 @@ pub fn assign_constant<F: Field>(
 /// `ValueCommit^Orchard` from [Section 5.4.8.3 Homomorphic Pedersen commitments (Sapling and Orchard)].
 ///
 /// [Section 5.4.8.3 Homomorphic Pedersen commitments (Sapling and Orchard)]: https://zips.z.cash/protocol/protocol.pdf#concretehomomorphiccommit
-pub fn value_commit_orchard<
+pub(in crate::circuit) fn value_commit_orchard<
     EccChip: EccInstructions<
         pallas::Affine,
         FixedPoints = OrchardFixedBases,
