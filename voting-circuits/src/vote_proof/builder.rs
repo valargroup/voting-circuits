@@ -118,8 +118,8 @@ pub fn denomination_split(
 /// Spread `remainder` across `slots` using PRF-derived weights.
 ///
 /// Each slot gets `floor(remainder * weight_i / total_weight)` with any
-/// rounding residual added one-per-slot to the first slots.  Every slot
-/// receives at least 1 so that no zero-valued slot leaks "this was padding."
+/// rounding residual added one-per-slot to the first slots. Every slot
+/// receives at least 1 to maximize dispersion across all available slots.
 fn distribute_remainder(
     slots: &mut [u64],
     remainder: u64,
@@ -369,11 +369,10 @@ pub fn derive_share_blind(
 /// Deterministic Fisher-Yates shuffle of the shares array.
 ///
 /// Prevents the sorted denomination order from leaking balance information
-/// through share indices. When shares are distributed across multiple helper
-/// servers, a server seeing (index, decrypted_value) would otherwise learn
-/// the denomination's rank in the sorted decomposition, tightening its
-/// estimate of the voter's total balance. Shuffling makes each index
-/// equally likely to hold any denomination.
+/// through share indices. An adversary seeing (index, decrypted_value)
+/// would otherwise learn the denomination's rank in the sorted
+/// decomposition, tightening its estimate of the voter's total balance.
+/// Shuffling makes each index equally likely to hold any denomination.
 ///
 /// The permutation is derived from the same PRF used for El Gamal randomness
 /// and blind factors, with a distinct domain separator (`DOMAIN_SHUFFLE`).
