@@ -522,7 +522,7 @@ pub fn build_vote_proof_from_delegation(
     // Each share must be in [0, 2^30) for the range check.
     // Shares sum to num_ballots (ballot count), not raw zatoshi.
 
-    let mut shares_u64: [u64; 16] = if single_share {
+    let shares_u64: [u64; 16] = if single_share {
         // Last-moment mode: put entire weight in share[0], rest are zero.
         // Only one share is revealed to the helper, minimizing latency
         // when voting near the deadline.
@@ -619,7 +619,13 @@ pub fn build_vote_proof_from_delegation(
         )
     });
     let share_comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-        share_commitment(share_blinds[i], enc_c1_x[i], enc_c2_x[i], enc_c1_y[i], enc_c2_y[i])
+        share_commitment(
+            share_blinds[i],
+            enc_c1_x[i],
+            enc_c2_x[i],
+            enc_c1_y[i],
+            enc_c2_y[i],
+        )
     });
     let shares_hash_val = shares_hash(share_blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y);
 
