@@ -56,15 +56,20 @@ const DENOMINATIONS: [u64; 8] = [10_000_000, 1_000_000, 100_000, 10_000, 1_000, 
 /// by matching denomination patterns.
 const MAX_DENOM_SHARES: usize = 9;
 
+// The remainder slots must have enough room for meaningful PRF-weighted
+// spreading. This fires at compile time if someone changes the constants.
+const _: () = assert!(
+    NUM_SHARES - MAX_DENOM_SHARES >= 7,
+    "need at least 7 remainder slots for PRF-weighted distribution"
+);
+
 /// Decompose `num_ballots` into [`NUM_SHARES`] shares using a greedy
 /// denomination strategy with randomized remainder distribution.
 ///
 /// 1. **Greedy fill**: place the largest standard denominations that fit,
 ///    consuming up to [`MAX_DENOM_SHARES`] slots.
-/// 2. **Remainder split**: if a non-zero remainder exists and there are ≥ 2
-///    free slots, distribute the remainder across all free slots using
-///    deterministic PRF-derived weights. If only 1 free slot remains, the
-///    remainder goes there as-is.
+/// 2. **Remainder split**: if a non-zero remainder exists, distribute it
+///    across all free slots using deterministic PRF-derived weights.
 /// 3. The caller then shuffles the result via [`deterministic_shuffle`].
 ///
 /// The randomized remainder prevents a single non-standard value from
@@ -80,6 +85,9 @@ pub fn denomination_split(
     let mut remaining = num_ballots;
     let mut idx = 0;
 
+    // Phase 1: Greedy fill — place the largest standard denominations that
+    // fit, consuming up to MAX_DENOM_SHARES (9) slots. These "tier" values
+    // are shared across many voters, forming the per-share anonymity set.
     for &d in &DENOMINATIONS {
         while remaining >= d && idx < MAX_DENOM_SHARES {
             shares[idx] = d;
@@ -88,21 +96,20 @@ pub fn denomination_split(
         }
     }
 
+    // Phase 2: Remainder distribution — spread any leftover across the free
+    // slots (at least 7, enforced by the const assert above) using
+    // PRF-derived weights so no single non-standard value fingerprints the
+    // exact balance.
     if remaining > 0 {
-        let free_slots = NUM_SHARES - idx;
-        if free_slots >= 2 {
-            distribute_remainder(
-                &mut shares[idx..],
-                remaining,
-                sk,
-                round_id,
-                proposal_id,
-                van_commitment,
-                idx as u8,
-            );
-        } else {
-            shares[idx] = remaining;
-        }
+        distribute_remainder(
+            &mut shares[idx..],
+            remaining,
+            sk,
+            round_id,
+            proposal_id,
+            van_commitment,
+            idx as u8,
+        );
     }
 
     shares
@@ -123,20 +130,30 @@ fn distribute_remainder(
     base_index: u8,
 ) {
     let n = slots.len() as u64;
-    debug_assert!(n >= 2, "caller ensures at least 2 free slots");
+    // The greedy phase fills at most MAX_DENOM_SHARES (9) slots, so
+    // n >= NUM_SHARES - MAX_DENOM_SHARES >= 7 (enforced by const assert).
 
+    // Edge case: if the remainder is smaller than the number of slots, we
+    // can't put at least 1 in every slot. Just give 1 ballot to as many
+    // slots as we can and leave the rest at zero.
+    // Example: remainder=3, n=7 → slots = [1, 1, 1, 0, 0, 0, 0]
     if remainder < n {
-        // Not enough to put ≥1 in every slot; fill as many as possible.
         for i in 0..(remainder as usize) {
             slots[i] = 1;
         }
         return;
     }
 
-    // Reserve 1 ballot per slot so every piece is non-zero.
+    // Ensure every slot gets at least 1 ballot so all 7 slots carry part
+    // of the remainder. This maximizes dispersion — concentrating the
+    // remainder in fewer slots would make each value larger and more
+    // informative if decrypted individually.
+    // Example: remainder=300, n=7 → distributable=293
     let distributable = remainder - n;
 
-    // Derive a PRF weight per slot.
+    // Derive a PRF weight per slot. Each weight is a 32-bit pseudorandom
+    // value from BLAKE2b, unique per (voter, VAN, proposal, slot index).
+    // The `| 1` ensures no weight is zero (avoids a slot getting nothing).
     let mut weights = Vec::with_capacity(slots.len());
     let mut total_weight: u64 = 0;
     for i in 0..slots.len() {
@@ -153,7 +170,9 @@ fn distribute_remainder(
         total_weight += w;
     }
 
-    // Weighted proportional split with rounding correction.
+    // Give each slot its reserved 1 ballot plus a weighted share of the
+    // distributable portion: floor(distributable * weight_i / total_weight).
+    // Integer division truncates, so we track how much was actually assigned.
     let mut assigned: u64 = 0;
     for i in 0..slots.len() {
         let share = distributable * weights[i] / total_weight;
@@ -161,7 +180,9 @@ fn distribute_remainder(
         assigned += share;
     }
 
-    // Distribute any leftover from integer truncation, one per slot.
+    // The floor divisions above may leave a small leftover (at most n-1
+    // ballots). Distribute it one-per-slot to the first slots. This is
+    // deterministic — same PRF weights → same leftover → same correction.
     let leftover = distributable - assigned;
     for i in 0..(leftover as usize) {
         slots[i] += 1;
