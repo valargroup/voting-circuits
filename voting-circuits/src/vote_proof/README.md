@@ -236,7 +236,7 @@ The builder decomposes `num_ballots` into 16 shares using a three-phase algorith
 
 **Phase 2 — Remainder distribution (free slots).** If a non-zero remainder exists after greedy fill, spread it across all remaining slots using PRF-derived weights (`DOMAIN_REMAINDER = 0x03`). Each slot receives a weighted proportion of the remainder (with at least 1 ballot per slot when the remainder allows), preventing any single non-standard value from fingerprinting the voter's exact balance.
 
-**Phase 3 — Deterministic shuffle.** A Fisher-Yates permutation seeded by the PRF (`DOMAIN_SHUFFLE = 0x02`) randomizes all 16 slot positions. Without this, share indices would encode denomination rank (e.g. index 0 = largest denomination), leaking balance magnitude to any adversary that decrypts a single share.
+**Phase 3 — Deterministic shuffle.** A [Fisher-Yates shuffle](https://en.wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle) (iterating from the last index down, swapping each position with a uniformly random earlier position) seeded by the PRF (`DOMAIN_SHUFFLE = 0x02`) randomizes all 16 slot positions. Without this, share indices would encode denomination rank (e.g. index 0 = largest denomination), leaking balance magnitude to any adversary that decrypts a single share.
 
 All PRF derivations are keyed by the spending key and bound to `(voting_round_id, proposal_id, van_commitment)`. This means:
 - Two voters with the **same balance** produce different remainder weights and shuffle orders (different `sk`).
