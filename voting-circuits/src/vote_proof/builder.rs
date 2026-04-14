@@ -386,6 +386,9 @@ fn deterministic_shuffle(
     proposal_id: u64,
     van_commitment: pallas::Base,
 ) {
+    // The share index is hardcoded to 0 here because the shuffle
+    // function only needs one PRF call to seed the entire Fisher
+    // Yates shuffle. It doesn't need per-share derivations.
     let seed = vote_share_prf(sk, DOMAIN_SHUFFLE, round_id, proposal_id, van_commitment, 0);
     for i in (1..NUM_SHARES).rev() {
         let byte_offset = (NUM_SHARES - 1 - i) * 4;
