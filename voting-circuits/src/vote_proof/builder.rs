@@ -175,7 +175,7 @@ fn distribute_remainder(
     // Integer division truncates, so we track how much was actually assigned.
     let mut assigned: u64 = 0;
     for i in 0..slots.len() {
-        let share = distributable * weights[i] / total_weight;
+        let share = ((distributable as u128 * weights[i] as u128) / total_weight as u128) as u64;
         slots[i] = 1 + share;
         assigned += share;
     }
