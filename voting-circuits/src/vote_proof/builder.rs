@@ -391,6 +391,9 @@ fn deterministic_shuffle(
     // Yates shuffle. It doesn't need per-share derivations.
     let seed = vote_share_prf(sk, DOMAIN_SHUFFLE, round_id, proposal_id, van_commitment, 0);
     for i in (1..NUM_SHARES).rev() {
+        // Each iteration consumes the next 4-byte slice of the seed as a
+        // random u32: i=15 reads seed[0..4], i=14 reads seed[4..8], …,
+        // i=1 reads seed[56..60] (15 draws × 4 bytes = 60 of the 64-byte seed).
         let byte_offset = (NUM_SHARES - 1 - i) * 4;
         let rand_bytes: [u8; 4] = seed[byte_offset..byte_offset + 4]
             .try_into()
