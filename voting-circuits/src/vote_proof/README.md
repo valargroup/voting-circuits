@@ -232,6 +232,8 @@ The builder decomposes `num_ballots` into 16 shares using a three-phase algorith
 
 **Phase 1 — Greedy fill (up to 9 slots).** Place the largest standard denominations from `[10M, 1M, 100K, 10K, 1K, 100, 10, 1]` (in ballots) that fit into the remaining balance. At most `MAX_DENOM_SHARES = 9` slots are consumed, leaving at least 7 free.
 
+**Why 9 denomination slots?** The greedy algorithm can repeat denominations (e.g. 20M ballots uses two 10M slots), so the worst case exceeds the 8 distinct denominations. Capping at 9 accommodates realistic balances while reserving at least 7 slots for remainder dispersion — fewer remainder slots would concentrate non-standard values into larger, more fingerprintable amounts.
+
 **Phase 2 — Remainder distribution (free slots).** If a non-zero remainder exists after greedy fill, spread it across all remaining slots using PRF-derived weights (`DOMAIN_REMAINDER = 0x03`). Each slot receives a weighted proportion of the remainder (with at least 1 ballot per slot when the remainder allows), preventing any single non-standard value from fingerprinting the voter's exact balance.
 
 **Phase 3 — Deterministic shuffle.** A Fisher-Yates permutation seeded by the PRF (`DOMAIN_SHUFFLE = 0x02`) randomizes all 16 slot positions. Without this, share indices would encode denomination rank (e.g. index 0 = largest denomination), leaking balance magnitude to any adversary that decrypts a single share.
