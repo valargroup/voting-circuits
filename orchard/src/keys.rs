@@ -54,7 +54,7 @@ impl SpendingKey {
     /// derived according to [ZIP 32].
     ///
     /// [ZIP 32]: https://zips.z.cash/zip-0032
-    pub fn random(rng: &mut impl RngCore) -> Self {
+    pub(crate) fn random(rng: &mut impl RngCore) -> Self {
         loop {
             let mut bytes = [0; 32];
             rng.fill_bytes(&mut bytes);
@@ -121,7 +121,7 @@ pub struct SpendAuthorizingKey(redpallas::SigningKey<SpendAuth>);
 
 impl SpendAuthorizingKey {
     /// Derives ask from sk. Internal use only, does not enforce all constraints.
-    pub fn derive_inner(sk: &SpendingKey) -> pallas::Scalar {
+    fn derive_inner(sk: &SpendingKey) -> pallas::Scalar {
         to_scalar(PrfExpand::ORCHARD_ASK.with(&sk.0))
     }
 
@@ -226,11 +226,10 @@ impl SpendValidatingKey {
 /// [`Note`]: crate::note::Note
 /// [orchardkeycomponents]: https://zips.z.cash/protocol/nu5.pdf#orchardkeycomponents
 #[derive(Copy, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct NullifierDerivingKey(pallas::Base);
+pub(crate) struct NullifierDerivingKey(pallas::Base);
 
 impl NullifierDerivingKey {
-    /// Returns the inner base field element.
-    pub fn inner(&self) -> pallas::Base {
+    pub(crate) fn inner(&self) -> pallas::Base {
         self.0
     }
 }
@@ -242,7 +241,6 @@ impl From<&SpendingKey> for NullifierDerivingKey {
 }
 
 impl NullifierDerivingKey {
-    /// Computes PRF^nf on the given rho value.
     pub(crate) fn prf_nf(&self, rho: pallas::Base) -> pallas::Base {
         prf_nf(self.0, rho)
     }
@@ -252,7 +250,6 @@ impl NullifierDerivingKey {
         <[u8; 32]>::from(self.0)
     }
 
-    /// Parses a nullifier deriving key from a byte slice.
     pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let nk_bytes = <[u8; 32]>::try_from(bytes).ok()?;
         let nk = pallas::Base::from_repr(nk_bytes).map(NullifierDerivingKey);
@@ -270,7 +267,7 @@ impl NullifierDerivingKey {
 ///
 /// [orchardkeycomponents]: https://zips.z.cash/protocol/nu5.pdf#orchardkeycomponents
 #[derive(Copy, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct CommitIvkRandomness(pallas::Scalar);
+pub(crate) struct CommitIvkRandomness(pallas::Scalar);
 
 impl From<&SpendingKey> for CommitIvkRandomness {
     fn from(sk: &SpendingKey) -> Self {
@@ -279,17 +276,15 @@ impl From<&SpendingKey> for CommitIvkRandomness {
 }
 
 impl CommitIvkRandomness {
-    /// Returns the inner scalar value.
-    pub fn inner(&self) -> pallas::Scalar {
+    pub(crate) fn inner(&self) -> pallas::Scalar {
         self.0
     }
 
-    /// Converts this commit-ivk randomness to its serialized form.
+    /// Converts this nullifier deriving key to its serialized form.
     pub(crate) fn to_bytes(self) -> [u8; 32] {
         <[u8; 32]>::from(self.0)
     }
 
-    /// Parses commit-ivk randomness from a byte slice.
     pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let rivk_bytes = <[u8; 32]>::try_from(bytes).ok()?;
         let rivk = pallas::Scalar::from_repr(rivk_bytes).map(CommitIvkRandomness);
@@ -339,13 +334,12 @@ impl From<FullViewingKey> for SpendValidatingKey {
 }
 
 impl FullViewingKey {
-    /// Returns the nullifier deriving key for this full viewing key.
-    pub fn nk(&self) -> &NullifierDerivingKey {
+    pub(crate) fn nk(&self) -> &NullifierDerivingKey {
         &self.nk
     }
 
     /// Returns either `rivk` or `rivk_internal` based on `scope`.
-    pub fn rivk(&self, scope: Scope) -> CommitIvkRandomness {
+    pub(crate) fn rivk(&self, scope: Scope) -> CommitIvkRandomness {
         match scope {
             Scope::External => self.rivk,
             Scope::Internal => {
@@ -751,8 +745,7 @@ impl AsRef<[u8; 32]> for OutgoingViewingKey {
 pub struct DiversifiedTransmissionKey(NonIdentityPallasPoint);
 
 impl DiversifiedTransmissionKey {
-    /// Returns the inner `NonIdentityPallasPoint`.
-    pub fn inner(&self) -> NonIdentityPallasPoint {
+    pub(crate) fn inner(&self) -> NonIdentityPallasPoint {
         self.0
     }
 }
@@ -772,7 +765,7 @@ impl DiversifiedTransmissionKey {
     }
 
     /// $repr_P(self)$
-    pub fn to_bytes(self) -> [u8; 32] {
+    pub(crate) fn to_bytes(self) -> [u8; 32] {
         self.0.to_bytes()
     }
 }

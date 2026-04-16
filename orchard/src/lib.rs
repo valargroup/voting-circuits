@@ -31,15 +31,13 @@ pub mod builder;
 pub mod bundle;
 #[cfg(feature = "circuit")]
 pub mod circuit;
-#[allow(missing_docs)]
-pub mod constants;
+mod constants;
 pub mod keys;
 pub mod note;
 pub mod note_encryption;
 pub mod pczt;
 pub mod primitives;
-#[allow(missing_docs)]
-pub mod spec;
+mod spec;
 pub mod tree;
 pub mod value;
 pub mod zip32;

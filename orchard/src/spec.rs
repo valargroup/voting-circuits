@@ -24,7 +24,7 @@ pub(crate) use zcash_spec::PrfExpand;
 
 /// A Pallas point that is guaranteed to not be the identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NonIdentityPallasPoint(pallas::Point);
+pub(crate) struct NonIdentityPallasPoint(pallas::Point);
 
 impl Default for NonIdentityPallasPoint {
     fn default() -> Self {
@@ -39,7 +39,7 @@ impl ConditionallySelectable for NonIdentityPallasPoint {
 }
 
 impl NonIdentityPallasPoint {
-    pub fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self> {
+    pub(crate) fn from_bytes(bytes: &[u8; 32]) -> CtOption<Self> {
         pallas::Point::from_bytes(bytes)
             .and_then(|p| CtOption::new(NonIdentityPallasPoint(p), !p.is_identity()))
     }
@@ -287,7 +287,7 @@ pub(crate) fn extract_p_bottom(point: CtOption<pallas::Point>) -> CtOption<palla
 
 /// The field element representation of a u64 integer represented by
 /// an L-bit little-endian bitstring.
-pub(crate) fn lebs2ip_field<F: PrimeField, const L: usize>(bits: &[bool; L]) -> F {
+pub fn lebs2ip_field<F: PrimeField, const L: usize>(bits: &[bool; L]) -> F {
     F::from(lebs2ip::<L>(bits))
 }
 
@@ -296,7 +296,7 @@ pub(crate) fn lebs2ip_field<F: PrimeField, const L: usize>(bits: &[bool; L]) -> 
 /// # Panics
 ///
 /// Panics if the bitstring is longer than 64 bits.
-pub(crate) fn lebs2ip<const L: usize>(bits: &[bool; L]) -> u64 {
+pub fn lebs2ip<const L: usize>(bits: &[bool; L]) -> u64 {
     assert!(L <= 64);
     bits.iter()
         .enumerate()
@@ -309,7 +309,7 @@ pub(crate) fn lebs2ip<const L: usize>(bits: &[bool; L]) -> u64 {
 ///
 /// Panics if the expected length of the sequence `NUM_BITS` exceeds
 /// 64.
-pub(crate) fn i2lebsp<const NUM_BITS: usize>(int: u64) -> [bool; NUM_BITS] {
+pub fn i2lebsp<const NUM_BITS: usize>(int: u64) -> [bool; NUM_BITS] {
     assert!(NUM_BITS <= 64);
     gen_const_array(|mask: usize| (int & (1 << mask)) != 0)
 }
@@ -318,13 +318,15 @@ pub(crate) fn i2lebsp<const NUM_BITS: usize>(int: u64) -> [bool; NUM_BITS] {
 mod tests {
     use super::{i2lebsp, lebs2ip};
 
-    use group::Group;
-    use halo2_proofs::arithmetic::CurveExt;
-    use pasta_curves::pallas;
     use rand::{rngs::OsRng, RngCore};
 
     #[test]
+    #[cfg(feature = "circuit")]
     fn diversify_hash_substitution() {
+        use group::Group;
+        use halo2_proofs::arithmetic::CurveExt;
+        use pasta_curves::pallas;
+
         assert!(!bool::from(
             pallas::Point::hash_to_curve("z.cash:Orchard-gd")(&[]).is_identity()
         ));

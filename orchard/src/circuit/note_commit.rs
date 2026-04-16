@@ -22,7 +22,9 @@ use halo2_gadgets::{
         CommitDomain, Message, MessagePiece,
     },
     utilities::{
-        bool_check, lookup_range_check::LookupRangeCheckConfig, FieldValue, RangeConstrained,
+        bool_check,
+        lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
+        FieldValue, RangeConstrained,
     },
 };
 
@@ -1437,7 +1439,7 @@ pub struct NoteCommitChip {
 impl NoteCommitChip {
     #[allow(non_snake_case)]
     #[allow(clippy::many_single_char_names)]
-    pub fn configure(
+    pub(in crate::circuit) fn configure(
         meta: &mut ConstraintSystem<pallas::Base>,
         advices: [Column<Advice>; 10],
         sinsemilla_config: SinsemillaConfig<
@@ -1556,12 +1558,12 @@ impl NoteCommitChip {
         }
     }
 
-    pub fn construct(config: NoteCommitConfig) -> Self {
+    pub(in crate::circuit) fn construct(config: NoteCommitConfig) -> Self {
         Self { config }
     }
 }
 
-pub mod gadgets {
+pub(in crate::circuit) mod gadgets {
     use halo2_proofs::circuit::{Chip, Value};
 
     use super::*;
@@ -1569,7 +1571,7 @@ pub mod gadgets {
     #[allow(clippy::many_single_char_names)]
     #[allow(clippy::type_complexity)]
     #[allow(clippy::too_many_arguments)]
-    pub fn note_commit(
+    pub(in crate::circuit) fn note_commit(
         mut layouter: impl Layouter<pallas::Base>,
         chip: SinsemillaChip<OrchardHashDomains, OrchardCommitDomains, OrchardFixedBases>,
         ecc_chip: EccChip<OrchardFixedBases>,
@@ -2034,7 +2036,7 @@ mod tests {
         },
         sinsemilla::chip::SinsemillaChip,
         sinsemilla::primitives::CommitDomain,
-        utilities::lookup_range_check::LookupRangeCheckConfig,
+        utilities::lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
     };
 
     use ff::{Field, PrimeField, PrimeFieldBits};
@@ -2119,6 +2121,7 @@ mod tests {
                     lagrange_coeffs[0],
                     lookup,
                     range_check,
+                    false,
                 );
                 let note_commit_config =
                     NoteCommitChip::configure(meta, advices, sinsemilla_config);

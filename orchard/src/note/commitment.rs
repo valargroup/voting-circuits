@@ -11,13 +11,11 @@ use crate::{
     value::NoteValue,
 };
 
-/// The trapdoor for a note commitment.
 #[derive(Clone, Debug)]
-pub struct NoteCommitTrapdoor(pub(super) pallas::Scalar);
+pub(crate) struct NoteCommitTrapdoor(pub(super) pallas::Scalar);
 
 impl NoteCommitTrapdoor {
-    /// Returns the inner scalar value.
-    pub fn inner(&self) -> pallas::Scalar {
+    pub(crate) fn inner(&self) -> pallas::Scalar {
         self.0
     }
 }
@@ -27,8 +25,7 @@ impl NoteCommitTrapdoor {
 pub struct NoteCommitment(pub(super) pallas::Point);
 
 impl NoteCommitment {
-    /// Returns the inner Pallas curve point.
-    pub fn inner(&self) -> pallas::Point {
+    pub(crate) fn inner(&self) -> pallas::Point {
         self.0
     }
 }
@@ -90,8 +87,7 @@ impl From<NoteCommitment> for ExtractedNoteCommitment {
 }
 
 impl ExtractedNoteCommitment {
-    /// Returns the inner field element.
-    pub fn inner(&self) -> pallas::Base {
+    pub(crate) fn inner(&self) -> pallas::Base {
         self.0
     }
 }

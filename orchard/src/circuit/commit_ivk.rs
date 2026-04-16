@@ -27,7 +27,7 @@ pub struct CommitIvkChip {
 }
 
 impl CommitIvkChip {
-    pub fn configure(
+    pub(in crate::circuit) fn configure(
         meta: &mut ConstraintSystem<pallas::Base>,
         advices: [Column<Advice>; 10],
     ) -> CommitIvkConfig {
@@ -222,13 +222,16 @@ impl CommitIvkChip {
         config
     }
 
-    pub fn construct(config: CommitIvkConfig) -> Self {
+    pub(in crate::circuit) fn construct(config: CommitIvkConfig) -> Self {
         Self { config }
     }
 }
 
-pub mod gadgets {
-    use halo2_gadgets::utilities::{lookup_range_check::LookupRangeCheckConfig, RangeConstrained};
+pub(in crate::circuit) mod gadgets {
+    use halo2_gadgets::utilities::{
+        lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
+        RangeConstrained,
+    };
     use halo2_proofs::circuit::Chip;
 
     use super::*;
@@ -238,7 +241,7 @@ pub mod gadgets {
     /// [Section 5.4.8.4 Sinsemilla commitments]: https://zips.z.cash/protocol/protocol.pdf#concretesinsemillacommit
     #[allow(non_snake_case)]
     #[allow(clippy::type_complexity)]
-    pub fn commit_ivk(
+    pub(in crate::circuit) fn commit_ivk(
         sinsemilla_chip: SinsemillaChip<
             OrchardHashDomains,
             OrchardCommitDomains,
@@ -678,7 +681,10 @@ mod tests {
             chip::{SinsemillaChip, SinsemillaConfig},
             primitives::CommitDomain,
         },
-        utilities::{lookup_range_check::LookupRangeCheckConfig, UtilitiesInstructions},
+        utilities::{
+            lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
+            UtilitiesInstructions,
+        },
     };
     use halo2_proofs::{
         circuit::{AssignedCell, Layouter, SimpleFloorPlanner, Value},
@@ -762,6 +768,7 @@ mod tests {
                     lagrange_coeffs[0],
                     lookup,
                     range_check,
+                    false,
                 );
 
                 let commit_ivk_config = CommitIvkChip::configure(meta, advices);
