@@ -25,6 +25,7 @@ use halo2_gadgets::{
         primitives::{self as poseidon, ConstantLength},
         Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
     },
+    utilities::lookup_range_check::LookupRangeCheck,
 };
 
 use orchard::circuit::gadget::assign_free_advice;

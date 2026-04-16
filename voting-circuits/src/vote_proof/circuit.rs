@@ -68,7 +68,7 @@ use halo2_gadgets::{
         Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
     },
     sinsemilla::chip::{SinsemillaChip, SinsemillaConfig},
-    utilities::lookup_range_check::LookupRangeCheckConfig,
+    utilities::lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
 };
 use crate::circuit::address_ownership::{prove_address_ownership, spend_auth_g_mul};
 use crate::circuit::elgamal::{EaPkInstanceLoc, prove_elgamal_encryptions};
@@ -658,6 +658,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             lagrange_coeffs[0],
             lookup,
             range_check,
+            false,
         );
 
         // CommitIvk chip: canonicity checks on the ak || nk decomposition
