@@ -6,7 +6,10 @@ pub mod util;
 #[cfg(feature = "circuit")]
 pub use self::sinsemilla::{OrchardCommitDomains, OrchardHashDomains};
 #[cfg(feature = "circuit")]
-pub use fixed_bases::{NullifierK, OrchardFixedBases, OrchardFixedBasesFull, ValueCommitV};
+pub use fixed_bases::{
+    OrchardBaseFieldBases, OrchardFixedBases, OrchardFixedBasesFull,
+    OrchardShortScalarBases,
+};
 
 /// $\mathsf{MerkleDepth^{Orchard}}$
 pub const MERKLE_DEPTH_ORCHARD: usize = 32;
@@ -20,7 +23,7 @@ pub(crate) const T_Q: u128 = 45560315531506369815346746415080538113;
 pub(crate) const T_P: u128 = 45560315531419706090280762371685220353;
 
 /// $\ell^\mathsf{Orchard}_\mathsf{base}$
-pub(crate) const L_ORCHARD_BASE: usize = 255;
+pub const L_ORCHARD_BASE: usize = 255;
 
 /// $\ell^\mathsf{Orchard}_\mathsf{scalar}$
 pub(crate) const L_ORCHARD_SCALAR: usize = 255;

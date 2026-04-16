@@ -12,7 +12,7 @@ use crate::{
 
 /// A unique nullifier for a note.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Nullifier(pub(crate) pallas::Base);
+pub struct Nullifier(pub pallas::Base);
 
 // We know that `pallas::Base` doesn't allocate internally.
 memuse::impl_no_dynamic_usage!(Nullifier);

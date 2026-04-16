@@ -58,9 +58,12 @@ use halo2_gadgets::{
     utilities::lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
 };
 
-mod commit_ivk;
+#[allow(missing_docs)]
+pub mod commit_ivk;
+#[allow(missing_docs)]
 pub mod gadget;
-mod note_commit;
+#[allow(missing_docs)]
+pub mod note_commit;
 
 pub use crate::Proof;
 

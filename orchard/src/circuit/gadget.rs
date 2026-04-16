@@ -5,8 +5,8 @@ use pasta_curves::pallas;
 
 use super::{commit_ivk::CommitIvkChip, note_commit::NoteCommitChip};
 use crate::constants::{
-    NullifierK, OrchardCommitDomains, OrchardFixedBases, OrchardFixedBasesFull, OrchardHashDomains,
-    ValueCommitV,
+    OrchardBaseFieldBases, OrchardCommitDomains, OrchardFixedBases, OrchardFixedBasesFull,
+    OrchardHashDomains, OrchardShortScalarBases,
 };
 use halo2_gadgets::{
     ecc::{
@@ -24,7 +24,7 @@ use halo2_proofs::{
     plonk::{self, Advice, Assigned, Column},
 };
 
-pub(in crate::circuit) mod add_chip;
+pub mod add_chip;
 
 impl super::Config {
     pub(super) fn add_chip(&self) -> add_chip::AddChip {
@@ -77,7 +77,7 @@ impl super::Config {
 }
 
 /// An instruction set for adding two circuit words (field elements).
-pub(in crate::circuit) trait AddInstruction<F: Field>: Chip<F> {
+pub trait AddInstruction<F: Field>: Chip<F> {
     /// Constraints `a + b` and returns the sum.
     fn add(
         &self,
@@ -92,7 +92,7 @@ pub(in crate::circuit) trait AddInstruction<F: Field>: Chip<F> {
 /// Usages of this helper are technically superfluous, as the single-cell region is only
 /// ever used in equality constraints. We could eliminate them with a
 /// [write-on-copy abstraction](https://github.com/zcash/halo2/issues/334).
-pub(in crate::circuit) fn assign_free_advice<F: Field, V: Copy>(
+pub fn assign_free_advice<F: Field, V: Copy>(
     mut layouter: impl Layouter<F>,
     column: Column<Advice>,
     value: Value<V>,
@@ -103,6 +103,19 @@ where
     layouter.assign_region(
         || "load private",
         |mut region| region.assign_advice(|| "load private", column, 0, || value),
+    )
+}
+
+/// Assigns a constant value in a standalone region, constrained by the
+/// verification key (the prover cannot alter it).
+pub fn assign_constant<F: Field>(
+    mut layouter: impl Layouter<F>,
+    column: Column<Advice>,
+    constant: F,
+) -> Result<AssignedCell<F, F>, plonk::Error> {
+    layouter.assign_region(
+        || "load constant",
+        |mut region| region.assign_advice_from_constant(|| "constant", column, 0, constant),
     )
 }
 
@@ -123,8 +136,8 @@ pub(in crate::circuit) fn value_commit_orchard<
 ) -> Result<Point<pallas::Affine, EccChip>, plonk::Error> {
     // commitment = [v] ValueCommitV
     let (commitment, _) = {
-        let value_commit_v = ValueCommitV;
-        let value_commit_v = FixedPointShort::from_inner(ecc_chip.clone(), value_commit_v);
+        let value_commit_v =
+            FixedPointShort::from_inner(ecc_chip.clone(), OrchardShortScalarBases::ValueCommitV);
         value_commit_v.mul(layouter.namespace(|| "[v] ValueCommitV"), v)?
     };
 
@@ -145,7 +158,7 @@ pub(in crate::circuit) fn value_commit_orchard<
 ///
 /// [Section 4.16: Note Commitments and Nullifiers]: https://zips.z.cash/protocol/protocol.pdf#commitmentsandnullifiers
 #[allow(clippy::too_many_arguments)]
-pub(in crate::circuit) fn derive_nullifier<
+pub fn derive_nullifier<
     PoseidonChip: PoseidonSpongeInstructions<pallas::Base, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>,
     AddChip: AddInstruction<pallas::Base>,
     EccChip: EccInstructions<
@@ -186,7 +199,7 @@ pub(in crate::circuit) fn derive_nullifier<
     // `product` = [poseidon_hash(nk, rho) + psi] NullifierK.
     //
     let product = {
-        let nullifier_k = FixedPointBaseField::from_inner(ecc_chip, NullifierK);
+        let nullifier_k = FixedPointBaseField::from_inner(ecc_chip, OrchardBaseFieldBases::NullifierK);
         nullifier_k.mul(
             layouter.namespace(|| "[poseidon_output + psi] NullifierK"),
             scalar,
@@ -199,5 +212,5 @@ pub(in crate::circuit) fn derive_nullifier<
         .map(|res| res.extract_p())
 }
 
-pub(in crate::circuit) use crate::circuit::commit_ivk::gadgets::commit_ivk;
-pub(in crate::circuit) use crate::circuit::note_commit::gadgets::note_commit;
+pub use crate::circuit::commit_ivk::gadgets::commit_ivk;
+pub use crate::circuit::note_commit::gadgets::note_commit;
