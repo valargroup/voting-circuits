@@ -2,10 +2,13 @@
 name = "voting-circuits"
 version = "0.1.0"
 edition = "2021"
-description = "Governance ZKP circuits (delegation, vote proof, share reveal) for the Shielded-Vote protocol"
+description = "Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/valargroup/voting-circuits"
+readme = "README.md"
 
 [dependencies]
-orchard = { path = "../orchard", features = ["circuit"] }
+orchard = { path = "../orchard", version = "0.11.0", package = "valar-orchard", features = ["circuit"] }
 halo2_proofs = { version = "0.3", default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
 halo2_gadgets = { version = "0.3" }
 pasta_curves = "0.5"
