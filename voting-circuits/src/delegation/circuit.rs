@@ -21,7 +21,7 @@ use alloc::vec::Vec;
 use group::{Curve, GroupEncoding};
 use halo2_proofs::{
     circuit::{floor_planner, AssignedCell, Layouter, Value},
-    plonk::{self, Advice, Column, Constraints, Expression, Instance as InstanceColumn, Selector},
+    plonk::{self, Advice, Column, Constraints, Instance as InstanceColumn, Selector},
     poly::Rotation,
 };
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
