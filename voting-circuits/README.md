@@ -19,9 +19,9 @@ use voting_circuits::vote_proof::circuit::VoteProofCircuit;
 // ... assemble public/private inputs and run halo2_proofs
 ```
 
-## Dependency on `valar-orchard`
+## Dependency on the Valar `orchard` fork
 
-This crate depends on `valar-orchard`, a Valar Group fork of the upstream `orchard` crate that adds the governance-visibility methods the voting circuits rely on. When the relevant changes land in upstream `zcash/orchard`, this crate's dependency will flip back to the real upstream and `valar-orchard` will be yanked. See [the shielded-voting plan](https://github.com/valargroup/vote-sdk) for status.
+This crate depends on `orchard` from a Valar Group fork that adds the governance-visibility methods the voting circuits rely on. The fork lives alongside this crate in the [`valargroup/voting-circuits`](https://github.com/valargroup/voting-circuits) repository at the `orchard/` path and is consumed via git tag (not crates.io, since the name is taken by upstream `zcash/orchard`). When the relevant changes land in upstream `zcash/orchard`, this crate's dependency will flip back to the real upstream. See [the shielded-voting plan](https://github.com/valargroup/vote-sdk) for status.
 
 ## License
 

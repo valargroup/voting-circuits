@@ -1442,6 +1442,47 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "orchard"
+version = "0.12.1"
+dependencies = [
+ "aes",
+ "bitvec",
+ "blake2b_simd",
+ "corez",
+ "criterion",
+ "ff",
+ "fpe",
+ "getset",
+ "group",
+ "halo2_gadgets",
+ "halo2_poseidon",
+ "halo2_proofs",
+ "hex",
+ "image",
+ "incrementalmerkletree",
+ "inferno",
+ "lazy_static",
+ "memuse",
+ "nonempty",
+ "pasta_curves",
+ "plotters",
+ "pprof",
+ "proptest",
+ "rand",
+ "rand_core",
+ "reddsa",
+ "serde",
+ "shardtree",
+ "sinsemilla",
+ "subtle",
+ "tracing",
+ "visibility",
+ "zcash_note_encryption",
+ "zcash_spec",
+ "zip32",
+]
+
+[[package]]
 name = "os_str_bytes"
 version = "6.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2284,47 +2325,6 @@ checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "valar-orchard"
-version = "0.12.0"
-dependencies = [
- "aes",
- "bitvec",
- "blake2b_simd",
- "corez",
- "criterion",
- "ff",
- "fpe",
- "getset",
- "group",
- "halo2_gadgets",
- "halo2_poseidon",
- "halo2_proofs",
- "hex",
- "image",
- "incrementalmerkletree",
- "inferno",
- "lazy_static",
- "memuse",
- "nonempty",
- "pasta_curves",
- "plotters",
- "pprof",
- "proptest",
- "rand",
- "rand_core",
- "reddsa",
- "serde",
- "shardtree",
- "sinsemilla",
- "subtle",
- "tracing",
- "visibility",
- "zcash_note_encryption",
- "zcash_spec",
- "zip32",
 ]
 
 [[package]]
