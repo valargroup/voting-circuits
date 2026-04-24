@@ -22,7 +22,9 @@ use halo2_gadgets::{
         CommitDomain, Message, MessagePiece,
     },
     utilities::{
-        bool_check, lookup_range_check::LookupRangeCheckConfig, FieldValue, RangeConstrained,
+        bool_check,
+        lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
+        FieldValue, RangeConstrained,
     },
 };
 
@@ -2034,7 +2036,7 @@ mod tests {
         },
         sinsemilla::chip::SinsemillaChip,
         sinsemilla::primitives::CommitDomain,
-        utilities::lookup_range_check::LookupRangeCheckConfig,
+        utilities::lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
     };
 
     use ff::{Field, PrimeField, PrimeFieldBits};
@@ -2119,6 +2121,7 @@ mod tests {
                     lagrange_coeffs[0],
                     lookup,
                     range_check,
+                    false,
                 );
                 let note_commit_config =
                     NoteCommitChip::configure(meta, advices, sinsemilla_config);

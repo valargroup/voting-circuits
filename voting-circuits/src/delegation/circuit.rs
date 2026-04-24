@@ -70,7 +70,7 @@ use halo2_gadgets::{
     },
     utilities::{
         bool_check,
-        lookup_range_check::LookupRangeCheckConfig,
+        lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
     },
 };
 use super::imt::IMT_DEPTH;
@@ -592,7 +592,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
              witness_col: Column<Advice>,
              lagrange_col: Column<plonk::Fixed>| {
                 let sinsemilla =
-                    SinsemillaChip::configure(meta, advice_cols, witness_col, lagrange_col, lookup, range_check);
+                    SinsemillaChip::configure(meta, advice_cols, witness_col, lagrange_col, lookup, range_check, false);
                 let merkle = MerkleChip::configure(meta, sinsemilla.clone());
                 (sinsemilla, merkle)
             };
