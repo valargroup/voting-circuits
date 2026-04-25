@@ -143,7 +143,7 @@ After the address integrity block, insert:
     let v_signed = assign_free_advice(
         layouter.namespace(|| "v_signed = 0"),
         config.advices[0],
-        Value::known(NoteValue::zero()),
+        Value::known(NoteValue::ZERO),
     )?;
 
     // Compute NoteCommit from witness data.
@@ -170,7 +170,7 @@ After the address integrity block, insert:
 
 Key differences from Orchard:
 
-- Value is hardcoded as `NoteValue::zero()` (the signed/dummy note always has v=0)
+- Value is hardcoded as `NoteValue::ZERO` (the signed/dummy note always has v=0)
 - Strict equality constraint (no conditional on enable_spends)
 - Reuses `g_d_signed`, `pk_d_signed`, `rho_old`, `psi_old`, `cm_old` already witnessed earlier in the circuit
 

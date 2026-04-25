@@ -27,13 +27,14 @@ use halo2_proofs::{
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
 
 use crate::circuit::address_ownership::prove_address_ownership;
+use crate::circuit::gadget::assign_constant;
 use crate::circuit::mul_chip::{MulChip, MulConfig, MulInstruction};
 use orchard::{
     circuit::{
         commit_ivk::{CommitIvkChip, CommitIvkConfig},
         gadget::{
             add_chip::{AddChip, AddConfig},
-            assign_constant, assign_free_advice, derive_nullifier, note_commit, AddInstruction,
+            assign_free_advice, derive_nullifier, note_commit, AddInstruction,
         },
         note_commit::{NoteCommitChip, NoteCommitConfig},
     },
@@ -1129,7 +1130,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let v_new = assign_free_advice(
                 layouter.namespace(|| "v_new = 0"),
                 config.advices[0],
-                Value::known(NoteValue::zero()),
+                Value::known(NoteValue::ZERO),
             )?;
 
             // Compute NoteCommit for the output note using the second chip pair.
@@ -1762,7 +1763,7 @@ impl Instance {
             .expect("rk is not the identity point (guaranteed by VerificationKey)");
 
         vec![
-            self.nf_signed.0,
+            self.nf_signed.inner(),
             *rk.x(),
             *rk.y(),
             self.cmx_new,
@@ -1901,8 +1902,8 @@ mod tests {
         }
         // IMT proof for real note (from shared provider).
         let real_nf = real_note.nullifier(&fvk);
-        let imt_0 = imt_provider.non_membership_proof(real_nf.0).unwrap();
-        let gov_null_0 = gov_null_hash(nk_val, dom, real_nf.0);
+        let imt_0 = imt_provider.non_membership_proof(real_nf.inner()).unwrap();
+        let gov_null_0 = gov_null_hash(nk_val, dom, real_nf.inner());
 
         let slot_0 = make_note_slot(&real_note, &auth_path_0, 0u32, &imt_0, false);
 
@@ -1919,15 +1920,15 @@ mod tests {
             let (_, _, dummy) = Note::dummy(&mut rng, None);
             let pad_note = Note::new(
                 pad_addr,
-                NoteValue::zero(),
+                NoteValue::ZERO,
                 Rho::from_nf_old(dummy.nullifier(&fvk)),
                 &mut rng,
             );
 
             let pad_cmx = ExtractedNoteCommitment::from(pad_note.commitment()).inner();
             let pad_nf = pad_note.nullifier(&fvk);
-            let pad_imt = imt_provider.non_membership_proof(pad_nf.0).unwrap();
-            let pad_gov_null = gov_null_hash(nk_val, dom, pad_nf.0);
+            let pad_imt = imt_provider.non_membership_proof(pad_nf.inner()).unwrap();
+            let pad_gov_null = gov_null_hash(nk_val, dom, pad_nf.inner());
 
             note_slots.push(make_note_slot(
                 &pad_note,
@@ -1982,7 +1983,7 @@ mod tests {
         let signed_note = Note::new(
             sender_address,
             NoteValue::from_raw(1),
-            Rho::from_nf_old(Nullifier(rho)),
+            Rho::from_nf_old(Nullifier::from_inner(rho)),
             &mut rng,
         );
         let nf_signed = signed_note.nullifier(&fvk);
@@ -1990,7 +1991,7 @@ mod tests {
         // Create output note with rho = nf_signed.
         let output_note = Note::new(
             output_recipient,
-            NoteValue::zero(),
+            NoteValue::ZERO,
             Rho::from_nf_old(nf_signed),
             &mut rng,
         );
@@ -2036,7 +2037,7 @@ mod tests {
     fn wrong_nf_fails() {
         let t = make_test_data();
         let mut instance = t.instance.clone();
-        instance.nf_signed = Nullifier(pallas::Base::random(&mut OsRng));
+        instance.nf_signed = Nullifier::from_inner(pallas::Base::random(&mut OsRng));
 
         let pi = instance.to_halo2_instance();
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
@@ -2121,7 +2122,7 @@ mod tests {
         let t = make_test_data();
         let pi = t.instance.to_halo2_instance();
         assert_eq!(pi.len(), 14, "Expected exactly 14 public inputs");
-        assert_eq!(pi[NF_SIGNED], t.instance.nf_signed.0);
+        assert_eq!(pi[NF_SIGNED], t.instance.nf_signed.inner());
         assert_eq!(pi[CMX_NEW], t.instance.cmx_new);
         assert_eq!(pi[VAN_COMM], t.instance.van_comm);
         assert_eq!(pi[NC_ROOT], t.instance.nc_root);
@@ -2167,7 +2168,7 @@ mod tests {
 
         let imt_provider = SpacedLeafImtProvider::new();
         let fake_nf = fake_note.nullifier(&fvk2);
-        let fake_imt = imt_provider.non_membership_proof(fake_nf.0).unwrap();
+        let fake_imt = imt_provider.non_membership_proof(fake_nf.inner()).unwrap();
 
         // All empty siblings — this auth path does not open to nc_root.
         let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
@@ -2204,14 +2205,14 @@ mod tests {
         let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
         let foreign_note = Note::new(
             addr2,
-            NoteValue::zero(),
+            NoteValue::ZERO,
             Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
             &mut rng,
         );
 
         let imt_provider = SpacedLeafImtProvider::new();
         let foreign_nf = foreign_note.nullifier(&fvk2);
-        let foreign_imt = imt_provider.non_membership_proof(foreign_nf.0).unwrap();
+        let foreign_imt = imt_provider.non_membership_proof(foreign_nf.inner()).unwrap();
 
         let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
         // v=0: condition 10 (Merkle root check) is skipped.

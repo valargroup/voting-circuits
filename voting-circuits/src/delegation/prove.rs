@@ -211,7 +211,7 @@ mod prove_tests {
         let merkle_path = MerklePath::from_parts(0u32, auth_path);
         let imt = SpacedLeafImtProvider::new();
         let real_nf = note.nullifier(&fvk);
-        let imt_proof = imt.non_membership_proof(real_nf.0).unwrap();
+        let imt_proof = imt.non_membership_proof(real_nf.inner()).unwrap();
 
         let input = RealNoteInput { note, fvk: fvk.clone(), merkle_path, imt_proof, scope: Scope::External };
         let bundle = build_delegation_bundle(
