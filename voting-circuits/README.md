@@ -19,9 +19,11 @@ use voting_circuits::vote_proof::circuit::VoteProofCircuit;
 // ... assemble public/private inputs and run halo2_proofs
 ```
 
-## Dependency on `valar-orchard`
+## Dependency on `orchard`
 
-This crate depends on `valar-orchard`, a Valar Group fork of the upstream `orchard` crate that adds the governance-visibility methods the voting circuits rely on. When the relevant changes land in upstream `zcash/orchard`, this crate's dependency will flip back to the real upstream and `valar-orchard` will be yanked. See [the shielded-voting plan](https://github.com/valargroup/vote-sdk) for status.
+This crate now depends on upstream [`zcash/orchard`](https://github.com/zcash/orchard) `0.13`, with the `unstable-voting-circuits` feature enabled to expose the governance-visibility APIs the voting circuits rely on (the `valar-orchard` fork has been retired).
+
+While the upstream PRs are landing it is pinned via `[patch.crates-io]` to the `valargroup/orchard` `valar/0.13-spend-auth-g` branch (tracked by [valargroup/orchard PR #19](https://github.com/valargroup/orchard/pull/19)), which carries `orchard 0.13.0` plus cherry-picks of [zcash/orchard #489](https://github.com/zcash/orchard/pull/489) (SpendAuthG fixed-base multiplication) and [zcash/orchard #495](https://github.com/zcash/orchard/pull/495) (`NoteValue::ZERO` public associated constant). Once both upstream PRs land and an `orchard 0.14` ships, the pin will collapse to the published crate.
 
 ## License
 

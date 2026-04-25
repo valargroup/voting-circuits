@@ -163,7 +163,7 @@ pub fn build_delegation_bundle(
         // Condition 12: real nullifier for IMT non-membership.
         let real_nf = note.nullifier(fvk);
         // Condition 14: alternate nullifier = Poseidon(nk, dom, real_nf).
-        let gov_null = gov_null_hash(nk_val, dom, real_nf.0);
+        let gov_null = gov_null_hash(nk_val, dom, real_nf.inner());
 
         let slot = NoteSlotWitness {
             g_d: Value::known(recipient.g_d()),
@@ -205,12 +205,12 @@ pub fn build_delegation_bundle(
             let pd = &pre.padded_notes[pad_idx];
             let rho = Rho::from_bytes(&pd.rho).expect("precomputed rho must be valid");
             let rseed = RandomSeed::from_bytes(pd.rseed, &rho).expect("precomputed rseed must be valid");
-            Note::from_parts(pad_addr, NoteValue::zero(), rho, rseed).expect("precomputed note must be valid")
+            Note::from_parts(pad_addr, NoteValue::ZERO, rho, rseed).expect("precomputed note must be valid")
         } else {
             let (_, _, dummy) = Note::dummy(&mut *rng, None);
             Note::new(
                 pad_addr,
-                NoteValue::zero(),
+                NoteValue::ZERO,
                 Rho::from_nf_old(dummy.nullifier(fvk)),
                 &mut *rng,
             )
@@ -223,10 +223,10 @@ pub fn build_delegation_bundle(
         let cmx = ExtractedNoteCommitment::from(cm.clone()).inner();
 
         let real_nf = pad_note.nullifier(fvk);
-        let gov_null = gov_null_hash(nk_val, dom, real_nf.0);
+        let gov_null = gov_null_hash(nk_val, dom, real_nf.inner());
 
         // Get IMT non-membership proof for this padded note's nullifier.
-        let imt_proof = imt_provider.non_membership_proof(real_nf.0)?;
+        let imt_proof = imt_provider.non_membership_proof(real_nf.inner())?;
 
         // Merkle path: dummy (condition 10 is skipped for v=0 notes).
         let merkle_path = MerklePath::dummy(&mut *rng);
@@ -236,7 +236,7 @@ pub fn build_delegation_bundle(
             pk_d: Value::known(
                 NonIdentityPallasPoint::from_bytes(&pad_addr.pk_d().to_bytes()).unwrap(),
             ),
-            v: Value::known(NoteValue::zero()),
+            v: Value::known(NoteValue::ZERO),
             rho: Value::known(rho.into_inner()),
             psi: Value::known(psi),
             rcm: Value::known(rcm),
@@ -302,7 +302,7 @@ pub fn build_delegation_bundle(
     // Value is 1 so that hardware wallets (Keystone) render the transaction.
     // The rho is bound to the delegation via condition 3.
     let sender_address = fvk.address_at(0u32, Scope::External);
-    let signed_rho = Rho::from_nf_old(Nullifier(rho));
+    let signed_rho = Rho::from_nf_old(Nullifier::from_inner(rho));
     let signed_note = if let Some(pre) = precomputed {
         let rseed = RandomSeed::from_bytes(pre.rseed_signed, &signed_rho)
             .expect("precomputed rseed_signed must be valid");
@@ -326,12 +326,12 @@ pub fn build_delegation_bundle(
     let output_note = if let Some(pre) = precomputed {
         let rseed = RandomSeed::from_bytes(pre.rseed_output, &output_rho)
             .expect("precomputed rseed_output must be valid");
-        Note::from_parts(output_recipient, NoteValue::zero(), output_rho, rseed)
+        Note::from_parts(output_recipient, NoteValue::ZERO, output_rho, rseed)
             .expect("precomputed output note must be valid")
     } else {
         Note::new(
             output_recipient,
-            NoteValue::zero(),
+            NoteValue::ZERO,
             output_rho,
             &mut *rng,
         )
@@ -464,7 +464,7 @@ mod tests {
             let merkle_path = MerklePath::from_parts(i as u32, auth_path);
 
             let real_nf = note.nullifier(fvk);
-            let imt_proof = imt_provider.non_membership_proof(real_nf.0).unwrap();
+            let imt_proof = imt_provider.non_membership_proof(real_nf.inner()).unwrap();
 
             inputs.push(RealNoteInput {
                 note,

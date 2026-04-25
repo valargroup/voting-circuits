@@ -8,7 +8,7 @@ repository = "https://github.com/valargroup/voting-circuits"
 readme = "README.md"
 
 [dependencies]
-orchard = { path = "../orchard", version = "0.12.0", package = "valar-orchard", features = ["circuit"] }
+orchard = { git = "https://github.com/valargroup/orchard.git", rev = "c26a6ec6860cc62bb15d208c3d790dfb616bfbe7", features = ["circuit", "unstable-voting-circuits"] }
 halo2_proofs = { version = "0.3", default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
 halo2_gadgets = { version = "0.4", default-features = false }
 pasta_curves = "0.5"
