@@ -681,7 +681,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "orchard"
 version = "0.13.0"
-source = "git+https://github.com/valargroup/orchard.git?branch=valar%2F0.13-spend-auth-g#7fa213ae7057eb959e5aba4a4195d6ca2e26b252"
+source = "git+https://github.com/valargroup/orchard.git?rev=c26a6ec6860cc62bb15d208c3d790dfb616bfbe7#c26a6ec6860cc62bb15d208c3d790dfb616bfbe7"
 dependencies = [
  "aes",
  "bitvec",
