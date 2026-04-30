@@ -3,9 +3,8 @@
 //! Follows the same pattern as `delegation/prove.rs` but for the
 //! 5-condition share reveal circuit at K=11.
 
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
+use std::string::String;
+use std::vec::Vec;
 
 use halo2_proofs::{
     pasta::EqAffine,
@@ -22,7 +21,6 @@ use super::circuit::{Circuit, Instance, K};
 // Params / key generation
 // ================================================================
 
-#[cfg(feature = "std")]
 static SHARE_REVEAL_PK_CACHE: std::sync::OnceLock<(
     Params<EqAffine>,
     plonk::ProvingKey<EqAffine>,
@@ -58,9 +56,8 @@ pub fn share_reveal_proving_key(
 /// Return cached params and proving/verifying keys for the share reveal circuit.
 ///
 /// Key generation is deterministic and expensive enough to dominate helper
-/// proving latency if repeated for every revealed share. With `std` enabled,
-/// compute it once per process and reuse it for both proving and verification.
-#[cfg(feature = "std")]
+/// proving latency if repeated for every revealed share. Compute it once per
+/// process and reuse it for both proving and verification.
 pub fn share_reveal_cached_keys() -> &'static (
     Params<EqAffine>,
     plonk::ProvingKey<EqAffine>,
@@ -85,17 +82,7 @@ pub fn share_reveal_cached_keys() -> &'static (
 ///
 /// **Expensive**: K=11 proof generation takes ~5-15 seconds in release mode.
 pub fn create_share_reveal_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
-    #[cfg(feature = "std")]
     let (params, pk, _vk) = share_reveal_cached_keys();
-
-    #[cfg(not(feature = "std"))]
-    let (params_owned, pk_owned, _vk) = {
-        let params = share_reveal_params();
-        let (pk, vk) = share_reveal_proving_key(&params);
-        (params, pk, vk)
-    };
-    #[cfg(not(feature = "std"))]
-    let (params, pk) = (&params_owned, &pk_owned);
 
     let public_inputs = instance.to_halo2_instance();
 
@@ -121,17 +108,7 @@ pub fn create_share_reveal_proof(circuit: Circuit, instance: &Instance) -> Vec<u
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
 pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
-    #[cfg(feature = "std")]
     let (params, _pk, vk) = share_reveal_cached_keys();
-
-    #[cfg(not(feature = "std"))]
-    let (params_owned, _pk, vk_owned) = {
-        let params = share_reveal_params();
-        let (pk, vk) = share_reveal_proving_key(&params);
-        (params, pk, vk)
-    };
-    #[cfg(not(feature = "std"))]
-    let (params, vk) = (&params_owned, &vk_owned);
 
     let public_inputs = instance.to_halo2_instance();
 
@@ -187,17 +164,7 @@ pub fn verify_share_reveal_proof_raw(
         }
     }
 
-    #[cfg(feature = "std")]
     let (params, _pk, vk) = share_reveal_cached_keys();
-
-    #[cfg(not(feature = "std"))]
-    let (params_owned, _pk, vk_owned) = {
-        let params = share_reveal_params();
-        let (pk, vk) = share_reveal_proving_key(&params);
-        (params, pk, vk)
-    };
-    #[cfg(not(feature = "std"))]
-    let (params, vk) = (&params_owned, &vk_owned);
 
     let strategy = SingleVerifier::new(params);
     let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);

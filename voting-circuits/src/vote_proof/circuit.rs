@@ -49,15 +49,23 @@
 //! - **Condition 12**: Vote Commitment Integrity — `vote_commitment = H(DOMAIN_VC, voting_round_id,
 //!   shares_hash, proposal_id, vote_decision)`. *(implemented)*
 
-use alloc::vec::Vec;
-
+use std::vec::Vec;
 
 use halo2_proofs::{
-    circuit::{AssignedCell, Layouter, Value, floor_planner},
+    circuit::{floor_planner, AssignedCell, Layouter, Value},
     plonk::{self, Advice, Column, ConstraintSystem, Fixed, Instance as InstanceColumn},
 };
 use pasta_curves::{pallas, vesta};
 
+use super::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
+use crate::circuit::address_ownership::{prove_address_ownership, spend_auth_g_mul};
+use crate::circuit::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
+use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
+use crate::circuit::van_integrity;
+use crate::circuit::vote_commitment;
+use crate::shares_hash::compute_shares_hash_in_circuit;
+#[cfg(test)]
+use crate::shares_hash::hash_share_commitment_in_circuit;
 use halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
@@ -70,20 +78,12 @@ use halo2_gadgets::{
     sinsemilla::chip::{SinsemillaChip, SinsemillaConfig},
     utilities::lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
 };
-use crate::circuit::address_ownership::{prove_address_ownership, spend_auth_g_mul};
-use crate::circuit::elgamal::{EaPkInstanceLoc, prove_elgamal_encryptions};
-use crate::circuit::poseidon_merkle::{MerkleSwapGate, synthesize_poseidon_merkle_path};
 use orchard::circuit::commit_ivk::{CommitIvkChip, CommitIvkConfig};
-use orchard::circuit::gadget::{add_chip::{AddChip, AddConfig}, assign_free_advice, AddInstruction};
-use orchard::constants::{
-    OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains,
+use orchard::circuit::gadget::{
+    add_chip::{AddChip, AddConfig},
+    assign_free_advice, AddInstruction,
 };
-use crate::circuit::van_integrity;
-use crate::circuit::vote_commitment;
-use crate::shares_hash::compute_shares_hash_in_circuit;
-#[cfg(test)]
-use crate::shares_hash::hash_share_commitment_in_circuit;
-use super::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
+use orchard::constants::{OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains};
 
 // ================================================================
 // Constants
@@ -609,8 +609,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Indices 0–1: Lagrange coefficients (ECC chip only).
         // Indices 2–4: Poseidon round constants A (rc_a).
         // Indices 5–7: Poseidon round constants B (rc_b).
-        let lagrange_coeffs: [Column<Fixed>; 8] =
-            core::array::from_fn(|_| meta.fixed_column());
+        let lagrange_coeffs: [Column<Fixed>; 8] = core::array::from_fn(|_| meta.fixed_column());
         let rc_a = lagrange_coeffs[2..5].try_into().unwrap();
         let rc_b = lagrange_coeffs[5..8].try_into().unwrap();
 
@@ -717,7 +716,6 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // Load (proposal_id, 2^proposal_id) lookup table for condition 6.
         AuthorityDecrementChip::load_table(&config.authority_decrement, &mut layouter)?;
-
 
         // Construct the ECC chip (used in conditions 3 and 10).
         let ecc_chip = config.ecc_chip();
@@ -951,11 +949,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             // Bind the computed Merkle root to the VOTE_COMM_TREE_ROOT
             // public input. The verifier checks that the voter's VAN is
             // a leaf in the published vote commitment tree.
-            layouter.constrain_instance(
-                root.cell(),
-                config.primary,
-                VOTE_COMM_TREE_ROOT,
-            )?;
+            layouter.constrain_instance(root.cell(), config.primary, VOTE_COMM_TREE_ROOT)?;
         }
 
         // ---------------------------------------------------------------
@@ -1004,7 +998,12 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             )?;
             hasher.hash(
                 layouter.namespace(|| "Poseidon(vsk_nk, domain, round_id, van_old)"),
-                [vsk_nk_cond4, domain_van_nf, voting_round_id_cond4, vote_authority_note_old],
+                [
+                    vsk_nk_cond4,
+                    domain_van_nf,
+                    voting_round_id_cond4,
+                    vote_authority_note_old,
+                ],
             )?
         };
 
@@ -1093,11 +1092,13 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // by condition 9 (range check) and condition 11 (El Gamal
         // encryption inputs).
         let share_cells: [_; 16] = (0..16usize)
-            .map(|i| assign_free_advice(
-                layouter.namespace(|| alloc::format!("witness share_{i}")),
-                config.advices[0],
-                self.shares[i],
-            ))
+            .map(|i| {
+                assign_free_advice(
+                    layouter.namespace(|| format!("witness share_{i}")),
+                    config.advices[0],
+                    self.shares[i],
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
             .expect("always 16 elements");
@@ -1107,7 +1108,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             share_cells[0].clone(),
             |acc, (i, share)| {
                 config.add_chip().add(
-                    layouter.namespace(|| alloc::format!("shares sum step {}", i + 1)),
+                    layouter.namespace(|| format!("shares sum step {}", i + 1)),
                     &acc,
                     share,
                 )
@@ -1119,9 +1120,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // weight without creating or destroying value.
         layouter.assign_region(
             || "shares sum == total_note_value",
-            |mut region| {
-                region.constrain_equal(shares_sum.cell(), total_note_value_cond8.cell())
-            },
+            |mut region| region.constrain_equal(shares_sum.cell(), total_note_value_cond8.cell()),
         )?;
 
         // ---------------------------------------------------------------
@@ -1161,7 +1160,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // the originals remain available for condition 11 (El Gamal).
         for (i, cell) in share_cells.iter().enumerate() {
             config.range_check_config().copy_check(
-                layouter.namespace(|| alloc::format!("share_{i} < 2^30")),
+                layouter.namespace(|| format!("share_{i} < 2^30")),
                 cell.clone(),
                 3,    // num_words: 3 × 10 = 30 bits
                 true, // strict: running sum terminates at 0
@@ -1188,7 +1187,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let blinds: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
             .map(|i| {
                 assign_free_advice(
-                    layouter.namespace(|| alloc::format!("witness share_blind[{i}]")),
+                    layouter.namespace(|| format!("witness share_blind[{i}]")),
                     config.advices[0],
                     self.share_blinds[i],
                 )
@@ -1198,41 +1197,49 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             .expect("always 16 elements");
 
         let enc_c1: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
-            .map(|i| assign_free_advice(
-                layouter.namespace(|| alloc::format!("witness enc_c1_x[{i}]")),
-                config.advices[0],
-                self.enc_share_c1_x[i],
-            ))
+            .map(|i| {
+                assign_free_advice(
+                    layouter.namespace(|| format!("witness enc_c1_x[{i}]")),
+                    config.advices[0],
+                    self.enc_share_c1_x[i],
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
             .expect("always 16 elements");
 
         let enc_c2: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
-            .map(|i| assign_free_advice(
-                layouter.namespace(|| alloc::format!("witness enc_c2_x[{i}]")),
-                config.advices[0],
-                self.enc_share_c2_x[i],
-            ))
+            .map(|i| {
+                assign_free_advice(
+                    layouter.namespace(|| format!("witness enc_c2_x[{i}]")),
+                    config.advices[0],
+                    self.enc_share_c2_x[i],
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
             .expect("always 16 elements");
 
         let enc_c1_y: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
-            .map(|i| assign_free_advice(
-                layouter.namespace(|| alloc::format!("witness enc_c1_y[{i}]")),
-                config.advices[0],
-                self.enc_share_c1_y[i],
-            ))
+            .map(|i| {
+                assign_free_advice(
+                    layouter.namespace(|| format!("witness enc_c1_y[{i}]")),
+                    config.advices[0],
+                    self.enc_share_c1_y[i],
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
             .expect("always 16 elements");
 
         let enc_c2_y: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
-            .map(|i| assign_free_advice(
-                layouter.namespace(|| alloc::format!("witness enc_c2_y[{i}]")),
-                config.advices[0],
-                self.enc_share_c2_y[i],
-            ))
+            .map(|i| {
+                assign_free_advice(
+                    layouter.namespace(|| format!("witness enc_c2_y[{i}]")),
+                    config.advices[0],
+                    self.enc_share_c2_y[i],
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
             .expect("always 16 elements");
@@ -1267,11 +1274,13 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // ---------------------------------------------------------------
         {
             let r_cells: [_; 16] = (0..16usize)
-                .map(|i| assign_free_advice(
-                    layouter.namespace(|| alloc::format!("witness r[{i}]")),
-                    config.advices[0],
-                    self.share_randomness[i],
-                ))
+                .map(|i| {
+                    assign_free_advice(
+                        layouter.namespace(|| format!("witness r[{i}]")),
+                        config.advices[0],
+                        self.share_randomness[i],
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()?
                 .try_into()
                 .expect("always 16 elements");
@@ -1348,11 +1357,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         )?;
 
         // Bind the derived vote commitment to the VOTE_COMMITMENT public input.
-        layouter.constrain_instance(
-            vote_commitment.cell(),
-            config.primary,
-            VOTE_COMMITMENT,
-        )?;
+        layouter.constrain_instance(vote_commitment.cell(), config.primary, VOTE_COMMITMENT)?;
 
         Ok(())
     }
@@ -1428,7 +1433,7 @@ impl Instance {
     /// The order must match the instance column offsets defined at the
     /// top of this file (`VAN_NULLIFIER`, `R_VPK_X`, `R_VPK_Y`, etc.).
     pub fn to_halo2_instance(&self) -> Vec<vesta::Scalar> {
-        alloc::vec![
+        vec![
             self.van_nullifier,
             self.r_vpk_x,
             self.r_vpk_y,
@@ -1462,10 +1467,7 @@ mod tests {
     use pasta_curves::pallas;
     use rand::rngs::OsRng;
 
-    use orchard::constants::{
-        fixed_bases::COMMIT_IVK_PERSONALIZATION,
-        L_ORCHARD_BASE,
-    };
+    use orchard::constants::{fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
 
     /// Generates an El Gamal keypair for testing.
     /// Returns `(ea_sk, ea_pk_point, ea_pk_affine)`.
@@ -1502,19 +1504,14 @@ mod tests {
         let mut c1_y = [pallas::Base::zero(); 16];
         let mut c2_y = [pallas::Base::zero(); 16];
         // Use small deterministic randomness (fits in both Base and Scalar).
-        let randomness: [pallas::Base; 16] = core::array::from_fn(|i| {
-            pallas::Base::from((i as u64 + 1) * 101)
-        });
+        let randomness: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from((i as u64 + 1) * 101));
         // Deterministic blind factors for tests.
-        let share_blinds: [pallas::Base; 16] = core::array::from_fn(|i| {
-            pallas::Base::from(1001u64 + i as u64)
-        });
+        let share_blinds: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(1001u64 + i as u64));
         for i in 0..16 {
-            let (cx1, cx2, cy1, cy2) = elgamal_encrypt(
-                pallas::Base::from(shares[i]),
-                randomness[i],
-                ea_pk,
-            );
+            let (cx1, cx2, cy1, cy2) =
+                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk);
             c1_x[i] = cx1;
             c2_x[i] = cx2;
             c1_y[i] = cy1;
@@ -1564,8 +1561,7 @@ mod tests {
         let g_d_affine = g_d.to_affine();
 
         // Step 4: pk_d = [ivk_v] * g_d
-        let ivk_v_scalar =
-            base_to_scalar(ivk_v).expect("ivk_v must be < scalar field modulus");
+        let ivk_v_scalar = base_to_scalar(ivk_v).expect("ivk_v must be < scalar field modulus");
         let pk_d = g_d * ivk_v_scalar;
         let pk_d_affine = pk_d.to_affine();
 
@@ -1592,7 +1588,12 @@ mod tests {
         let proposal_id_base = pallas::Base::from(proposal_id);
         let vote_decision = pallas::Base::from(TEST_VOTE_DECISION);
         circuit.vote_decision = Value::known(vote_decision);
-        vote_commitment_hash(voting_round_id, shares_hash_val, proposal_id_base, vote_decision)
+        vote_commitment_hash(
+            voting_round_id,
+            shares_hash_val,
+            proposal_id_base,
+            vote_decision,
+        )
     }
 
     /// Build valid test data for all 11 conditions.
@@ -1708,7 +1709,8 @@ mod tests {
         circuit.ea_pk = Value::known(ea_pk_affine);
 
         // Condition 12: vote commitment from shares_hash + proposal + decision.
-        let vote_commitment = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let vote_commitment =
+            set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -1804,7 +1806,12 @@ mod tests {
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, TEST_PROPOSAL_ID, instance.voting_round_id);
+        let vc = set_condition_11(
+            &mut circuit,
+            shares_hash_val,
+            TEST_PROPOSAL_ID,
+            instance.voting_round_id,
+        );
         instance.vote_commitment = vc;
         instance.proposal_id = pallas::Base::from(TEST_PROPOSAL_ID);
         instance.ea_pk_x = *ea_pk_affine.coordinates().unwrap().x();
@@ -1885,8 +1892,12 @@ mod tests {
         let van_comm_rand = pallas::Base::random(&mut rng);
 
         let vote_authority_note_old = van_integrity_hash(
-            vpk_g_d_x, vpk_pk_d_x, total_note_value, voting_round_id,
-            proposal_authority_old, van_comm_rand,
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            total_note_value,
+            voting_round_id,
+            proposal_authority_old,
+            van_comm_rand,
         );
         let (auth_path, position, vote_comm_tree_root) =
             build_single_leaf_merkle_path(vote_authority_note_old);
@@ -1894,8 +1905,12 @@ mod tests {
         let one_shifted = pallas::Base::from(1u64 << proposal_id);
         let proposal_authority_new = proposal_authority_old - one_shifted;
         let vote_authority_note_new = van_integrity_hash(
-            vpk_g_d_x, vpk_pk_d_x, total_note_value, voting_round_id,
-            proposal_authority_new, van_comm_rand,
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            total_note_value,
+            voting_round_id,
+            proposal_authority_new,
+            van_comm_rand,
         );
 
         let shares_u64: [u64; 16] = [625; 16];
@@ -1904,7 +1919,10 @@ mod tests {
             encrypt_shares(shares_u64, ea_pk_point);
 
         let wrong_vsk = pallas::Scalar::random(&mut rng);
-        assert_ne!(wrong_vsk, vsk, "test assumes distinct vsk with high probability");
+        assert_ne!(
+            wrong_vsk, vsk,
+            "test assumes distinct vsk with high probability"
+        );
         let alpha_v = pallas::Scalar::random(&mut rng);
         let g = pallas::Point::from(spend_auth_g_affine());
         let r_vpk = (g * vsk + g * alpha_v).to_affine();
@@ -1951,7 +1969,10 @@ mod tests {
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
-        assert!(prover.verify().is_err(), "condition 3 must reject wrong vsk");
+        assert!(
+            prover.verify().is_err(),
+            "condition 3 must reject wrong vsk"
+        );
     }
 
     /// Using a vpk_pk_d that does not equal [ivk_v]*vpk_g_d should fail
@@ -1967,8 +1988,8 @@ mod tests {
         let (vpk_g_d_affine, _vpk_pk_d_correct) = derive_voting_address(vsk, vsk_nk, rivk_v);
         let vpk_g_d_x = *vpk_g_d_affine.coordinates().unwrap().x();
 
-        let wrong_vpk_pk_d_affine = (pallas::Point::generator() * pallas::Scalar::from(99999u64))
-            .to_affine();
+        let wrong_vpk_pk_d_affine =
+            (pallas::Point::generator() * pallas::Scalar::from(99999u64)).to_affine();
         let wrong_vpk_pk_d_x = *wrong_vpk_pk_d_affine.coordinates().unwrap().x();
 
         let total_note_value = pallas::Base::from(10_000u64);
@@ -2050,7 +2071,10 @@ mod tests {
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
-        assert!(prover.verify().is_err(), "condition 3 must reject wrong vpk_pk_d");
+        assert!(
+            prover.verify().is_err(),
+            "condition 3 must reject wrong vpk_pk_d"
+        );
     }
 
     // ================================================================
@@ -2065,7 +2089,10 @@ mod tests {
         instance.r_vpk_x = pallas::Base::random(&mut OsRng);
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
-        assert!(prover.verify().is_err(), "condition 4 must reject wrong r_vpk");
+        assert!(
+            prover.verify().is_err(),
+            "condition 4 must reject wrong r_vpk"
+        );
     }
 
     // ================================================================
@@ -2110,8 +2137,12 @@ mod tests {
         let proposal_id = 0u64; // vote on proposal 0 so one_shifted = 1, new = 4
 
         let vote_authority_note_old = van_integrity_hash(
-            vpk_g_d_x, vpk_pk_d_x, total_note_value, voting_round_id,
-            proposal_authority_old, van_comm_rand,
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            total_note_value,
+            voting_round_id,
+            proposal_authority_old,
+            van_comm_rand,
         );
         let (auth_path, position, vote_comm_tree_root) =
             build_single_leaf_merkle_path(vote_authority_note_old);
@@ -2119,8 +2150,12 @@ mod tests {
         let one_shifted = pallas::Base::from(1u64 << proposal_id);
         let proposal_authority_new = proposal_authority_old - one_shifted;
         let vote_authority_note_new = van_integrity_hash(
-            vpk_g_d_x, vpk_pk_d_x, total_note_value, voting_round_id,
-            proposal_authority_new, van_comm_rand,
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            total_note_value,
+            voting_round_id,
+            proposal_authority_new,
+            van_comm_rand,
         );
 
         // Use a DIFFERENT vsk_nk in the circuit.
@@ -2311,8 +2346,7 @@ mod tests {
     #[test]
     fn proposal_authority_exceeds_16_bits_fails() {
         // 65536 = 2^16 is the first value not representable as a 16-bit bitmask.
-        let (circuit, instance) =
-            make_test_data_with_authority(pallas::Base::from(65536u64));
+        let (circuit, instance) = make_test_data_with_authority(pallas::Base::from(65536u64));
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(
             prover.verify().is_err(),
@@ -2342,8 +2376,7 @@ mod tests {
     /// Authority 0xFFF8 has bits 3..15 set; voting on proposal 3 gives new = 0xFFF0.
     #[test]
     fn new_van_integrity_large_authority() {
-        let (circuit, instance) =
-            make_test_data_with_authority(pallas::Base::from(0xFFF8u64));
+        let (circuit, instance) = make_test_data_with_authority(pallas::Base::from(0xFFF8u64));
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert_eq!(prover.verify(), Ok(()));
@@ -2381,13 +2414,17 @@ mod tests {
         let total_note_value = pallas::Base::from(10_000u64);
         let voting_round_id = pallas::Base::random(&mut rng);
         let proposal_authority_old = pallas::Base::from(5u64); // bits 0 and 2 set
-        // proposal_id = 0 is now forbidden (sentinel); use proposal_id = 2 (bit 2 is set in 5).
+                                                               // proposal_id = 0 is now forbidden (sentinel); use proposal_id = 2 (bit 2 is set in 5).
         let proposal_id = 2u64;
         let van_comm_rand = pallas::Base::random(&mut rng);
 
         let vote_authority_note_old = van_integrity_hash(
-            vpk_g_d_x, vpk_pk_d_x, total_note_value, voting_round_id,
-            proposal_authority_old, van_comm_rand,
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            total_note_value,
+            voting_round_id,
+            proposal_authority_old,
+            van_comm_rand,
         );
 
         // Place the leaf at position 7 (binary: ...0111).
@@ -2412,8 +2449,12 @@ mod tests {
         let one_shifted = pallas::Base::from(1u64 << proposal_id);
         let proposal_authority_new = proposal_authority_old - one_shifted;
         let vote_authority_note_new = van_integrity_hash(
-            vpk_g_d_x, vpk_pk_d_x, total_note_value, voting_round_id,
-            proposal_authority_new, van_comm_rand,
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            total_note_value,
+            voting_round_id,
+            proposal_authority_new,
+            van_comm_rand,
         );
 
         let alpha_v = pallas::Scalar::random(&mut rng);
@@ -2525,13 +2566,17 @@ mod tests {
 
         let voting_round_id = pallas::Base::random(&mut rng);
         let proposal_authority_old = pallas::Base::from(5u64); // bits 0 and 2 set
-        // proposal_id = 0 is now forbidden (sentinel); use proposal_id = 2 (bit 2 is set in 5).
+                                                               // proposal_id = 0 is now forbidden (sentinel); use proposal_id = 2 (bit 2 is set in 5).
         let proposal_id = 2u64;
         let van_comm_rand = pallas::Base::random(&mut rng);
 
         let vote_authority_note_old = van_integrity_hash(
-            vpk_g_d_x, vpk_pk_d_x, total, voting_round_id,
-            proposal_authority_old, van_comm_rand,
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            total,
+            voting_round_id,
+            proposal_authority_old,
+            van_comm_rand,
         );
         let (auth_path, position, vote_comm_tree_root) =
             build_single_leaf_merkle_path(vote_authority_note_old);
@@ -2539,8 +2584,12 @@ mod tests {
         let one_shifted = pallas::Base::from(1u64 << proposal_id);
         let proposal_authority_new = proposal_authority_old - one_shifted;
         let vote_authority_note_new = van_integrity_hash(
-            vpk_g_d_x, vpk_pk_d_x, total, voting_round_id,
-            proposal_authority_new, van_comm_rand,
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            total,
+            voting_round_id,
+            proposal_authority_new,
+            van_comm_rand,
         );
 
         // Condition 11: real El Gamal encryption with max-value shares.
@@ -2655,8 +2704,12 @@ mod tests {
         let van_comm_rand = pallas::Base::random(&mut rng);
 
         let vote_authority_note_old = van_integrity_hash(
-            vpk_g_d_x, vpk_pk_d_x, total_note_value, voting_round_id,
-            proposal_authority_old, van_comm_rand,
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            total_note_value,
+            voting_round_id,
+            proposal_authority_old,
+            van_comm_rand,
         );
         let (auth_path, position, vote_comm_tree_root) =
             build_single_leaf_merkle_path(vote_authority_note_old);
@@ -2664,8 +2717,12 @@ mod tests {
         let one_shifted = pallas::Base::from(1u64 << proposal_id);
         let proposal_authority_new = proposal_authority_old - one_shifted;
         let vote_authority_note_new = van_integrity_hash(
-            vpk_g_d_x, vpk_pk_d_x, total_note_value, voting_round_id,
-            proposal_authority_new, van_comm_rand,
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            total_note_value,
+            voting_round_id,
+            proposal_authority_new,
+            van_comm_rand,
         );
 
         // shares[0] overflows (2^30); shares[1..16] are valid (625 each).
@@ -2777,16 +2834,11 @@ mod tests {
     fn shares_hash_deterministic() {
         let mut rng = OsRng;
 
-        let blinds: [pallas::Base; 16] =
-            core::array::from_fn(|_| pallas::Base::random(&mut rng));
-        let c1_x: [pallas::Base; 16] =
-            core::array::from_fn(|_| pallas::Base::random(&mut rng));
-        let c2_x: [pallas::Base; 16] =
-            core::array::from_fn(|_| pallas::Base::random(&mut rng));
-        let c1_y: [pallas::Base; 16] =
-            core::array::from_fn(|_| pallas::Base::random(&mut rng));
-        let c2_y: [pallas::Base; 16] =
-            core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let blinds: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let c1_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let c2_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let c1_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let c2_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
 
         let h1 = shares_hash(blinds, c1_x, c2_x, c1_y, c2_y);
         let h2 = shares_hash(blinds, c1_x, c2_x, c1_y, c2_y);
@@ -2958,8 +3010,7 @@ mod tests {
         let instance = vec![vec![expected]];
         // K=10 (1024 rows) is enough for one Poseidon(3) region.
         const TEST_K: u32 = 10;
-        let prover =
-            MockProver::run(TEST_K, &circuit, instance).expect("MockProver::run failed");
+        let prover = MockProver::run(TEST_K, &circuit, instance).expect("MockProver::run failed");
         assert_eq!(prover.verify(), Ok(()));
     }
 
@@ -3183,40 +3234,46 @@ mod tests {
     #[test]
     #[ignore]
     fn row_budget() {
-        use std::println;
         use halo2_proofs::dev::CircuitCost;
         use pasta_curves::vesta;
+        use std::println;
 
         let (circuit, _) = make_test_data();
 
         // CircuitCost::measure runs the floor planner and returns layout statistics.
         // Fields are private, so extract them from the Debug representation.
         let cost = CircuitCost::<vesta::Point, _>::measure(K, &circuit);
-        let debug = alloc::format!("{cost:?}");
+        let debug = format!("{cost:?}");
 
         // Parse max_rows, max_advice_rows, max_fixed_rows from Debug string.
         let extract = |field: &str| -> usize {
-            let prefix = alloc::format!("{field}: ");
-            debug.split(&prefix)
+            let prefix = format!("{field}: ");
+            debug
+                .split(&prefix)
                 .nth(1)
                 .and_then(|s| s.split([',', ' ', '}']).next())
                 .and_then(|n| n.parse().ok())
                 .unwrap_or(0)
         };
 
-        let max_rows         = extract("max_rows");
-        let max_advice_rows  = extract("max_advice_rows");
-        let max_fixed_rows   = extract("max_fixed_rows");
-        let total_available  = 1usize << K;
+        let max_rows = extract("max_rows");
+        let max_advice_rows = extract("max_advice_rows");
+        let max_fixed_rows = extract("max_fixed_rows");
+        let total_available = 1usize << K;
 
         println!("=== vote-proof circuit row budget (K={K}) ===");
         println!("  max_rows (floor-planner high-water mark): {max_rows}");
         println!("  max_advice_rows:                          {max_advice_rows}");
         println!("  max_fixed_rows:                           {max_fixed_rows}");
         println!("  2^K  (total available rows):              {total_available}");
-        println!("  headroom:                                 {}", total_available.saturating_sub(max_rows));
-        println!("  utilisation:                              {:.1}%",
-            100.0 * max_rows as f64 / total_available as f64);
+        println!(
+            "  headroom:                                 {}",
+            total_available.saturating_sub(max_rows)
+        );
+        println!(
+            "  utilisation:                              {:.1}%",
+            100.0 * max_rows as f64 / total_available as f64
+        );
         println!();
         println!("  Full debug: {debug}");
 
@@ -3227,19 +3284,24 @@ mod tests {
         // the measurement above cannot be trusted as a production bound.
         // ---------------------------------------------------------------
         let cost_default = CircuitCost::<vesta::Point, _>::measure(K, &Circuit::default());
-        let debug_default = alloc::format!("{cost_default:?}");
+        let debug_default = format!("{cost_default:?}");
         let max_rows_default = debug_default
-            .split("max_rows: ").nth(1)
+            .split("max_rows: ")
+            .nth(1)
             .and_then(|s| s.split([',', ' ', '}']).next())
             .and_then(|n| n.parse::<usize>().ok())
             .unwrap_or(0);
         if max_rows_default == max_rows {
-            println!("  Witness-independence: PASS \
-                (Circuit::default() max_rows={max_rows_default} == filled max_rows={max_rows})");
+            println!(
+                "  Witness-independence: PASS \
+                (Circuit::default() max_rows={max_rows_default} == filled max_rows={max_rows})"
+            );
         } else {
-            println!("  Witness-independence: FAIL \
+            println!(
+                "  Witness-independence: FAIL \
                 (Circuit::default() max_rows={max_rows_default} != filled max_rows={max_rows}) \
-                — row count depends on witness values!");
+                — row count depends on witness values!"
+            );
         }
 
         // ---------------------------------------------------------------

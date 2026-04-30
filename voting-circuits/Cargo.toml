@@ -28,8 +28,6 @@ rand = "0.8"
 incrementalmerkletree = "0.8.1"
 
 [features]
-default = ["std"]
-std = []
 share-reveal = []
 
 [lib]

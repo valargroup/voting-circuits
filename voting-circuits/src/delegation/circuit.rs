@@ -17,7 +17,6 @@
 //! - **Condition 13** (×5): IMT non-membership.
 //! - **Condition 14** (×5): Alternate nullifier integrity.
 
-use alloc::vec::Vec;
 use group::{Curve, GroupEncoding};
 use halo2_proofs::{
     circuit::{floor_planner, AssignedCell, Layouter, Value},
@@ -25,10 +24,36 @@ use halo2_proofs::{
     poly::Rotation,
 };
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
+use std::vec::Vec;
 
+use super::imt::IMT_DEPTH;
+use super::imt_circuit::{synthesize_imt_non_membership, ImtNonMembershipConfig};
 use crate::circuit::address_ownership::prove_address_ownership;
 use crate::circuit::gadget::assign_constant;
 use crate::circuit::mul_chip::{MulChip, MulConfig, MulInstruction};
+use crate::circuit::van_integrity;
+use halo2_gadgets::{
+    ecc::{
+        chip::{EccChip, EccConfig},
+        NonIdentityPoint, Point, ScalarFixed, ScalarVar,
+    },
+    poseidon::{
+        primitives::{self as poseidon, ConstantLength},
+        Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
+    },
+    sinsemilla::{
+        chip::{SinsemillaChip, SinsemillaConfig},
+        merkle::{
+            chip::{MerkleChip, MerkleConfig},
+            MerklePath as GadgetMerklePath,
+        },
+    },
+    utilities::{
+        bool_check,
+        lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
+    },
+};
+use orchard::constants::MERKLE_DEPTH_ORCHARD;
 use orchard::{
     circuit::{
         commit_ivk::{CommitIvkChip, CommitIvkConfig},
@@ -53,31 +78,6 @@ use orchard::{
     tree::MerkleHashOrchard,
     value::NoteValue,
 };
-use halo2_gadgets::{
-    ecc::{
-        chip::{EccChip, EccConfig},
-        NonIdentityPoint, Point, ScalarFixed, ScalarVar,
-    },
-    poseidon::{
-        primitives::{self as poseidon, ConstantLength},
-        Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
-    },
-    sinsemilla::{
-        chip::{SinsemillaChip, SinsemillaConfig},
-        merkle::{
-            chip::{MerkleChip, MerkleConfig},
-            MerklePath as GadgetMerklePath,
-        },
-    },
-    utilities::{
-        bool_check,
-        lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
-    },
-};
-use super::imt::IMT_DEPTH;
-use super::imt_circuit::{ImtNonMembershipConfig, synthesize_imt_non_membership};
-use crate::circuit::van_integrity;
-use orchard::constants::MERKLE_DEPTH_ORCHARD;
 
 // ================================================================
 // Circuit size
@@ -145,8 +145,15 @@ pub(crate) fn rho_binding_hash(
     van_comm: pallas::Base,
     vote_round_id: pallas::Base,
 ) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<7>, 3, 2>::init()
-        .hash([cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id])
+    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<7>, 3, 2>::init().hash([
+        cmx_1,
+        cmx_2,
+        cmx_3,
+        cmx_4,
+        cmx_5,
+        van_comm,
+        vote_round_id,
+    ])
 }
 
 /// Ballot divisor for converting raw zatoshi balance to ballot count.
@@ -414,7 +421,11 @@ impl Circuit {
     }
 
     /// Sets the ballot scaling witnesses (condition 8).
-    pub fn with_ballot_scaling(mut self, num_ballots: pallas::Base, remainder: pallas::Base) -> Self {
+    pub fn with_ballot_scaling(
+        mut self,
+        num_ballots: pallas::Base,
+        remainder: pallas::Base,
+    ) -> Self {
         self.num_ballots = Value::known(num_ballots);
         self.remainder = Value::known(remainder);
         self
@@ -523,10 +534,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                     // Cond 10: Merkle root must match the public nc_root for notes
                     // with non-zero value. Dummy notes (v=0) skip this check, matching
                     // Orchard's standard dummy note mechanism (ZIP §Note Padding).
-                    (
-                        "v * (root - anchor) = 0",
-                        v * (root - anchor),
-                    ),
+                    ("v * (root - anchor) = 0", v * (root - anchor)),
                     // Cond 13: IMT root from non-membership proof must match public
                     // nf_imt_root. Not gated — dummy notes check too.
                     ("imt_root = nf_imt_root", imt_root - nf_imt_root),
@@ -546,10 +554,13 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let selected_ivk = meta.query_advice(advices[3], Rotation::cur());
             // selected_ivk = ivk + is_internal * (ivk_internal - ivk)
             let expected = ivk.clone() + is_internal.clone() * (ivk_internal - ivk);
-            Constraints::with_selector(q, [
-                ("bool_check is_internal", bool_check(is_internal)),
-                ("scope select", selected_ivk - expected),
-            ])
+            Constraints::with_selector(
+                q,
+                [
+                    ("bool_check is_internal", bool_check(is_internal)),
+                    ("scope select", selected_ivk - expected),
+                ],
+            )
         });
 
         // IMT non-membership gates (condition 13): conditional swap + interval check.
@@ -592,17 +603,30 @@ impl plonk::Circuit<pallas::Base> for Circuit {
              advice_cols: [Column<Advice>; 5],
              witness_col: Column<Advice>,
              lagrange_col: Column<plonk::Fixed>| {
-                let sinsemilla =
-                    SinsemillaChip::configure(meta, advice_cols, witness_col, lagrange_col, lookup, range_check, false);
+                let sinsemilla = SinsemillaChip::configure(
+                    meta,
+                    advice_cols,
+                    witness_col,
+                    lagrange_col,
+                    lookup,
+                    range_check,
+                    false,
+                );
                 let merkle = MerkleChip::configure(meta, sinsemilla.clone());
                 (sinsemilla, merkle)
             };
 
         let (sinsemilla_config_1, merkle_config_1) = configure_sinsemilla_merkle(
-            meta, advices[..5].try_into().unwrap(), advices[6], lagrange_coeffs[0],
+            meta,
+            advices[..5].try_into().unwrap(),
+            advices[6],
+            lagrange_coeffs[0],
         );
         let (sinsemilla_config_2, merkle_config_2) = configure_sinsemilla_merkle(
-            meta, advices[5..].try_into().unwrap(), advices[7], lagrange_coeffs[1],
+            meta,
+            advices[5..].try_into().unwrap(),
+            advices[7],
+            lagrange_coeffs[1],
         );
 
         // Configuration to handle decomposition and canonicity checking for CommitIvk.
@@ -1166,8 +1190,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // v_total = v_1 + v_2 + v_3 + v_4 + v_5  (four AddChip additions)
         let add_chip = config.add_chip();
-        let sum_12 =
-            add_chip.add(layouter.namespace(|| "v_1 + v_2"), &v_cells[0], &v_cells[1])?;
+        let sum_12 = add_chip.add(layouter.namespace(|| "v_1 + v_2"), &v_cells[0], &v_cells[1])?;
         let sum_123 = add_chip.add(
             layouter.namespace(|| "(v_1 + v_2) + v_3"),
             &sum_12,
@@ -1531,11 +1554,17 @@ fn synthesize_note_slot(
             ivk_internal_cell.copy_advice(|| "ivk_internal", &mut region, config.advices[2], 0)?;
 
             // Compute the muxed value: ivk + is_internal * (ivk_internal - ivk)
-            let selected = ivk_cell.value().zip(ivk_internal_cell.value()).zip(is_internal.value()).map(
-                |((ivk, ivk_int), flag)| {
-                    if *flag == pallas::Base::one() { *ivk_int } else { *ivk }
-                },
-            );
+            let selected = ivk_cell
+                .value()
+                .zip(ivk_internal_cell.value())
+                .zip(is_internal.value())
+                .map(|((ivk, ivk_int), flag)| {
+                    if *flag == pallas::Base::one() {
+                        *ivk_int
+                    } else {
+                        *ivk
+                    }
+                });
             region.assign_advice(|| "selected_ivk", config.advices[3], 0, || selected)
         },
     )?;
@@ -1787,18 +1816,20 @@ impl Instance {
 
 #[cfg(test)]
 mod tests {
-    use alloc::string::{String, ToString};
     use super::*;
-    use crate::delegation::imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider, SpacedLeafImtProvider};
-    use orchard::{
-        keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
-        note::{commitment::ExtractedNoteCommitment, Note, Rho},
+    use crate::delegation::imt::{
+        derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider, SpacedLeafImtProvider,
     };
     use ff::Field;
     use halo2_proofs::dev::MockProver;
     use incrementalmerkletree::{Hashable, Level};
+    use orchard::{
+        keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
+        note::{commitment::ExtractedNoteCommitment, Note, Rho},
+    };
     use pasta_curves::{arithmetic::CurveAffine, pallas};
     use rand::rngs::OsRng;
+    use std::string::{String, ToString};
 
     // Re-use the public K constant from the circuit module.
     use super::K;
@@ -1964,8 +1995,13 @@ mod tests {
             .coordinates()
             .unwrap()
             .x();
-        let van_comm =
-            van_commitment_hash(g_d_new_x, pk_d_new_x, num_ballots_field, vote_round_id, van_comm_rand);
+        let van_comm = van_commitment_hash(
+            g_d_new_x,
+            pk_d_new_x,
+            num_ballots_field,
+            vote_round_id,
+            van_comm_rand,
+        );
 
         // Compute rho.
         let rho = rho_binding_hash(
@@ -2017,7 +2053,13 @@ mod tests {
             vote_round_id,
             nc_root,
             nf_imt_root,
-            [gov_nulls[0], gov_nulls[1], gov_nulls[2], gov_nulls[3], gov_nulls[4]],
+            [
+                gov_nulls[0],
+                gov_nulls[1],
+                gov_nulls[2],
+                gov_nulls[3],
+                gov_nulls[4],
+            ],
             dom,
         );
 
@@ -2212,18 +2254,15 @@ mod tests {
 
         let imt_provider = SpacedLeafImtProvider::new();
         let foreign_nf = foreign_note.nullifier(&fvk2);
-        let foreign_imt = imt_provider.non_membership_proof(foreign_nf.inner()).unwrap();
+        let foreign_imt = imt_provider
+            .non_membership_proof(foreign_nf.inner())
+            .unwrap();
 
         let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
         // v=0: condition 10 (Merkle root check) is skipped.
         // Condition 11 still applies to all slots and cannot be bypassed.
-        let foreign_slot = make_note_slot(
-            &foreign_note,
-            &dummy_auth_path,
-            0u32,
-            &foreign_imt,
-            false,
-        );
+        let foreign_slot =
+            make_note_slot(&foreign_note, &dummy_auth_path, 0u32, &foreign_imt, false);
 
         circuit.notes[1] = foreign_slot;
 
@@ -2426,8 +2465,7 @@ mod tests {
         let constants_col = cs.fixed_column();
         let circuit = Circuit::default();
         let mut tracker = RegionTracker::new();
-        floor_planner::V1::synthesize(&mut tracker, &circuit, config, vec![constants_col])
-            .unwrap();
+        floor_planner::V1::synthesize(&mut tracker, &circuit, config, vec![constants_col]).unwrap();
 
         // 3. Collect and sort regions by row count (descending)
         let mut regions: Vec<_> = tracker
@@ -2463,7 +2501,10 @@ mod tests {
                 continue;
             }
             let key = if r.name.starts_with("note ")
-                && r.name.as_bytes().get(5).map_or(false, |b| b.is_ascii_digit())
+                && r.name
+                    .as_bytes()
+                    .get(5)
+                    .map_or(false, |b| b.is_ascii_digit())
             {
                 if let Some(slash) = r.name.find('/') {
                     let rest = &r.name[slash + 1..];
@@ -2495,7 +2536,10 @@ mod tests {
             if *count > 1 {
                 std::println!(
                     "  {:60} {:>6} rows  ({} x{})",
-                    name, total, total / count, count
+                    name,
+                    total,
+                    total / count,
+                    count
                 );
             } else {
                 std::println!("  {:60} {:>6} rows", name, total);
@@ -2515,56 +2559,67 @@ mod tests {
     #[test]
     #[ignore]
     fn row_budget() {
-        use std::println;
         use halo2_proofs::dev::CircuitCost;
         use pasta_curves::vesta;
+        use std::println;
 
         let t = make_test_data();
 
         let cost = CircuitCost::<vesta::Point, _>::measure(K, &t.circuit);
-        let debug = alloc::format!("{cost:?}");
+        let debug = format!("{cost:?}");
 
         let extract = |field: &str| -> usize {
-            let prefix = alloc::format!("{field}: ");
-            debug.split(&prefix)
+            let prefix = format!("{field}: ");
+            debug
+                .split(&prefix)
                 .nth(1)
                 .and_then(|s| s.split([',', ' ', '}']).next())
                 .and_then(|n| n.parse().ok())
                 .unwrap_or(0)
         };
 
-        let max_rows         = extract("max_rows");
-        let max_advice_rows  = extract("max_advice_rows");
-        let max_fixed_rows   = extract("max_fixed_rows");
-        let total_available  = 1usize << K;
+        let max_rows = extract("max_rows");
+        let max_advice_rows = extract("max_advice_rows");
+        let max_fixed_rows = extract("max_fixed_rows");
+        let total_available = 1usize << K;
 
         println!("=== delegation circuit row budget (K={K}) ===");
         println!("  max_rows (floor-planner high-water mark): {max_rows}");
         println!("  max_advice_rows:                          {max_advice_rows}");
         println!("  max_fixed_rows:                           {max_fixed_rows}");
         println!("  2^K  (total available rows):              {total_available}");
-        println!("  headroom:                                 {}", total_available.saturating_sub(max_rows));
-        println!("  utilisation:                              {:.1}%",
-            100.0 * max_rows as f64 / total_available as f64);
+        println!(
+            "  headroom:                                 {}",
+            total_available.saturating_sub(max_rows)
+        );
+        println!(
+            "  utilisation:                              {:.1}%",
+            100.0 * max_rows as f64 / total_available as f64
+        );
         println!();
         println!("  Full debug: {debug}");
 
         // Witness-independence check: Circuit::default() (all unknowns)
         // must produce exactly the same layout as the filled circuit.
         let cost_default = CircuitCost::<vesta::Point, _>::measure(K, &Circuit::default());
-        let debug_default = alloc::format!("{cost_default:?}");
+        let debug_default = format!("{cost_default:?}");
         let max_rows_default = debug_default
-            .split("max_rows: ").nth(1)
+            .split("max_rows: ")
+            .nth(1)
             .and_then(|s| s.split([',', ' ', '}']).next())
             .and_then(|n| n.parse::<usize>().ok())
             .unwrap_or(0);
         if max_rows_default == max_rows {
-            println!("  Witness-independence: PASS \
-                (Circuit::default() max_rows={max_rows_default} == filled max_rows={max_rows})");
+            println!(
+                "  Witness-independence: PASS \
+                (Circuit::default() max_rows={max_rows_default} == filled max_rows={max_rows})"
+            );
         } else {
-            println!("  Witness-independence: FAIL \
+            println!(
+                "  Witness-independence: FAIL \
                 (Circuit::default() max_rows={max_rows_default} != filled max_rows={max_rows}) \
-                — row count depends on witness values!");
+                — row count depends on witness values!"
+            );
         }
 
         println!("  MERKLE_DEPTH_ORCHARD (circuit constant): {MERKLE_DEPTH_ORCHARD}");

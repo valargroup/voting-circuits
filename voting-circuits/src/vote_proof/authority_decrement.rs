@@ -119,7 +119,7 @@
 //!                rnew[15]=9 is returned directly as the circuit output.
 //! ```
 
-use alloc::vec::Vec;
+use std::vec::Vec;
 
 use ff::{Field, PrimeField};
 use halo2_proofs::{
@@ -200,48 +200,55 @@ struct Cond6Row {
     two_pow_i: Expression<pallas::Base>,
 }
 
-fn query_cond6_row(
-    meta: &mut VirtualCells<pallas::Base>,
-    advices: &[Column<Advice>],
-) -> Cond6Row {
+fn query_cond6_row(meta: &mut VirtualCells<pallas::Base>, advices: &[Column<Advice>]) -> Cond6Row {
     Cond6Row {
-        b_i:                meta.query_advice(advices[0], Rotation::cur()),
-        sel_i:              meta.query_advice(advices[1], Rotation::cur()),
-        b_new_i:            meta.query_advice(advices[2], Rotation::cur()),
-        run_sel_pow:        meta.query_advice(advices[3], Rotation::cur()),
-        run_sel_pow_prev:   meta.query_advice(advices[3], Rotation::prev()),
-        run_selected:       meta.query_advice(advices[4], Rotation::cur()),
-        run_selected_prev:  meta.query_advice(advices[4], Rotation::prev()),
-        run_old:            meta.query_advice(advices[5], Rotation::cur()),
-        run_old_prev:       meta.query_advice(advices[5], Rotation::prev()),
-        run_new:            meta.query_advice(advices[6], Rotation::cur()),
-        run_new_prev:       meta.query_advice(advices[6], Rotation::prev()),
-        two_pow_i:          meta.query_advice(advices[7], Rotation::cur()),
+        b_i: meta.query_advice(advices[0], Rotation::cur()),
+        sel_i: meta.query_advice(advices[1], Rotation::cur()),
+        b_new_i: meta.query_advice(advices[2], Rotation::cur()),
+        run_sel_pow: meta.query_advice(advices[3], Rotation::cur()),
+        run_sel_pow_prev: meta.query_advice(advices[3], Rotation::prev()),
+        run_selected: meta.query_advice(advices[4], Rotation::cur()),
+        run_selected_prev: meta.query_advice(advices[4], Rotation::prev()),
+        run_old: meta.query_advice(advices[5], Rotation::cur()),
+        run_old_prev: meta.query_advice(advices[5], Rotation::prev()),
+        run_new: meta.query_advice(advices[6], Rotation::cur()),
+        run_new_prev: meta.query_advice(advices[6], Rotation::prev()),
+        two_pow_i: meta.query_advice(advices[7], Rotation::cur()),
     }
 }
 
 /// The 7 constraints shared by both the init gate and the recurrence gate.
-fn cond6_shared_constraints(
-    r: &Cond6Row,
-) -> Vec<(&'static str, Expression<pallas::Base>)> {
+fn cond6_shared_constraints(r: &Cond6Row) -> Vec<(&'static str, Expression<pallas::Base>)> {
     vec![
         // rsel_pow increments by sel_i * two_pow_i each row; equals one_shifted at last row (copy constraint)
-        ("run_sel_pow",
-            r.run_sel_pow.clone() - r.run_sel_pow_prev.clone() - r.sel_i.clone() * r.two_pow_i.clone()),
+        (
+            "run_sel_pow",
+            r.run_sel_pow.clone()
+                - r.run_sel_pow_prev.clone()
+                - r.sel_i.clone() * r.two_pow_i.clone(),
+        ),
         // run_selected increments by sel_i * b_i each row
-        ("run_selected",
-            r.run_selected.clone() - r.run_selected_prev.clone() - r.sel_i.clone() * r.b_i.clone()),
+        (
+            "run_selected",
+            r.run_selected.clone() - r.run_selected_prev.clone() - r.sel_i.clone() * r.b_i.clone(),
+        ),
         // run_old accumulates the old value bit by bit
-        ("run_old",
-            r.run_old.clone() - r.run_old_prev.clone() - r.b_i.clone() * r.two_pow_i.clone()),
+        (
+            "run_old",
+            r.run_old.clone() - r.run_old_prev.clone() - r.b_i.clone() * r.two_pow_i.clone(),
+        ),
         // run_new accumulates the new value bit by bit
-        ("run_new",
-            r.run_new.clone() - r.run_new_prev.clone() - r.b_new_i.clone() * r.two_pow_i.clone()),
+        (
+            "run_new",
+            r.run_new.clone() - r.run_new_prev.clone() - r.b_new_i.clone() * r.two_pow_i.clone(),
+        ),
         // b_new_i = b_i * (1 - sel_i): new bit equals old bit, except zero it out when selected
-        ("b_new_i = b_i*(1-sel_i)",
-            r.b_new_i.clone() - r.b_i.clone() + r.b_i.clone() * r.sel_i.clone()),
+        (
+            "b_new_i = b_i*(1-sel_i)",
+            r.b_new_i.clone() - r.b_i.clone() + r.b_i.clone() * r.sel_i.clone(),
+        ),
         // enforce b_i in {0, 1}
-        ("bool b_i",  bool_check(r.b_i.clone())),
+        ("bool b_i", bool_check(r.b_i.clone())),
         // enforce sel_i in {0, 1}
         ("bool sel_i", bool_check(r.sel_i.clone())),
     ]
@@ -289,10 +296,7 @@ impl AuthorityDecrementChip {
             let input_0 = q.clone() * proposal_id;
             let one = Expression::Constant(pallas::Base::one());
             let input_1 = q.clone() * one_shifted + (one.clone() - q);
-            vec![
-                (input_0, table_proposal_id),
-                (input_1, table_one_shifted),
-            ]
+            vec![(input_0, table_proposal_id), (input_1, table_one_shifted)]
         });
 
         // Condition 6 (defense-in-depth): proposal_id must be non-zero.
@@ -309,7 +313,10 @@ impl AuthorityDecrementChip {
             let proposal_id = meta.query_advice(advices[0], Rotation::cur());
             let proposal_id_inv = meta.query_advice(advices[2], Rotation::cur());
             let one = Expression::Constant(pallas::Base::one());
-            vec![("proposal_id * inv = 1", q * (one - proposal_id * proposal_id_inv))]
+            vec![(
+                "proposal_id * inv = 1",
+                q * (one - proposal_id * proposal_id_inv),
+            )]
         });
 
         // Condition 6 (Proposal Authority Decrement) bit-decomposition gates.
@@ -327,9 +334,7 @@ impl AuthorityDecrementChip {
         meta.create_gate("cond6 init: two_pow_i=1, running sums", |meta| {
             let q = meta.query_selector(q_cond_6_init);
             let r = query_cond6_row(meta, &advices);
-            let mut constraints = vec![
-                ("two_pow_i = 1", r.two_pow_i.clone() - one_expr.clone()),
-            ];
+            let mut constraints = vec![("two_pow_i = 1", r.two_pow_i.clone() - one_expr.clone())];
             constraints.extend(cond6_shared_constraints(&r));
             Constraints::with_selector(q, constraints)
         });
@@ -338,9 +343,10 @@ impl AuthorityDecrementChip {
             let q = meta.query_selector(q_cond_6_bits);
             let r = query_cond6_row(meta, &advices);
             let two_pow_i_prev = meta.query_advice(advices[7], Rotation::prev());
-            let mut constraints = vec![
-                ("two_pow_i = 2*prev", r.two_pow_i.clone() - two_expr.clone() * two_pow_i_prev),
-            ];
+            let mut constraints = vec![(
+                "two_pow_i = 2*prev",
+                r.two_pow_i.clone() - two_expr.clone() * two_pow_i_prev,
+            )];
             constraints.extend(cond6_shared_constraints(&r));
             Constraints::with_selector(q, constraints)
         });
@@ -351,10 +357,7 @@ impl AuthorityDecrementChip {
         meta.create_gate("cond6 run_selected = 1", |meta| {
             let q = meta.query_selector(q_cond_6_selected_one);
             let run_selected = meta.query_advice(advices[4], Rotation::cur());
-            Constraints::with_selector(
-                q,
-                [("run_selected = 1", run_selected - one_expr)],
-            )
+            Constraints::with_selector(q, [("run_selected = 1", run_selected - one_expr)])
         });
 
         AuthorityDecrementConfig {
@@ -422,8 +425,8 @@ impl AuthorityDecrementChip {
         proposal_authority_old: AssignedCell<pallas::Base, pallas::Base>,
         one_shifted: Value<pallas::Base>,
     ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
-        let (run_old_final, run_new_final, run_sel_pow_final, one_shifted_final) =
-            layouter.assign_region(
+        let (run_old_final, run_new_final, run_sel_pow_final, one_shifted_final) = layouter
+            .assign_region(
                 || "cond6 proposal authority decrement",
                 |mut region| {
                     let proposal_authority_old_val = proposal_authority_old.value().copied();
@@ -497,8 +500,9 @@ impl AuthorityDecrementChip {
                         None;
                     let mut run_new_last_cell: Option<AssignedCell<pallas::Base, pallas::Base>> =
                         None;
-                    let mut run_sel_pow_last_cell: Option<AssignedCell<pallas::Base, pallas::Base>> =
-                        None;
+                    let mut run_sel_pow_last_cell: Option<
+                        AssignedCell<pallas::Base, pallas::Base>,
+                    > = None;
 
                     for i in 0..MAX_PROPOSAL_ID {
                         let row = 1 + i;
@@ -516,8 +520,7 @@ impl AuthorityDecrementChip {
                             let pid_u64 = u64::from_le_bytes(arr[0..8].try_into().unwrap());
                             pallas::Base::from(if pid_u64 == i as u64 { 1u64 } else { 0 })
                         });
-                        let b_new_i_val = b_i_val.zip(sel_i_val)
-                            .map(|(b, s)| b - b * s);
+                        let b_new_i_val = b_i_val.zip(sel_i_val).map(|(b, s)| b - b * s);
                         let two_pow_i_val = Value::known(pallas::Base::from(1u64 << i));
                         run_sel_pow_prev = run_sel_pow_prev
                             .zip(sel_i_val)
@@ -667,7 +670,7 @@ mod tests {
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::MockProver,
-        plonk::{Circuit, Column, ConstraintSystem, Fixed, Instance},
+        plonk::{Circuit, Column, ConstraintSystem, Instance},
     };
     use pasta_curves::pallas;
 
@@ -682,14 +685,12 @@ mod tests {
         adec: AuthorityDecrementConfig,
         primary: Column<Instance>,
         advices: [Column<Advice>; 10],
-        constants: Column<Fixed>,
     }
 
     #[derive(Default, Clone)]
     struct TestCircuit {
         proposal_authority_old: Value<pallas::Base>,
         one_shifted: Value<pallas::Base>,
-        proposal_id: Value<pallas::Base>,
     }
 
     impl Circuit<pallas::Base> for TestCircuit {
@@ -715,7 +716,6 @@ mod tests {
                 adec: AuthorityDecrementChip::configure(meta, advices),
                 primary,
                 advices,
-                constants,
             }
         }
 
@@ -762,11 +762,7 @@ mod tests {
             )?;
 
             // Bind proposal_authority_new to instance index 1.
-            layouter.constrain_instance(
-                proposal_authority_new.cell(),
-                config.primary,
-                1,
-            )?;
+            layouter.constrain_instance(proposal_authority_new.cell(), config.primary, 1)?;
 
             Ok(())
         }
@@ -788,12 +784,8 @@ mod tests {
         let circuit = TestCircuit {
             proposal_authority_old: Value::known(pallas::Base::from(authority_old)),
             one_shifted: Value::known(one_shifted),
-            proposal_id: Value::known(pallas::Base::from(proposal_id)),
         };
-        let instance = vec![
-            pallas::Base::from(proposal_id),
-            authority_new_expected,
-        ];
+        let instance = vec![pallas::Base::from(proposal_id), authority_new_expected];
         // K=5 (32 rows) is sufficient for 18 rows + overhead.
         let prover = MockProver::run(5, &circuit, vec![instance]).unwrap();
         prover.verify()
@@ -821,15 +813,18 @@ mod tests {
     fn proposal_id_zero_fails() {
         // proposal_id=0 is the sentinel value; rejected by the `proposal_id != 0` gate.
         // authority=1 (bit 0 set) is otherwise structurally valid.
-        assert!(run_chip(1, 0, None).is_err(), "proposal_id = 0 must be rejected");
+        assert!(
+            run_chip(1, 0, None).is_err(),
+            "proposal_id = 0 must be rejected"
+        );
     }
 
     #[test]
     fn bit_not_set_fails() {
-    // authority=4 (only bit 2 set), proposal_id=1 (bit 1 not set).
-    // run_selected = 0 at last row → `run_selected = 1` constraint fails.
-    // proposal_id=0 would also hit the non-zero gate, so proposal_id=1 is used
-    // to isolate the bit-not-set failure.
+        // authority=4 (only bit 2 set), proposal_id=1 (bit 1 not set).
+        // run_selected = 0 at last row → `run_selected = 1` constraint fails.
+        // proposal_id=0 would also hit the non-zero gate, so proposal_id=1 is used
+        // to isolate the bit-not-set failure.
         assert!(run_chip(4, 1, None).is_err(), "bit not set must fail");
     }
 

@@ -9,9 +9,8 @@
 //! and bound to the specific VAN being spent, enabling crash recovery
 //! without persisting secrets and preventing nonce reuse across VANs.
 
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
+use std::string::String;
+use std::vec::Vec;
 
 use ff::{FromUniformBytes, PrimeField};
 use group::{Curve, GroupEncoding};

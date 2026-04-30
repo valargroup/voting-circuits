@@ -32,7 +32,7 @@ use orchard::circuit::gadget::assign_free_advice;
 use orchard::constants::OrchardFixedBases;
 
 use super::imt::IMT_DEPTH;
-use crate::circuit::poseidon_merkle::{MerkleSwapGate, synthesize_poseidon_merkle_path};
+use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
 
 // ================================================================
 // PuncturedIntervalGate
@@ -91,10 +91,16 @@ impl PuncturedIntervalGate {
                     // Range-checking x_lo to [0, 2^250) proves real_nf > nf_lo,
                     // since if real_nf <= nf_lo then (real_nf - nf_lo - 1) wraps
                     // to a huge field element exceeding 2^250.
-                    ("x_lo = real_nf - nf_lo - 1", x_lo.clone() - (real_nf.clone() - nf_lo - one.clone())),
+                    (
+                        "x_lo = real_nf - nf_lo - 1",
+                        x_lo.clone() - (real_nf.clone() - nf_lo - one.clone()),
+                    ),
                     // Strict upper bound: x_hi = nf_hi - real_nf - 1.
                     // Range-checking x_hi to [0, 2^250) proves real_nf < nf_hi.
-                    ("x_hi = nf_hi - real_nf - 1", x_hi.clone() - (nf_hi - real_nf - one)),
+                    (
+                        "x_hi = nf_hi - real_nf - 1",
+                        x_hi.clone() - (nf_hi - real_nf - one),
+                    ),
                 ],
             )
         });
@@ -114,7 +120,10 @@ impl PuncturedIntervalGate {
                     // This is satisfiable iff real_nf != nf_mid, since
                     // nf_mid is a field element and the inverse exists
                     // only when the difference is nonzero.
-                    ("(nf - nf_mid) * inv = 1", (real_nf - nf_mid) * diff_inv - one),
+                    (
+                        "(nf - nf_mid) * inv = 1",
+                        (real_nf - nf_mid) * diff_inv - one,
+                    ),
                 ],
             )
         });
@@ -231,10 +240,8 @@ impl ImtNonMembershipConfig {
             meta,
             [advices[0], advices[1], advices[2], advices[3], advices[4]],
         );
-        let interval_gate = PuncturedIntervalGate::configure(
-            meta,
-            [advices[0], advices[1], advices[2]],
-        );
+        let interval_gate =
+            PuncturedIntervalGate::configure(meta, [advices[0], advices[1], advices[2]]);
         ImtNonMembershipConfig {
             swap_gate,
             interval_gate,
@@ -292,17 +299,11 @@ pub(crate) fn synthesize_imt_non_membership(
 
     // Compute leaf hash: Poseidon3(nf_lo, nf_mid, nf_hi).
     let leaf_hash = {
-        let poseidon_hasher = PoseidonHash::<
-            pallas::Base,
-            _,
-            poseidon::P128Pow5T3,
-            ConstantLength<3>,
-            3,
-            2,
-        >::init(
-            PoseidonChip::construct(poseidon_config.clone()),
-            layouter.namespace(|| format!("note {s} imt leaf hash init")),
-        )?;
+        let poseidon_hasher =
+            PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init(
+                PoseidonChip::construct(poseidon_config.clone()),
+                layouter.namespace(|| format!("note {s} imt leaf hash init")),
+            )?;
         poseidon_hasher.hash(
             layouter.namespace(|| format!("note {s} Poseidon3(nf_lo, nf_mid, nf_hi)")),
             [imt_nf_lo.clone(), imt_nf_mid.clone(), imt_nf_hi.clone()],

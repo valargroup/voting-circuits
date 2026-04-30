@@ -104,12 +104,9 @@ impl MerkleSwapGate {
     > {
         self.selector.enable(region, offset)?;
 
-        let pos_bit_cell =
-            pos_bit.copy_advice(|| "pos_bit", region, self.advices[0], offset)?;
-        let current_cell =
-            current.copy_advice(|| "current", region, self.advices[1], offset)?;
-        let sibling_cell =
-            sibling.copy_advice(|| "sibling", region, self.advices[2], offset)?;
+        let pos_bit_cell = pos_bit.copy_advice(|| "pos_bit", region, self.advices[0], offset)?;
+        let current_cell = current.copy_advice(|| "current", region, self.advices[1], offset)?;
+        let sibling_cell = sibling.copy_advice(|| "sibling", region, self.advices[2], offset)?;
 
         let swap = pos_bit_cell
             .value()
@@ -124,19 +121,11 @@ impl MerkleSwapGate {
                 }
             });
 
-        let left = region.assign_advice(
-            || "left",
-            self.advices[3],
-            offset,
-            || swap.map(|(l, _)| l),
-        )?;
+        let left =
+            region.assign_advice(|| "left", self.advices[3], offset, || swap.map(|(l, _)| l))?;
 
-        let right = region.assign_advice(
-            || "right",
-            self.advices[4],
-            offset,
-            || swap.map(|(_, r)| r),
-        )?;
+        let right =
+            region.assign_advice(|| "right", self.advices[4], offset, || swap.map(|(_, r)| r))?;
 
         Ok((left, right))
     }
@@ -168,19 +157,19 @@ pub fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
 
     for i in 0..DEPTH {
         let pos_bit = assign_free_advice(
-            layouter.namespace(|| alloc::format!("{label} pos_bit {i}")),
+            layouter.namespace(|| format!("{label} pos_bit {i}")),
             advice_0,
             position.map(|p| pallas::Base::from(((p >> i) & 1) as u64)),
         )?;
 
         let sibling = assign_free_advice(
-            layouter.namespace(|| alloc::format!("{label} sibling {i}")),
+            layouter.namespace(|| format!("{label} sibling {i}")),
             advice_0,
             path.map(|path| path[i]),
         )?;
 
         let (left, right) = layouter.assign_region(
-            || alloc::format!("{label} swap level {i}"),
+            || format!("{label} swap level {i}"),
             |mut region| swap_gate.assign(&mut region, 0, &pos_bit, &current, &sibling),
         )?;
 
@@ -194,10 +183,10 @@ pub fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
                 2,
             >::init(
                 PoseidonChip::construct(poseidon_config.clone()),
-                layouter.namespace(|| alloc::format!("{label} hash init level {i}")),
+                layouter.namespace(|| format!("{label} hash init level {i}")),
             )?;
             hasher.hash(
-                layouter.namespace(|| alloc::format!("{label} Poseidon(left, right) level {i}")),
+                layouter.namespace(|| format!("{label} Poseidon(left, right) level {i}")),
                 [left, right],
             )?
         };
@@ -215,12 +204,12 @@ pub fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::vec::Vec;
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::MockProver,
         plonk::{Circuit, ConstraintSystem, Fixed, Instance},
     };
+    use std::vec::Vec;
 
     /// Out-of-circuit Poseidon hash matching the in-circuit `Poseidon(left, right)`.
     fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base {
@@ -292,8 +281,7 @@ mod tests {
             let primary = meta.instance_column();
             meta.enable_equality(primary);
 
-            let lagrange_coeffs: [Column<Fixed>; 8] =
-                core::array::from_fn(|_| meta.fixed_column());
+            let lagrange_coeffs: [Column<Fixed>; 8] = core::array::from_fn(|_| meta.fixed_column());
             meta.enable_constant(lagrange_coeffs[0]);
 
             let rc_a = lagrange_coeffs[2..5].try_into().unwrap();
@@ -325,11 +313,8 @@ mod tests {
             config: TestConfig,
             mut layouter: impl Layouter<pallas::Base>,
         ) -> Result<(), plonk::Error> {
-            let leaf = assign_free_advice(
-                layouter.namespace(|| "leaf"),
-                config.advices[0],
-                self.leaf,
-            )?;
+            let leaf =
+                assign_free_advice(layouter.namespace(|| "leaf"), config.advices[0], self.leaf)?;
 
             let root = synthesize_poseidon_merkle_path::<TEST_DEPTH>(
                 &config.swap_gate,
