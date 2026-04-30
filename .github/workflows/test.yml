@@ -24,11 +24,16 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: voting-circuits
+
+      - name: Check formatting
+        run: cargo fmt --all --check
 
       - name: Test
         run: cargo test --locked
