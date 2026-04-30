@@ -2,7 +2,7 @@
 
 Governance ZKP circuits (delegation, vote proof, share reveal) for the Zally voting protocol.
 
-Built with [halo2](https://github.com/zcash/halo2) and a local fork of the [Orchard](https://github.com/zcash/orchard) shielded protocol. The crate is `no_std`-compatible with an optional `std` feature.
+Built with [halo2](https://github.com/zcash/halo2) and a local fork of the [Orchard](https://github.com/zcash/orchard) shielded protocol. The crate requires `std`.
 
 ## Proof flow
 
@@ -104,12 +104,6 @@ cargo test row_budget -- --nocapture --ignored
 ```bash
 cargo bench   # runs delegation proving benchmarks via Criterion
 ```
-
-## Features
-
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `std` | yes | Enables `std` support |
 
 ## Key dependencies
 

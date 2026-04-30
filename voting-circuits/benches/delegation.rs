@@ -13,15 +13,15 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use voting_circuits::delegation::{
-    builder::{build_delegation_bundle, DelegationBundle, RealNoteInput},
-    imt::{ImtProvider, SpacedLeafImtProvider},
-};
 use orchard::{
     keys::{FullViewingKey, Scope, SpendingKey},
     note::{ExtractedNoteCommitment, Note, RandomSeed, Rho},
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
+};
+use voting_circuits::delegation::{
+    builder::{build_delegation_bundle, DelegationBundle, RealNoteInput},
+    imt::{ImtProvider, SpacedLeafImtProvider},
 };
 
 const K: u32 = 14;

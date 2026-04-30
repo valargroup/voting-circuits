@@ -59,8 +59,8 @@ pub fn van_integrity_hash(
     proposal_authority: pallas::Base,
     van_comm_rand: pallas::Base,
 ) -> pallas::Base {
-    let van_comm_core =
-        poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<6>, 3, 2>::init().hash([
+    let van_comm_core = poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<6>, 3, 2>::init()
+        .hash([
             pallas::Base::from(DOMAIN_VAN),
             g_d_x,
             pk_d_x,
@@ -112,34 +112,22 @@ pub fn van_integrity_poseidon(
         voting_round_id,
         proposal_authority,
     ];
-    let poseidon_hasher_6 = PoseidonHash::<
-        pallas::Base,
-        _,
-        poseidon::P128Pow5T3,
-        ConstantLength<6>,
-        3,
-        2,
-    >::init(
-        PoseidonChip::construct(poseidon_config.clone()),
-        layouter.namespace(|| alloc::format!("{label} core Poseidon init")),
-    )?;
+    let poseidon_hasher_6 =
+        PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<6>, 3, 2>::init(
+            PoseidonChip::construct(poseidon_config.clone()),
+            layouter.namespace(|| format!("{label} core Poseidon init")),
+        )?;
     let van_comm_core = poseidon_hasher_6.hash(
-        layouter.namespace(|| alloc::format!("{label} Poseidon(core)")),
+        layouter.namespace(|| format!("{label} Poseidon(core)")),
         core_message,
     )?;
-    let poseidon_hasher_2 = PoseidonHash::<
-        pallas::Base,
-        _,
-        poseidon::P128Pow5T3,
-        ConstantLength<2>,
-        3,
-        2,
-    >::init(
-        PoseidonChip::construct(poseidon_config.clone()),
-        layouter.namespace(|| alloc::format!("{label} final Poseidon init")),
-    )?;
+    let poseidon_hasher_2 =
+        PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>::init(
+            PoseidonChip::construct(poseidon_config.clone()),
+            layouter.namespace(|| format!("{label} final Poseidon init")),
+        )?;
     poseidon_hasher_2.hash(
-        layouter.namespace(|| alloc::format!("{label} Poseidon(core, rand)")),
+        layouter.namespace(|| format!("{label} Poseidon(core, rand)")),
         [van_comm_core, van_comm_rand],
     )
 }

@@ -9,10 +9,10 @@
 //! `(nf_lo, nf_hi)` and is not equal to `nf_mid`.
 //! Used by the delegation circuit and builder.
 
-use alloc::string::String;
 use ff::PrimeField;
 use halo2_gadgets::poseidon::primitives::{self as poseidon, ConstantLength};
 use pasta_curves::pallas;
+use std::string::String;
 
 /// Depth of the nullifier Indexed Merkle Tree Merkle path (Poseidon-based).
 /// Total Poseidon calls per proof = 2 (leaf hash, ConstantLength<3>) + 29 (path) = 31.
@@ -91,7 +91,6 @@ impl core::fmt::Display for ImtError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for ImtError {}
 
 /// Trait for providing IMT non-membership proofs.
@@ -109,15 +108,19 @@ pub trait ImtProvider {
 // SpacedLeafImtProvider (available for proof generation and tests)
 // ================================================================
 
-use alloc::vec::Vec;
 use ff::Field;
+use std::vec::Vec;
 
 /// Precomputed empty subtree hashes for the IMT (Poseidon-based).
 ///
 /// `empty[0] = Poseidon3(0, 0, 0)` (hash of an all-zero punctured-range leaf),
 /// `empty[i] = Poseidon(empty[i-1], empty[i-1])` for i >= 1.
 pub fn empty_imt_hashes() -> Vec<pallas::Base> {
-    let empty_leaf = poseidon_hash_3(pallas::Base::zero(), pallas::Base::zero(), pallas::Base::zero());
+    let empty_leaf = poseidon_hash_3(
+        pallas::Base::zero(),
+        pallas::Base::zero(),
+        pallas::Base::zero(),
+    );
     let mut hashes = vec![empty_leaf];
     for _ in 1..=IMT_DEPTH {
         let prev = *hashes.last().unwrap();
@@ -271,11 +274,8 @@ impl ImtProvider for SpacedLeafImtProvider {
     }
 
     fn non_membership_proof(&self, nf: pallas::Base) -> Result<ImtProofData, ImtError> {
-        let k = find_range_for_value(&self.leaves, nf).ok_or_else(|| {
-            ImtError(alloc::format!(
-                "nullifier {nf:?} not in any punctured range"
-            ))
-        })?;
+        let k = find_range_for_value(&self.leaves, nf)
+            .ok_or_else(|| ImtError(format!("nullifier {nf:?} not in any punctured range")))?;
 
         let nf_bounds = self.leaves[k];
         let leaf_pos = k as u32;

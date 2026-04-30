@@ -17,15 +17,12 @@ use halo2_proofs::{
 };
 use pasta_curves::pallas;
 
-use orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
+use halo2_gadgets::ecc::{chip::EccChip, NonIdentityPoint, Point, ScalarFixed, ScalarVar};
 use orchard::circuit::commit_ivk::CommitIvkChip;
-use halo2_gadgets::ecc::{
-    chip::EccChip,
-    NonIdentityPoint, Point, ScalarFixed, ScalarVar,
-};
+use orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
 
-use orchard::constants::{OrchardCommitDomains, OrchardHashDomains};
 use halo2_gadgets::sinsemilla::chip::SinsemillaChip;
+use orchard::constants::{OrchardCommitDomains, OrchardHashDomains};
 
 // ================================================================
 // SpendAuthG fixed-base multiplication
@@ -84,11 +81,7 @@ pub fn spend_auth_g_mul(
 /// diversified address checks.
 #[allow(clippy::type_complexity)]
 pub fn prove_address_ownership(
-    sinsemilla_chip: SinsemillaChip<
-        OrchardHashDomains,
-        OrchardCommitDomains,
-        OrchardFixedBases,
-    >,
+    sinsemilla_chip: SinsemillaChip<OrchardHashDomains, OrchardCommitDomains, OrchardFixedBases>,
     ecc_chip: EccChip<OrchardFixedBases>,
     commit_ivk_chip: CommitIvkChip,
     mut layouter: impl Layouter<pallas::Base>,
@@ -105,7 +98,7 @@ pub fn prove_address_ownership(
         sinsemilla_chip,
         ecc_chip.clone(),
         commit_ivk_chip,
-        layouter.namespace(|| alloc::format!("{label} CommitIvk")),
+        layouter.namespace(|| format!("{label} CommitIvk")),
         ak,
         nk,
         rivk,
@@ -115,17 +108,17 @@ pub fn prove_address_ownership(
 
     let ivk_scalar = ScalarVar::from_base(
         ecc_chip.clone(),
-        layouter.namespace(|| alloc::format!("{label} ivk as scalar")),
+        layouter.namespace(|| format!("{label} ivk as scalar")),
         ivk.inner(),
     )?;
 
     let (derived_pk_d, _) = g_d.mul(
-        layouter.namespace(|| alloc::format!("{label} [ivk] g_d")),
+        layouter.namespace(|| format!("{label} [ivk] g_d")),
         ivk_scalar,
     )?;
 
     derived_pk_d.constrain_equal(
-        layouter.namespace(|| alloc::format!("{label} pk_d equality")),
+        layouter.namespace(|| format!("{label} pk_d equality")),
         pk_d_claimed,
     )?;
 

@@ -17,7 +17,6 @@ pub mod circuit;
 pub mod prove;
 
 pub use circuit::{domain_tag_share_spend, share_nullifier_hash, Circuit, Config, Instance, K};
-#[cfg(feature = "std")]
 pub use prove::share_reveal_cached_keys;
 pub use prove::{
     create_share_reveal_proof, share_reveal_params, share_reveal_proving_key,

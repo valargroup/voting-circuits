@@ -1,9 +1,9 @@
+use ff::Field;
 use halo2_proofs::{
     circuit::{AssignedCell, Chip, Layouter},
     plonk::{self, Advice, Column, ConstraintSystem, Constraints, Selector},
     poly::Rotation,
 };
-use ff::Field;
 use pasta_curves::pallas;
 
 /// An instruction set for multiplying two circuit words (field elements).
