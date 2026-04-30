@@ -41,12 +41,12 @@
 //! - 1 instance column (9 public inputs).
 //! - K = 11 (2,048 rows).
 
-use alloc::vec::Vec;
+use std::vec::Vec;
 
 use halo2_proofs::{
     circuit::{floor_planner, AssignedCell, Layouter, Value},
     plonk::{
-        self, Advice, Column, Constraints, ConstraintSystem, Expression, Fixed,
+        self, Advice, Column, ConstraintSystem, Constraints, Expression, Fixed,
         Instance as InstanceColumn, Selector,
     },
     poly::Rotation,
@@ -63,13 +63,12 @@ use halo2_gadgets::{
 
 use orchard::circuit::gadget::assign_free_advice;
 
-use crate::circuit::poseidon_merkle::{MerkleSwapGate, synthesize_poseidon_merkle_path};
+use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
 use crate::circuit::vote_commitment;
-use crate::vote_proof::VOTE_COMM_TREE_DEPTH;
 use crate::shares_hash::{
-    compute_shares_hash_from_comms_in_circuit,
-    hash_share_commitment_in_circuit,
+    compute_shares_hash_from_comms_in_circuit, hash_share_commitment_in_circuit,
 };
+use crate::vote_proof::VOTE_COMM_TREE_DEPTH;
 
 // ================================================================
 // Constants
@@ -213,9 +212,7 @@ impl Config {
     ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
         layouter.assign_region(
             || label,
-            |mut region| {
-                region.assign_advice_from_constant(|| label, self.advices[0], 0, value)
-            },
+            |mut region| region.assign_advice_from_constant(|| label, self.advices[0], 0, value),
         )
     }
 }
@@ -269,7 +266,6 @@ impl Default for Circuit {
     }
 }
 
-
 impl plonk::Circuit<pallas::Base> for Circuit {
     type Config = Config;
     type FloorPlanner = floor_planner::V1;
@@ -297,8 +293,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // 8 fixed columns shared between Poseidon round constants and
         // general constants.
-        let lagrange_coeffs: [Column<Fixed>; 8] =
-            core::array::from_fn(|_| meta.fixed_column());
+        let lagrange_coeffs: [Column<Fixed>; 8] = core::array::from_fn(|_| meta.fixed_column());
         let rc_a = lagrange_coeffs[2..5].try_into().unwrap();
         let rc_b = lagrange_coeffs[5..8].try_into().unwrap();
 
@@ -381,22 +376,30 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 .collect();
 
             // Sum check for selectors (only one is 1)
-            let sum_expr = sel.iter().skip(1).fold(sel[0].clone(), |acc, s| acc + s.clone());
+            let sum_expr = sel
+                .iter()
+                .skip(1)
+                .fold(sel[0].clone(), |acc, s| acc + s.clone());
             let sum_check = ("sum sel == 1", sum_expr - one);
 
             // Index reconstruction: share_index == sum(i * sel[i]).
             //
             // Given bool + sum guarantees exactly one sel[j] = 1, the sum collapses
             // to j.
-            let reconstructed = sel.iter().enumerate().skip(1).fold(
-                Expression::Constant(pallas::Base::zero()),
-                |acc, (i, s)| acc + Expression::Constant(pallas::Base::from(i as u64)) * s.clone(),
-            );
+            let reconstructed = sel
+                .iter()
+                .enumerate()
+                .skip(1)
+                .fold(Expression::Constant(pallas::Base::zero()), |acc, (i, s)| {
+                    acc + Expression::Constant(pallas::Base::from(i as u64)) * s.clone()
+                });
             let index_reconstruct = ("index reconstruct", share_index.clone() - reconstructed);
 
             // Selected commitment must equal the dot product:
             // selected_comm == Σ sel[i] * comm[i]
-            let comm_mux_expr = comm.iter().zip(sel.iter())
+            let comm_mux_expr = comm
+                .iter()
+                .zip(sel.iter())
                 .fold(selected_comm, |acc, (c, s)| acc - s.clone() * c.clone());
             let comm_mux = ("comm mux", comm_mux_expr);
 
@@ -512,7 +515,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let mut cells = Vec::with_capacity(16);
             for i in 0..16 {
                 cells.push(assign_free_advice(
-                    layouter.namespace(|| alloc::format!("witness share_comm[{i}]")),
+                    layouter.namespace(|| format!("witness share_comm[{i}]")),
                     config.advices[0],
                     self.share_comms[i],
                 )?);
@@ -647,7 +650,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 for (sel_start, count, col_off, row) in [(0, 9, 0, 0), (9, 7, 0, 1)] {
                     for i in 0..count {
                         region.assign_advice(
-                            || alloc::format!("sel_{}", sel_start + i),
+                            || format!("sel_{}", sel_start + i),
                             config.advices[col_off + i],
                             row,
                             || sel_values[sel_start + i],
@@ -662,10 +665,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 // the prover from substituting a different value. The 16 commitments
                 // also spill across multiple rows alongside the selector bits above.
                 // Layout table: (comm_start, count, advice_col_offset, row)
-                for (comm_start, count, col_off, row) in [(0, 2, 7, 1), (2, 9, 0, 2), (11, 5, 0, 3)] {
+                for (comm_start, count, col_off, row) in [(0, 2, 7, 1), (2, 9, 0, 2), (11, 5, 0, 3)]
+                {
                     for i in 0..count {
                         share_comms_cond4[comm_start + i].copy_advice(
-                            || alloc::format!("comm_{}", comm_start + i),
+                            || format!("comm_{}", comm_start + i),
                             &mut region,
                             config.advices[col_off + i],
                             row,
@@ -675,10 +679,12 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
                 // Select the correct commitment via dot product selector.
                 // selected_comm_val = Σ sel[i] * comm[i]
-                let selected_comm_val = (0..16).fold(Value::known(pallas::Base::zero()), |acc, i| {
-                    acc.zip(sel_values[i]).zip(share_comms_cond4[i].value().copied())
-                        .map(|((a, s), c)| a + s * c)
-                });
+                let selected_comm_val =
+                    (0..16).fold(Value::known(pallas::Base::zero()), |acc, i| {
+                        acc.zip(sel_values[i])
+                            .zip(share_comms_cond4[i].value().copied())
+                            .map(|((a, s), c)| a + s * c)
+                    });
                 let selected_comm = region.assign_advice(
                     || "selected_comm",
                     config.advices[5],
@@ -686,12 +692,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                     || selected_comm_val,
                 )?;
 
-                share_index.copy_advice(
-                    || "share_index",
-                    &mut region,
-                    config.advices[6],
-                    3,
-                )?;
+                share_index.copy_advice(|| "share_index", &mut region, config.advices[6], 3)?;
 
                 Ok(selected_comm)
             },
@@ -734,9 +735,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Constrain derived vote_commitment == witnessed vote_commitment.
         layouter.assign_region(
             || "cond2: vote_commitment equality",
-            |mut region| {
-                region.constrain_equal(derived_vc.cell(), vote_commitment_cond2.cell())
-            },
+            |mut region| region.constrain_equal(derived_vc.cell(), vote_commitment_cond2.cell()),
         )?;
 
         // ---------------------------------------------------------------
@@ -760,11 +759,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             )?;
 
             // Bind the computed Merkle root to the public input.
-            layouter.constrain_instance(
-                root.cell(),
-                config.primary,
-                VOTE_COMM_TREE_ROOT,
-            )?;
+            layouter.constrain_instance(root.cell(), config.primary, VOTE_COMM_TREE_ROOT)?;
         }
 
         // ---------------------------------------------------------------
@@ -804,15 +799,15 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             )?
             .hash(
                 layouter.namespace(|| "cond5: Poseidon(tag, vc, idx, blind)"),
-                [domain_tag, vote_commitment_cond5, share_index_cond5,
-                 primary_blind_cond5],
+                [
+                    domain_tag,
+                    vote_commitment_cond5,
+                    share_index_cond5,
+                    primary_blind_cond5,
+                ],
             )?;
 
-            layouter.constrain_instance(
-                share_nullifier.cell(),
-                config.primary,
-                SHARE_NULLIFIER,
-            )?;
+            layouter.constrain_instance(share_nullifier.cell(), config.primary, SHARE_NULLIFIER)?;
         }
 
         Ok(())
@@ -884,7 +879,7 @@ impl Instance {
     /// The order must match the instance column offsets defined at the
     /// top of this file.
     pub fn to_halo2_instance(&self) -> Vec<vesta::Scalar> {
-        alloc::vec![
+        vec![
             self.share_nullifier,
             self.enc_share_c1_x,
             self.enc_share_c1_y,
@@ -910,8 +905,7 @@ mod tests {
     use pasta_curves::pallas;
 
     use crate::vote_proof::{
-        elgamal_encrypt, poseidon_hash_2, share_commitment,
-        shares_hash as compute_shares_hash,
+        elgamal_encrypt, poseidon_hash_2, share_commitment, shares_hash as compute_shares_hash,
         spend_auth_g_affine, vote_commitment_hash as compute_vote_commitment_hash,
     };
 
@@ -940,18 +934,13 @@ mod tests {
         let mut c2_x = [pallas::Base::zero(); 16];
         let mut c1_y = [pallas::Base::zero(); 16];
         let mut c2_y = [pallas::Base::zero(); 16];
-        let randomness: [pallas::Base; 16] = core::array::from_fn(|i| {
-            pallas::Base::from((i as u64 + 1) * 101)
-        });
-        let share_blinds: [pallas::Base; 16] = core::array::from_fn(|i| {
-            pallas::Base::from(1001u64 + i as u64)
-        });
+        let randomness: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from((i as u64 + 1) * 101));
+        let share_blinds: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(1001u64 + i as u64));
         for i in 0..16 {
-            let (cx1, cx2, cy1, cy2) = elgamal_encrypt(
-                pallas::Base::from(shares[i]),
-                randomness[i],
-                ea_pk,
-            );
+            let (cx1, cx2, cy1, cy2) =
+                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk);
             c1_x[i] = cx1;
             c2_x[i] = cx2;
             c1_y[i] = cy1;
@@ -964,9 +953,7 @@ mod tests {
         (c1_x, c2_x, c1_y, c2_y, share_blinds, comms, hash)
     }
 
-    fn make_test_data(
-        share_idx: u32,
-    ) -> (Circuit, Instance) {
+    fn make_test_data(share_idx: u32) -> (Circuit, Instance) {
         let proposal_id = pallas::Base::from(3u64);
         let vote_decision = pallas::Base::from(1u64);
         let voting_round_id = pallas::Base::from(999u64);
@@ -976,8 +963,12 @@ mod tests {
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, share_blinds, share_comms, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
-        let vote_commitment =
-            compute_vote_commitment_hash(voting_round_id, shares_hash_val, proposal_id, vote_decision);
+        let vote_commitment = compute_vote_commitment_hash(
+            voting_round_id,
+            shares_hash_val,
+            proposal_id,
+            vote_decision,
+        );
 
         let (auth_path, position, vote_comm_tree_root) =
             build_single_leaf_merkle_path(vote_commitment);
@@ -1170,56 +1161,67 @@ mod tests {
     #[test]
     #[ignore]
     fn row_budget() {
-        use std::println;
         use halo2_proofs::dev::CircuitCost;
         use pasta_curves::vesta;
+        use std::println;
 
         let (circuit, _) = make_test_data(0);
 
         let cost = CircuitCost::<vesta::Point, _>::measure(K, &circuit);
-        let debug = alloc::format!("{cost:?}");
+        let debug = format!("{cost:?}");
 
         let extract = |field: &str| -> usize {
-            let prefix = alloc::format!("{field}: ");
-            debug.split(&prefix)
+            let prefix = format!("{field}: ");
+            debug
+                .split(&prefix)
                 .nth(1)
                 .and_then(|s| s.split([',', ' ', '}']).next())
                 .and_then(|n| n.parse().ok())
                 .unwrap_or(0)
         };
 
-        let max_rows         = extract("max_rows");
-        let max_advice_rows  = extract("max_advice_rows");
-        let max_fixed_rows   = extract("max_fixed_rows");
-        let total_available  = 1usize << K;
+        let max_rows = extract("max_rows");
+        let max_advice_rows = extract("max_advice_rows");
+        let max_fixed_rows = extract("max_fixed_rows");
+        let total_available = 1usize << K;
 
         println!("=== share-reveal circuit row budget (K={K}) ===");
         println!("  max_rows (floor-planner high-water mark): {max_rows}");
         println!("  max_advice_rows:                          {max_advice_rows}");
         println!("  max_fixed_rows:                           {max_fixed_rows}");
         println!("  2^K  (total available rows):              {total_available}");
-        println!("  headroom:                                 {}", total_available.saturating_sub(max_rows));
-        println!("  utilisation:                              {:.1}%",
-            100.0 * max_rows as f64 / total_available as f64);
+        println!(
+            "  headroom:                                 {}",
+            total_available.saturating_sub(max_rows)
+        );
+        println!(
+            "  utilisation:                              {:.1}%",
+            100.0 * max_rows as f64 / total_available as f64
+        );
         println!();
         println!("  Full debug: {debug}");
 
         // Witness-independence check: Circuit::default() (all unknowns)
         // must produce exactly the same layout as the filled circuit.
         let cost_default = CircuitCost::<vesta::Point, _>::measure(K, &Circuit::default());
-        let debug_default = alloc::format!("{cost_default:?}");
+        let debug_default = format!("{cost_default:?}");
         let max_rows_default = debug_default
-            .split("max_rows: ").nth(1)
+            .split("max_rows: ")
+            .nth(1)
             .and_then(|s| s.split([',', ' ', '}']).next())
             .and_then(|n| n.parse::<usize>().ok())
             .unwrap_or(0);
         if max_rows_default == max_rows {
-            println!("  Witness-independence: PASS \
-                (Circuit::default() max_rows={max_rows_default} == filled max_rows={max_rows})");
+            println!(
+                "  Witness-independence: PASS \
+                (Circuit::default() max_rows={max_rows_default} == filled max_rows={max_rows})"
+            );
         } else {
-            println!("  Witness-independence: FAIL \
+            println!(
+                "  Witness-independence: FAIL \
                 (Circuit::default() max_rows={max_rows_default} != filled max_rows={max_rows}) \
-                — row count depends on witness values!");
+                — row count depends on witness values!"
+            );
         }
 
         println!("  VOTE_COMM_TREE_DEPTH (circuit constant): {VOTE_COMM_TREE_DEPTH}");

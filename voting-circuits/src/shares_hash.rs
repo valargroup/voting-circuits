@@ -16,13 +16,13 @@
 //! This module extracts those constraints into a single, auditable gadget so
 //! that both circuits provably execute the same hash logic.
 
-use halo2_proofs::{
-    circuit::{AssignedCell, Layouter},
-    plonk,
-};
 use halo2_gadgets::poseidon::{
     primitives::{self as poseidon, ConstantLength},
     Hash as PoseidonHash, Pow5Chip as PoseidonChip,
+};
+use halo2_proofs::{
+    circuit::{AssignedCell, Layouter},
+    plonk,
 };
 use pasta_curves::pallas;
 
@@ -45,15 +45,14 @@ pub fn hash_share_commitment_in_circuit(
     enc_c2_y: AssignedCell<pallas::Base, pallas::Base>,
     index: usize,
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
-    let hasher = PoseidonHash::<
-        pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2,
-    >::init(
-        chip,
-        layouter.namespace(|| alloc::format!("share_comm_{index} Poseidon init")),
-    )?;
+    let hasher =
+        PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2>::init(
+            chip,
+            layouter.namespace(|| format!("share_comm_{index} Poseidon init")),
+        )?;
     hasher.hash(
         layouter.namespace(|| {
-            alloc::format!("share_comm_{index} = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)[{index}]")
+            format!("share_comm_{index} = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)[{index}]")
         }),
         [blind, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y],
     )
@@ -97,11 +96,16 @@ pub fn compute_shares_hash_in_circuit(
         .map(|(i, ((((blind, c1x), c2x), c1y), c2y))| {
             hash_share_commitment_in_circuit(
                 poseidon_chip(),
-                layouter.namespace(|| alloc::format!("share_comm_{i}")),
-                blind, c1x, c2x, c1y, c2y, i,
+                layouter.namespace(|| format!("share_comm_{i}")),
+                blind,
+                c1x,
+                c2x,
+                c1y,
+                c2y,
+                i,
             )
         })
-        .collect::<Result<alloc::vec::Vec<_>, _>>()?
+        .collect::<Result<Vec<_>, _>>()?
         .try_into()
         .expect("always 16 elements");
 
@@ -167,12 +171,12 @@ mod tests {
     use super::*;
 
     use ff::Field;
+    use halo2_gadgets::poseidon::Pow5Config as PoseidonConfig;
     use halo2_proofs::{
         circuit::{floor_planner, Value},
         dev::MockProver,
         plonk::{Advice, Column, ConstraintSystem, Fixed, Instance as InstanceColumn},
     };
-    use halo2_gadgets::poseidon::Pow5Config as PoseidonConfig;
     use rand::rngs::OsRng;
 
     use crate::vote_proof::circuit::{share_commitment, shares_hash};
@@ -211,7 +215,11 @@ mod tests {
                 fixed[3..6].try_into().unwrap(),
             );
 
-            TestConfig { primary, advice: advices[0], poseidon_config }
+            TestConfig {
+                primary,
+                advice: advices[0],
+                poseidon_config,
+            }
         }
 
         fn poseidon_chip(&self) -> PoseidonChip<pallas::Base, 3, 2> {
@@ -250,7 +258,9 @@ mod tests {
         type Config = TestConfig;
         type FloorPlanner = floor_planner::V1;
 
-        fn without_witnesses(&self) -> Self { Self::default() }
+        fn without_witnesses(&self) -> Self {
+            Self::default()
+        }
 
         fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
             TestConfig::configure(meta)
@@ -261,16 +271,41 @@ mod tests {
             config: Self::Config,
             mut layouter: impl Layouter<pallas::Base>,
         ) -> Result<(), plonk::Error> {
-            let blind = witness(layouter.namespace(|| "blind"), config.advice, Value::known(self.blind))?;
-            let c1x   = witness(layouter.namespace(|| "c1_x"), config.advice, Value::known(self.c1_x))?;
-            let c2x   = witness(layouter.namespace(|| "c2_x"), config.advice, Value::known(self.c2_x))?;
-            let c1y   = witness(layouter.namespace(|| "c1_y"), config.advice, Value::known(self.c1_y))?;
-            let c2y   = witness(layouter.namespace(|| "c2_y"), config.advice, Value::known(self.c2_y))?;
+            let blind = witness(
+                layouter.namespace(|| "blind"),
+                config.advice,
+                Value::known(self.blind),
+            )?;
+            let c1x = witness(
+                layouter.namespace(|| "c1_x"),
+                config.advice,
+                Value::known(self.c1_x),
+            )?;
+            let c2x = witness(
+                layouter.namespace(|| "c2_x"),
+                config.advice,
+                Value::known(self.c2_x),
+            )?;
+            let c1y = witness(
+                layouter.namespace(|| "c1_y"),
+                config.advice,
+                Value::known(self.c1_y),
+            )?;
+            let c2y = witness(
+                layouter.namespace(|| "c2_y"),
+                config.advice,
+                Value::known(self.c2_y),
+            )?;
 
             let result = hash_share_commitment_in_circuit(
                 config.poseidon_chip(),
                 layouter.namespace(|| "hash_share_comm"),
-                blind, c1x, c2x, c1y, c2y, 0,
+                blind,
+                c1x,
+                c2x,
+                c1y,
+                c2y,
+                0,
             )?;
             layouter.constrain_instance(result.cell(), config.primary, 0)
         }
@@ -281,15 +316,21 @@ mod tests {
     fn hash_share_commitment_matches_native() {
         let mut rng = OsRng;
         let blind = pallas::Base::random(&mut rng);
-        let c1_x  = pallas::Base::random(&mut rng);
-        let c2_x  = pallas::Base::random(&mut rng);
-        let c1_y  = pallas::Base::random(&mut rng);
-        let c2_y  = pallas::Base::random(&mut rng);
+        let c1_x = pallas::Base::random(&mut rng);
+        let c2_x = pallas::Base::random(&mut rng);
+        let c1_y = pallas::Base::random(&mut rng);
+        let c2_y = pallas::Base::random(&mut rng);
 
         let expected = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
-        let circuit = HashShareCommCircuit { blind, c1_x, c2_x, c1_y, c2_y };
-        let prover = MockProver::run(10, &circuit, vec![vec![expected]])
-            .expect("MockProver::run failed");
+        let circuit = HashShareCommCircuit {
+            blind,
+            c1_x,
+            c2_x,
+            c1_y,
+            c2_y,
+        };
+        let prover =
+            MockProver::run(10, &circuit, vec![vec![expected]]).expect("MockProver::run failed");
         assert_eq!(prover.verify(), Ok(()));
     }
 
@@ -298,15 +339,21 @@ mod tests {
     fn hash_share_commitment_input_order_matters() {
         let mut rng = OsRng;
         let blind = pallas::Base::random(&mut rng);
-        let c1_x  = pallas::Base::random(&mut rng);
-        let c2_x  = pallas::Base::random(&mut rng);
-        let c1_y  = pallas::Base::random(&mut rng);
-        let c2_y  = pallas::Base::random(&mut rng);
+        let c1_x = pallas::Base::random(&mut rng);
+        let c2_x = pallas::Base::random(&mut rng);
+        let c1_y = pallas::Base::random(&mut rng);
+        let c2_y = pallas::Base::random(&mut rng);
 
         let wrong = share_commitment(blind, c2_x, c1_x, c2_y, c1_y);
-        let circuit = HashShareCommCircuit { blind, c1_x, c2_x, c1_y, c2_y };
-        let prover = MockProver::run(10, &circuit, vec![vec![wrong]])
-            .expect("MockProver::run failed");
+        let circuit = HashShareCommCircuit {
+            blind,
+            c1_x,
+            c2_x,
+            c1_y,
+            c2_y,
+        };
+        let prover =
+            MockProver::run(10, &circuit, vec![vec![wrong]]).expect("MockProver::run failed");
         assert!(prover.verify().is_err());
     }
 
@@ -315,14 +362,17 @@ mod tests {
     fn hash_share_commitment_y_negate_changes_hash() {
         let mut rng = OsRng;
         let blind = pallas::Base::random(&mut rng);
-        let c1_x  = pallas::Base::random(&mut rng);
-        let c2_x  = pallas::Base::random(&mut rng);
-        let c1_y  = pallas::Base::random(&mut rng);
-        let c2_y  = pallas::Base::random(&mut rng);
+        let c1_x = pallas::Base::random(&mut rng);
+        let c2_x = pallas::Base::random(&mut rng);
+        let c1_y = pallas::Base::random(&mut rng);
+        let c2_y = pallas::Base::random(&mut rng);
 
         let correct = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
         let negated = share_commitment(blind, c1_x, c2_x, -c1_y, c2_y);
-        assert_ne!(correct, negated, "negating c1_y must change the share commitment");
+        assert_ne!(
+            correct, negated,
+            "negating c1_y must change the share commitment"
+        );
     }
 
     // ================================================================
@@ -356,7 +406,9 @@ mod tests {
         type Config = TestConfig;
         type FloorPlanner = floor_planner::V1;
 
-        fn without_witnesses(&self) -> Self { Self::default() }
+        fn without_witnesses(&self) -> Self {
+            Self::default()
+        }
 
         fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
             TestConfig::configure(meta)
@@ -367,23 +419,48 @@ mod tests {
             config: Self::Config,
             mut layouter: impl Layouter<pallas::Base>,
         ) -> Result<(), plonk::Error> {
-            let mut blind_cells = alloc::vec::Vec::with_capacity(16);
-            let mut c1x_cells   = alloc::vec::Vec::with_capacity(16);
-            let mut c2x_cells   = alloc::vec::Vec::with_capacity(16);
-            let mut c1y_cells   = alloc::vec::Vec::with_capacity(16);
-            let mut c2y_cells   = alloc::vec::Vec::with_capacity(16);
+            let mut blind_cells = Vec::with_capacity(16);
+            let mut c1x_cells = Vec::with_capacity(16);
+            let mut c2x_cells = Vec::with_capacity(16);
+            let mut c1y_cells = Vec::with_capacity(16);
+            let mut c2y_cells = Vec::with_capacity(16);
             for i in 0..16 {
-                blind_cells.push(witness(layouter.namespace(|| alloc::format!("blind_{i}")), config.advice, Value::known(self.blinds[i]))?);
-                c1x_cells.push(witness(layouter.namespace(|| alloc::format!("c1x_{i}")),   config.advice, Value::known(self.enc_c1_x[i]))?);
-                c2x_cells.push(witness(layouter.namespace(|| alloc::format!("c2x_{i}")),   config.advice, Value::known(self.enc_c2_x[i]))?);
-                c1y_cells.push(witness(layouter.namespace(|| alloc::format!("c1y_{i}")),   config.advice, Value::known(self.enc_c1_y[i]))?);
-                c2y_cells.push(witness(layouter.namespace(|| alloc::format!("c2y_{i}")),   config.advice, Value::known(self.enc_c2_y[i]))?);
+                blind_cells.push(witness(
+                    layouter.namespace(|| format!("blind_{i}")),
+                    config.advice,
+                    Value::known(self.blinds[i]),
+                )?);
+                c1x_cells.push(witness(
+                    layouter.namespace(|| format!("c1x_{i}")),
+                    config.advice,
+                    Value::known(self.enc_c1_x[i]),
+                )?);
+                c2x_cells.push(witness(
+                    layouter.namespace(|| format!("c2x_{i}")),
+                    config.advice,
+                    Value::known(self.enc_c2_x[i]),
+                )?);
+                c1y_cells.push(witness(
+                    layouter.namespace(|| format!("c1y_{i}")),
+                    config.advice,
+                    Value::known(self.enc_c1_y[i]),
+                )?);
+                c2y_cells.push(witness(
+                    layouter.namespace(|| format!("c2y_{i}")),
+                    config.advice,
+                    Value::known(self.enc_c2_y[i]),
+                )?);
             }
-            let blinds:  [AssignedCell<pallas::Base, pallas::Base>; 16] = blind_cells.try_into().unwrap();
-            let enc_c1_x: [AssignedCell<pallas::Base, pallas::Base>; 16] = c1x_cells.try_into().unwrap();
-            let enc_c2_x: [AssignedCell<pallas::Base, pallas::Base>; 16] = c2x_cells.try_into().unwrap();
-            let enc_c1_y: [AssignedCell<pallas::Base, pallas::Base>; 16] = c1y_cells.try_into().unwrap();
-            let enc_c2_y: [AssignedCell<pallas::Base, pallas::Base>; 16] = c2y_cells.try_into().unwrap();
+            let blinds: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+                blind_cells.try_into().unwrap();
+            let enc_c1_x: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+                c1x_cells.try_into().unwrap();
+            let enc_c2_x: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+                c2x_cells.try_into().unwrap();
+            let enc_c1_y: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+                c1y_cells.try_into().unwrap();
+            let enc_c2_y: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+                c2y_cells.try_into().unwrap();
 
             let result = compute_shares_hash_in_circuit(
                 || config.poseidon_chip(),
@@ -402,17 +479,23 @@ mod tests {
     #[test]
     fn compute_shares_hash_matches_native() {
         let mut rng = OsRng;
-        let blinds:  [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let blinds: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c1_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c2_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c1_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c2_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
 
         let expected = shares_hash(blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y);
-        let circuit = ComputeSharesHashCircuit { blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y };
+        let circuit = ComputeSharesHashCircuit {
+            blinds,
+            enc_c1_x,
+            enc_c2_x,
+            enc_c1_y,
+            enc_c2_y,
+        };
         // K=12 (4096 rows) comfortably fits 17 chained Poseidon(5) regions.
-        let prover = MockProver::run(12, &circuit, vec![vec![expected]])
-            .expect("MockProver::run failed");
+        let prover =
+            MockProver::run(12, &circuit, vec![vec![expected]]).expect("MockProver::run failed");
         assert_eq!(prover.verify(), Ok(()));
     }
 
@@ -420,7 +503,7 @@ mod tests {
     #[test]
     fn compute_shares_hash_wrong_enc_c1_fails() {
         let mut rng = OsRng;
-        let blinds:  [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let blinds: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c1_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c2_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c1_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
@@ -428,11 +511,17 @@ mod tests {
 
         let correct = shares_hash(blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y);
 
-        let mut circuit = ComputeSharesHashCircuit { blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y };
+        let mut circuit = ComputeSharesHashCircuit {
+            blinds,
+            enc_c1_x,
+            enc_c2_x,
+            enc_c1_y,
+            enc_c2_y,
+        };
         circuit.enc_c1_x[2] = pallas::Base::random(&mut rng);
 
-        let prover = MockProver::run(12, &circuit, vec![vec![correct]])
-            .expect("MockProver::run failed");
+        let prover =
+            MockProver::run(12, &circuit, vec![vec![correct]]).expect("MockProver::run failed");
         assert!(prover.verify().is_err());
     }
 
@@ -440,7 +529,7 @@ mod tests {
     #[test]
     fn all_16_share_positions_are_hashed() {
         let mut rng = OsRng;
-        let blinds:  [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let blinds: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c1_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c2_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c1_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
@@ -449,7 +538,13 @@ mod tests {
         let correct = shares_hash(blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y);
 
         for i in 0..16 {
-            let mut circuit = ComputeSharesHashCircuit { blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y };
+            let mut circuit = ComputeSharesHashCircuit {
+                blinds,
+                enc_c1_x,
+                enc_c2_x,
+                enc_c1_y,
+                enc_c2_y,
+            };
             circuit.enc_c1_x[i] = pallas::Base::random(&mut rng);
 
             let prover = MockProver::run(12, &circuit, vec![vec![correct]])
@@ -465,7 +560,7 @@ mod tests {
     #[test]
     fn compute_shares_hash_wrong_blind_fails() {
         let mut rng = OsRng;
-        let blinds:  [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let blinds: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c1_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c2_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c1_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
@@ -473,11 +568,17 @@ mod tests {
 
         let correct = shares_hash(blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y);
 
-        let mut circuit = ComputeSharesHashCircuit { blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y };
+        let mut circuit = ComputeSharesHashCircuit {
+            blinds,
+            enc_c1_x,
+            enc_c2_x,
+            enc_c1_y,
+            enc_c2_y,
+        };
         circuit.blinds[0] = pallas::Base::random(&mut rng);
 
-        let prover = MockProver::run(12, &circuit, vec![vec![correct]])
-            .expect("MockProver::run failed");
+        let prover =
+            MockProver::run(12, &circuit, vec![vec![correct]]).expect("MockProver::run failed");
         assert!(prover.verify().is_err());
     }
 
@@ -494,7 +595,9 @@ mod tests {
 
     impl Default for ComputeSharesHashFromCommsCircuit {
         fn default() -> Self {
-            Self { share_comms: [pallas::Base::zero(); 16] }
+            Self {
+                share_comms: [pallas::Base::zero(); 16],
+            }
         }
     }
 
@@ -502,7 +605,9 @@ mod tests {
         type Config = TestConfig;
         type FloorPlanner = floor_planner::V1;
 
-        fn without_witnesses(&self) -> Self { Self::default() }
+        fn without_witnesses(&self) -> Self {
+            Self::default()
+        }
 
         fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
             TestConfig::configure(meta)
@@ -513,10 +618,10 @@ mod tests {
             config: Self::Config,
             mut layouter: impl Layouter<pallas::Base>,
         ) -> Result<(), plonk::Error> {
-            let mut comm_cells = alloc::vec::Vec::with_capacity(16);
+            let mut comm_cells = Vec::with_capacity(16);
             for i in 0..16 {
                 comm_cells.push(witness(
-                    layouter.namespace(|| alloc::format!("comm_{i}")),
+                    layouter.namespace(|| format!("comm_{i}")),
                     config.advice,
                     Value::known(self.share_comms[i]),
                 )?);
@@ -537,21 +642,31 @@ mod tests {
     #[test]
     fn shares_hash_from_comms_matches_native() {
         let mut rng = OsRng;
-        let blinds:  [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
+        let blinds: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c1_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c2_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c1_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
         let enc_c2_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
 
-        let comms: [pallas::Base; 16] =
-            core::array::from_fn(|i| share_commitment(blinds[i], enc_c1_x[i], enc_c2_x[i], enc_c1_y[i], enc_c2_y[i]));
+        let comms: [pallas::Base; 16] = core::array::from_fn(|i| {
+            share_commitment(
+                blinds[i],
+                enc_c1_x[i],
+                enc_c2_x[i],
+                enc_c1_y[i],
+                enc_c2_y[i],
+            )
+        });
         let expected = super::shares_hash_from_comms(comms);
 
-        assert_eq!(expected, shares_hash(blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y));
+        assert_eq!(
+            expected,
+            shares_hash(blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y)
+        );
 
         let circuit = ComputeSharesHashFromCommsCircuit { share_comms: comms };
-        let prover = MockProver::run(12, &circuit, vec![vec![expected]])
-            .expect("MockProver::run failed");
+        let prover =
+            MockProver::run(12, &circuit, vec![vec![expected]]).expect("MockProver::run failed");
         assert_eq!(prover.verify(), Ok(()));
     }
 
@@ -564,9 +679,11 @@ mod tests {
 
         let mut bad_comms = comms;
         bad_comms[7] = pallas::Base::random(&mut rng);
-        let circuit = ComputeSharesHashFromCommsCircuit { share_comms: bad_comms };
-        let prover = MockProver::run(12, &circuit, vec![vec![expected]])
-            .expect("MockProver::run failed");
+        let circuit = ComputeSharesHashFromCommsCircuit {
+            share_comms: bad_comms,
+        };
+        let prover =
+            MockProver::run(12, &circuit, vec![vec![expected]]).expect("MockProver::run failed");
         assert!(prover.verify().is_err());
     }
 }

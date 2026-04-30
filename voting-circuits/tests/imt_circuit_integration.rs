@@ -87,7 +87,7 @@ fn make_real_note_inputs(
         let mut auth_path = [MerkleHashOrchard::empty_leaf(); NOTE_COMMITMENT_TREE_DEPTH];
         auth_path[0] = leaves[i ^ 1]; // sibling leaf in the same pair
         auth_path[1] = l1[1 - (i >> 1)]; // sibling pair hash
-        // Levels 2..31: empty subtree roots.
+                                         // Levels 2..31: empty subtree roots.
         for level in 2..NOTE_COMMITMENT_TREE_DEPTH {
             auth_path[level] = MerkleHashOrchard::empty_root(Level::from(level as u8));
         }
@@ -288,10 +288,7 @@ impl ImtProvider for ProductionSentinelImtAdapter {
 fn production_sentinel_path_verifies_in_circuit() {
     let mut rng = OsRng;
 
-    let extra_nfs = [
-        pallas::Base::from(12345u64),
-        pallas::Base::from(67890u64),
-    ];
+    let extra_nfs = [pallas::Base::from(12345u64), pallas::Base::from(67890u64)];
     let imt = ProductionSentinelImtAdapter::new(&extra_nfs);
 
     let sk = SpendingKey::random(&mut rng);
@@ -433,8 +430,13 @@ fn circuit_rejects_nf_mid_equal_to_real_nf() {
     let fvk: FullViewingKey = (&sk).into();
 
     let normal_imt = SpacedLeafImtProvider::new();
-    let (mut inputs, nc_root) =
-        make_real_note_inputs(&fvk, &[13_000_000], &[Scope::External], &normal_imt, &mut rng);
+    let (mut inputs, nc_root) = make_real_note_inputs(
+        &fvk,
+        &[13_000_000],
+        &[Scope::External],
+        &normal_imt,
+        &mut rng,
+    );
 
     let nf_base =
         pallas::Base::from_repr_vartime(inputs[0].note.nullifier(&fvk).to_bytes()).unwrap();

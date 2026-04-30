@@ -3,9 +3,8 @@
 //! Follows the same pattern as `sdk/circuits/src/toy.rs` but for the full
 //! 15-condition delegation circuit at K=14.
 
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
+use std::string::String;
+use std::vec::Vec;
 
 use halo2_proofs::{
     pasta::EqAffine,
@@ -40,10 +39,7 @@ pub fn delegation_params() -> Params<EqAffine> {
 /// cache the result alongside the params.
 pub fn delegation_proving_key(
     params: &Params<EqAffine>,
-) -> (
-    plonk::ProvingKey<EqAffine>,
-    plonk::VerifyingKey<EqAffine>,
-) {
+) -> (plonk::ProvingKey<EqAffine>, plonk::VerifyingKey<EqAffine>) {
     let empty_circuit = Circuit::default();
     let vk = keygen_vk(params, &empty_circuit).expect("delegation keygen_vk should not fail");
     let pk = keygen_pk(params, vk.clone(), &empty_circuit)
@@ -89,10 +85,7 @@ pub fn create_delegation_proof(circuit: Circuit, instance: &Instance) -> Vec<u8>
 /// the 14 public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
-pub fn verify_delegation_proof(
-    proof: &[u8],
-    instance: &Instance,
-) -> Result<(), String> {
+pub fn verify_delegation_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
     let params = delegation_params();
     let (_pk, vk) = delegation_proving_key(&params);
 
@@ -101,8 +94,14 @@ pub fn verify_delegation_proof(
     let strategy = SingleVerifier::new(&params);
     let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);
 
-    verify_proof(&params, &vk, strategy, &[&[&public_inputs]], &mut transcript)
-        .map_err(|e| format!("delegation verification failed: {:?}", e))
+    verify_proof(
+        &params,
+        &vk,
+        strategy,
+        &[&[&public_inputs]],
+        &mut transcript,
+    )
+    .map_err(|e| format!("delegation verification failed: {:?}", e))
 }
 
 /// Verify a delegation circuit proof from raw field-element bytes.
@@ -112,10 +111,7 @@ pub fn verify_delegation_proof(
 /// base field elements (the public inputs in canonical order).
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
-pub fn verify_delegation_proof_raw(
-    proof: &[u8],
-    public_inputs_bytes: &[u8],
-) -> Result<(), String> {
+pub fn verify_delegation_proof_raw(proof: &[u8], public_inputs_bytes: &[u8]) -> Result<(), String> {
     use pasta_curves::group::ff::PrimeField;
 
     if public_inputs_bytes.len() != 14 * 32 {
@@ -166,17 +162,16 @@ mod prove_tests {
     use super::*;
     use crate::delegation::builder::{build_delegation_bundle, RealNoteInput};
     use crate::delegation::imt::{ImtProvider, SpacedLeafImtProvider};
+    use ff::Field;
+    use incrementalmerkletree::{Hashable, Level};
     use orchard::{
         keys::{FullViewingKey, Scope, SpendingKey},
         note::{commitment::ExtractedNoteCommitment, Note, Rho},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
-    use ff::Field;
-    use incrementalmerkletree::{Hashable, Level};
     use pasta_curves::pallas;
     use rand::rngs::OsRng;
-    use crate::delegation::circuit::K;
 
     #[test]
     fn real_proof_roundtrip() {
@@ -191,7 +186,12 @@ mod prove_tests {
         // Create a single real note
         let recipient = fvk.address_at(0u32, Scope::External);
         let (_, _, dummy) = Note::dummy(&mut rng, None);
-        let note = Note::new(recipient, NoteValue::from_raw(13_000_000), Rho::from_nf_old(dummy.nullifier(&fvk)), &mut rng);
+        let note = Note::new(
+            recipient,
+            NoteValue::from_raw(13_000_000),
+            Rho::from_nf_old(dummy.nullifier(&fvk)),
+            &mut rng,
+        );
         let cmx = ExtractedNoteCommitment::from(note.commitment());
         let leaf = MerkleHashOrchard::from_cmx(&cmx);
         let empty = MerkleHashOrchard::empty_leaf();
@@ -200,7 +200,11 @@ mod prove_tests {
         let l1 = MerkleHashOrchard::combine(Level::from(0), &leaves[0], &leaves[1]);
         let mut current = l1;
         for level in 1..32u8 {
-            current = MerkleHashOrchard::combine(Level::from(level), &current, &MerkleHashOrchard::empty_root(Level::from(level)));
+            current = MerkleHashOrchard::combine(
+                Level::from(level),
+                &current,
+                &MerkleHashOrchard::empty_root(Level::from(level)),
+            );
         }
         let nc_root = current.inner();
         let mut auth_path = [empty; 32];
@@ -213,10 +217,26 @@ mod prove_tests {
         let real_nf = note.nullifier(&fvk);
         let imt_proof = imt.non_membership_proof(real_nf.inner()).unwrap();
 
-        let input = RealNoteInput { note, fvk: fvk.clone(), merkle_path, imt_proof, scope: Scope::External };
+        let input = RealNoteInput {
+            note,
+            fvk: fvk.clone(),
+            merkle_path,
+            imt_proof,
+            scope: Scope::External,
+        };
         let bundle = build_delegation_bundle(
-            vec![input], &fvk, alpha, output_recipient, vote_round_id, nc_root, van_comm_rand, &imt, &mut rng, None,
-        ).unwrap();
+            vec![input],
+            &fvk,
+            alpha,
+            output_recipient,
+            vote_round_id,
+            nc_root,
+            van_comm_rand,
+            &imt,
+            &mut rng,
+            None,
+        )
+        .unwrap();
 
         let proof = create_delegation_proof(bundle.circuit, &bundle.instance);
         verify_delegation_proof(&proof, &bundle.instance).expect("real proof roundtrip failed");

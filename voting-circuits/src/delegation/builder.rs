@@ -5,11 +5,11 @@
 //! Handles padding unused note slots with zero-value notes that still carry
 //! valid IMT non-membership proofs against the real tree root.
 
-use alloc::vec::Vec;
 use group::Curve;
 use halo2_proofs::circuit::Value;
 use pasta_curves::{arithmetic::CurveAffine, pallas};
 use rand::RngCore;
+use std::vec::Vec;
 
 use orchard::{
     keys::{FullViewingKey, Scope, SpendValidatingKey},
@@ -20,7 +20,7 @@ use orchard::{
 };
 
 use super::{
-    circuit::{self, van_commitment_hash, rho_binding_hash, NoteSlotWitness},
+    circuit::{self, rho_binding_hash, van_commitment_hash, NoteSlotWitness},
     imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
 };
 
@@ -199,13 +199,18 @@ pub fn build_delegation_bundle(
 
         let pad_note = if let Some(pre) = precomputed {
             // ZCA-74: reuse Phase 1 randomness so the prover commits to the same values.
-            assert!(pad_idx < pre.padded_notes.len(),
+            assert!(
+                pad_idx < pre.padded_notes.len(),
                 "precomputed.padded_notes has {} entries but need index {}",
-                pre.padded_notes.len(), pad_idx);
+                pre.padded_notes.len(),
+                pad_idx
+            );
             let pd = &pre.padded_notes[pad_idx];
             let rho = Rho::from_bytes(&pd.rho).expect("precomputed rho must be valid");
-            let rseed = RandomSeed::from_bytes(pd.rseed, &rho).expect("precomputed rseed must be valid");
-            Note::from_parts(pad_addr, NoteValue::ZERO, rho, rseed).expect("precomputed note must be valid")
+            let rseed =
+                RandomSeed::from_bytes(pd.rseed, &rho).expect("precomputed rseed must be valid");
+            Note::from_parts(pad_addr, NoteValue::ZERO, rho, rseed)
+                .expect("precomputed note must be valid")
         } else {
             let (_, _, dummy) = Note::dummy(&mut *rng, None);
             Note::new(
@@ -283,7 +288,13 @@ pub fn build_delegation_bundle(
         .unwrap()
         .x();
 
-    let van_comm = van_commitment_hash(g_d_new_x, pk_d_new_x, num_ballots_field, vote_round_id, van_comm_rand);
+    let van_comm = van_commitment_hash(
+        g_d_new_x,
+        pk_d_new_x,
+        num_ballots_field,
+        vote_round_id,
+        van_comm_rand,
+    );
 
     // Condition 3: rho binding.
     // rho_signed = Poseidon(cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
@@ -329,12 +340,7 @@ pub fn build_delegation_bundle(
         Note::from_parts(output_recipient, NoteValue::ZERO, output_rho, rseed)
             .expect("precomputed output note must be valid")
     } else {
-        Note::new(
-            output_recipient,
-            NoteValue::ZERO,
-            output_rho,
-            &mut *rng,
-        )
+        Note::new(output_recipient, NoteValue::ZERO, output_rho, &mut *rng)
     };
     let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
 
@@ -362,7 +368,13 @@ pub fn build_delegation_bundle(
         vote_round_id,
         nc_root,
         nf_imt_root,
-        [gov_nulls[0], gov_nulls[1], gov_nulls[2], gov_nulls[3], gov_nulls[4]],
+        [
+            gov_nulls[0],
+            gov_nulls[1],
+            gov_nulls[2],
+            gov_nulls[3],
+            gov_nulls[4],
+        ],
         dom,
     );
 
@@ -377,6 +389,9 @@ pub fn build_delegation_bundle(
 mod tests {
     use super::*;
     use crate::delegation::imt::SpacedLeafImtProvider;
+    use ff::Field;
+    use halo2_proofs::dev::MockProver;
+    use incrementalmerkletree::{Hashable, Level};
     use orchard::{
         constants::MERKLE_DEPTH_ORCHARD,
         keys::{FullViewingKey, Scope, SpendingKey},
@@ -384,9 +399,6 @@ mod tests {
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
-    use ff::Field;
-    use halo2_proofs::dev::MockProver;
-    use incrementalmerkletree::{Hashable, Level};
     use pasta_curves::pallas;
     use rand::rngs::OsRng;
 
@@ -490,8 +502,7 @@ mod tests {
         let alpha = pallas::Scalar::random(&mut rng);
 
         let imt = SpacedLeafImtProvider::new();
-        let (inputs, nc_root) =
-            make_real_note_inputs(&fvk, values, scopes, &imt, &mut rng);
+        let (inputs, nc_root) = make_real_note_inputs(&fvk, values, scopes, &imt, &mut rng);
 
         let bundle = build_delegation_bundle(
             inputs,
@@ -525,7 +536,12 @@ mod tests {
         // 3,200,000 x 4 = 12,800,000 → num_ballots = 1, remainder = 300,000.
         build_and_verify(
             &[3_200_000, 3_200_000, 3_200_000, 3_200_000],
-            &[Scope::External, Scope::External, Scope::External, Scope::External],
+            &[
+                Scope::External,
+                Scope::External,
+                Scope::External,
+                Scope::External,
+            ],
         );
     }
 
@@ -553,7 +569,8 @@ mod tests {
         let alpha = pallas::Scalar::random(&mut rng);
 
         let imt = SpacedLeafImtProvider::new();
-        let (inputs, nc_root) = make_real_note_inputs(&fvk, &[12_499_999], &[Scope::External], &imt, &mut rng);
+        let (inputs, nc_root) =
+            make_real_note_inputs(&fvk, &[12_499_999], &[Scope::External], &imt, &mut rng);
 
         let bundle = build_delegation_bundle(
             inputs,
@@ -615,7 +632,13 @@ mod tests {
         // 2,500,000 x 5 = 12,500,000 → num_ballots = 1, remainder = 0.
         build_and_verify(
             &[2_500_000, 2_500_000, 2_500_000, 2_500_000, 2_500_000],
-            &[Scope::External, Scope::External, Scope::External, Scope::External, Scope::External],
+            &[
+                Scope::External,
+                Scope::External,
+                Scope::External,
+                Scope::External,
+                Scope::External,
+            ],
         );
     }
 
@@ -630,13 +653,20 @@ mod tests {
         let (inputs, _) = make_real_note_inputs(
             &fvk,
             &[3_000_000, 3_000_000, 3_000_000, 3_000_000, 3_000_000],
-            &[Scope::External, Scope::External, Scope::External, Scope::External, Scope::External],
+            &[
+                Scope::External,
+                Scope::External,
+                Scope::External,
+                Scope::External,
+                Scope::External,
+            ],
             &imt,
             &mut rng,
         );
         // Add a 6th note by extending.
         let mut inputs = inputs;
-        let (extra, _) = make_real_note_inputs(&fvk, &[3_000_000], &[Scope::External], &imt, &mut rng);
+        let (extra, _) =
+            make_real_note_inputs(&fvk, &[3_000_000], &[Scope::External], &imt, &mut rng);
         inputs.extend(extra);
 
         let result = build_delegation_bundle(
@@ -667,7 +697,12 @@ mod tests {
     fn test_mixed_scope_notes() {
         build_and_verify(
             &[4_000_000, 4_000_000, 3_000_000, 2_000_000],
-            &[Scope::External, Scope::Internal, Scope::External, Scope::Internal],
+            &[
+                Scope::External,
+                Scope::Internal,
+                Scope::External,
+                Scope::Internal,
+            ],
         );
     }
 
@@ -675,7 +710,12 @@ mod tests {
     fn test_all_internal_notes() {
         build_and_verify(
             &[4_000_000, 4_000_000, 3_000_000, 2_000_000],
-            &[Scope::Internal, Scope::Internal, Scope::Internal, Scope::Internal],
+            &[
+                Scope::Internal,
+                Scope::Internal,
+                Scope::Internal,
+                Scope::Internal,
+            ],
         );
     }
 }

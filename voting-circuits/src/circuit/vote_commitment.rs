@@ -87,20 +87,20 @@ pub fn vote_commitment_poseidon(
     proposal_id: AssignedCell<pallas::Base, pallas::Base>,
     vote_decision: AssignedCell<pallas::Base, pallas::Base>,
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
-    let message = [domain_vc, voting_round_id, shares_hash, proposal_id, vote_decision];
-    let hasher = PoseidonHash::<
-        pallas::Base,
-        _,
-        poseidon::P128Pow5T3,
-        ConstantLength<5>,
-        3,
-        2,
-    >::init(
-        PoseidonChip::construct(poseidon_config.clone()),
-        layouter.namespace(|| alloc::format!("{label} Poseidon init")),
-    )?;
+    let message = [
+        domain_vc,
+        voting_round_id,
+        shares_hash,
+        proposal_id,
+        vote_decision,
+    ];
+    let hasher =
+        PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2>::init(
+            PoseidonChip::construct(poseidon_config.clone()),
+            layouter.namespace(|| format!("{label} Poseidon init")),
+        )?;
     hasher.hash(
-        layouter.namespace(|| alloc::format!("{label} Poseidon(DOMAIN_VC, ...)")),
+        layouter.namespace(|| format!("{label} Poseidon(DOMAIN_VC, ...)")),
         message,
     )
 }

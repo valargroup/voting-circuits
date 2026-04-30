@@ -21,11 +21,11 @@ use halo2_proofs::{
 use pasta_curves::arithmetic::CurveAffine;
 use pasta_curves::pallas;
 
-use orchard::constants::{OrchardBaseFieldBases, OrchardFixedBases, OrchardShortScalarBases};
 use halo2_gadgets::ecc::{
-    chip::EccChip,
-    FixedPointBaseField, FixedPointShort, NonIdentityPoint, ScalarFixedShort, ScalarVar,
+    chip::EccChip, FixedPointBaseField, FixedPointShort, NonIdentityPoint, ScalarFixedShort,
+    ScalarVar,
 };
+use orchard::constants::{OrchardBaseFieldBases, OrchardFixedBases, OrchardShortScalarBases};
 
 // ================================================================
 // Instance-location descriptor
@@ -86,17 +86,20 @@ pub fn elgamal_encrypt(
     use group::Curve;
 
     let g = pallas::Point::from(spend_auth_g_affine());
-    let r_scalar = base_to_scalar(randomness)
-        .expect("randomness must be < scalar field modulus");
-    let v_scalar = base_to_scalar(share_value)
-        .expect("share value must be < scalar field modulus");
+    let r_scalar = base_to_scalar(randomness).expect("randomness must be < scalar field modulus");
+    let v_scalar = base_to_scalar(share_value).expect("share value must be < scalar field modulus");
 
     let c1 = g * r_scalar;
     let c2 = g * v_scalar + ea_pk * r_scalar;
 
     let c1_coords = c1.to_affine().coordinates().unwrap();
     let c2_coords = c2.to_affine().coordinates().unwrap();
-    (*c1_coords.x(), *c2_coords.x(), *c1_coords.y(), *c2_coords.y())
+    (
+        *c1_coords.x(),
+        *c2_coords.x(),
+        *c1_coords.y(),
+        *c2_coords.y(),
+    )
 }
 
 // ================================================================
@@ -153,7 +156,7 @@ pub(crate) fn prove_elgamal_encryptions(
     // copied into each iteration's mul() call without re-witnessing.
     let ea_pk_point = NonIdentityPoint::new(
         ecc_chip.clone(),
-        layouter.namespace(|| alloc::format!("{namespace} ea_pk witness")),
+        layouter.namespace(|| format!("{namespace} ea_pk witness")),
         ea_pk,
     )?;
     // Pin the witness directly to the public-input column.
@@ -170,42 +173,36 @@ pub(crate) fn prove_elgamal_encryptions(
 
     // SpendAuthG fixed-base descriptor for C1's [r_i]*G (full 85-window path).
     // r_i is a 255-bit base-field scalar, requiring the full decomposition.
-    let spend_auth_g_base = FixedPointBaseField::from_inner(
-        ecc_chip.clone(),
-        OrchardBaseFieldBases::SpendAuthGBase,
-    );
+    let spend_auth_g_base =
+        FixedPointBaseField::from_inner(ecc_chip.clone(), OrchardBaseFieldBases::SpendAuthGBase);
 
     // SpendAuthG fixed-base descriptor for C2's [v_i]*G (short 22-window path).
     // v_i is range-checked to [0, 2^30) by condition 9; the short path saves
     // 63 window rows per share (×16 = 1008 rows total) vs the full BaseField path.
-    let spend_auth_g_short = FixedPointShort::from_inner(
-        ecc_chip.clone(),
-        OrchardShortScalarBases::SpendAuthGShort,
-    );
+    let spend_auth_g_short =
+        FixedPointShort::from_inner(ecc_chip.clone(), OrchardShortScalarBases::SpendAuthGShort);
 
     for i in 0..16 {
         // --- C1_i = [r_i] * G ---
         //
         // G is baked into the fixed-base lookup table; no NonIdentityPoint
         // witness or constrain_equal needed for the base point.
-        let c1_point = spend_auth_g_base
-            .clone()
-            .mul(
-                layouter.namespace(|| alloc::format!("{namespace} [r_{i}] * G")),
-                r_cells[i].clone(),
-            )?;
+        let c1_point = spend_auth_g_base.clone().mul(
+            layouter.namespace(|| format!("{namespace} [r_{i}] * G")),
+            r_cells[i].clone(),
+        )?;
 
         // Both coordinates of C1 are constrained: x via extract_p, y via
         // the inner point. The y-coordinate binding prevents ciphertext
         // sign-malleability (negating a point preserves x but flips y).
         let c1_x = c1_point.extract_p().inner().clone();
         layouter.assign_region(
-            || alloc::format!("{namespace} C1[{i}] x == enc_c1_x[{i}]"),
+            || format!("{namespace} C1[{i}] x == enc_c1_x[{i}]"),
             |mut region| region.constrain_equal(c1_x.cell(), enc_c1_cells[i].cell()),
         )?;
         let c1_y = c1_point.inner().y();
         layouter.assign_region(
-            || alloc::format!("{namespace} C1[{i}] y == enc_c1_y[{i}]"),
+            || format!("{namespace} C1[{i}] y == enc_c1_y[{i}]"),
             |mut region| region.constrain_equal(c1_y.cell(), enc_c1_y_cells[i].cell()),
         )?;
 
@@ -214,7 +211,7 @@ pub(crate) fn prove_elgamal_encryptions(
         // [v_i]*G uses the 22-window short-scalar path.
         // Sign is +1, constant-constrained so the prover cannot negate the share.
         let sign_one = layouter.assign_region(
-            || alloc::format!("{namespace} sign_one[{i}]"),
+            || format!("{namespace} sign_one[{i}]"),
             |mut region| {
                 region.assign_advice_from_constant(
                     || "sign = +1",
@@ -230,42 +227,40 @@ pub(crate) fn prove_elgamal_encryptions(
         // is used verbatim here.
         let v_scalar = ScalarFixedShort::new(
             ecc_chip.clone(),
-            layouter.namespace(|| alloc::format!("{namespace} v_{i} short scalar")),
+            layouter.namespace(|| format!("{namespace} v_{i} short scalar")),
             (share_cells[i].clone(), sign_one),
         )?;
 
-        let (v_g_point, _) = spend_auth_g_short
-            .clone()
-            .mul(
-                layouter.namespace(|| alloc::format!("{namespace} [v_{i}] * G")),
-                v_scalar,
-            )?;
+        let (v_g_point, _) = spend_auth_g_short.clone().mul(
+            layouter.namespace(|| format!("{namespace} [v_{i}] * G")),
+            v_scalar,
+        )?;
 
         let r_i_scalar = ScalarVar::from_base(
             ecc_chip.clone(),
-            layouter.namespace(|| alloc::format!("{namespace} r[{i}] to ScalarVar")),
+            layouter.namespace(|| format!("{namespace} r[{i}] to ScalarVar")),
             &r_cells[i],
         )?;
         // ea_pk_point is Copy: no new witness cells, just copies the AssignedCell
         // references for this mul.
         let (r_ea_pk_point, _) = ea_pk_point.mul(
-            layouter.namespace(|| alloc::format!("{namespace} [r_{i}] * ea_pk")),
+            layouter.namespace(|| format!("{namespace} [r_{i}] * ea_pk")),
             r_i_scalar,
         )?;
 
         let c2_point = v_g_point.add(
-            layouter.namespace(|| alloc::format!("{namespace} C2[{i}] = vG + rP")),
+            layouter.namespace(|| format!("{namespace} C2[{i}] = vG + rP")),
             &r_ea_pk_point,
         )?;
 
         let c2_x = c2_point.extract_p().inner().clone();
         layouter.assign_region(
-            || alloc::format!("{namespace} C2[{i}] x == enc_c2_x[{i}]"),
+            || format!("{namespace} C2[{i}] x == enc_c2_x[{i}]"),
             |mut region| region.constrain_equal(c2_x.cell(), enc_c2_cells[i].cell()),
         )?;
         let c2_y = c2_point.inner().y();
         layouter.assign_region(
-            || alloc::format!("{namespace} C2[{i}] y == enc_c2_y[{i}]"),
+            || format!("{namespace} C2[{i}] y == enc_c2_y[{i}]"),
             |mut region| region.constrain_equal(c2_y.cell(), enc_c2_y_cells[i].cell()),
         )?;
     }

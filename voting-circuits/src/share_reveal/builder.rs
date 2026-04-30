@@ -58,11 +58,16 @@ pub fn build_share_reveal(
 ) -> ShareRevealBundle {
     let shares_hash = shares_hash_from_comms(share_comms);
 
-    let vote_commitment = compute_vote_commitment_hash(voting_round_id, shares_hash, proposal_id, vote_decision);
+    let vote_commitment =
+        compute_vote_commitment_hash(voting_round_id, shares_hash, proposal_id, vote_decision);
 
     let vote_comm_tree_root = {
         let mut current = vote_commitment;
-        for (i, sibling) in merkle_auth_path.iter().enumerate().take(VOTE_COMM_TREE_DEPTH) {
+        for (i, sibling) in merkle_auth_path
+            .iter()
+            .enumerate()
+            .take(VOTE_COMM_TREE_DEPTH)
+        {
             let bit = (merkle_position >> i) & 1;
             let (left, right) = if bit == 0 {
                 (current, *sibling)
@@ -75,11 +80,7 @@ pub fn build_share_reveal(
     };
 
     let share_index_fp = pallas::Base::from(share_index as u64);
-    let share_nullifier = share_nullifier_hash(
-        vote_commitment,
-        share_index_fp,
-        primary_blind,
-    );
+    let share_nullifier = share_nullifier_hash(vote_commitment, share_index_fp, primary_blind);
 
     let circuit = Circuit {
         vote_comm_tree_path: Value::known(merkle_auth_path),
@@ -122,18 +123,17 @@ mod tests {
         let ea_pk = g * ea_sk;
 
         let shares: [u64; 16] = [625; 16];
-        let randomness: [pallas::Base; 16] = core::array::from_fn(|i| {
-            pallas::Base::from((i as u64 + 1) * 101)
-        });
-        let share_blinds: [pallas::Base; 16] = core::array::from_fn(|i| {
-            pallas::Base::from(1001u64 + i as u64)
-        });
+        let randomness: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from((i as u64 + 1) * 101));
+        let share_blinds: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(1001u64 + i as u64));
         let mut c1_x = [pallas::Base::zero(); 16];
         let mut c2_x = [pallas::Base::zero(); 16];
         let mut c1_y = [pallas::Base::zero(); 16];
         let mut c2_y = [pallas::Base::zero(); 16];
         for i in 0..16 {
-            let (cx1, cx2, cy1, cy2) = elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk);
+            let (cx1, cx2, cy1, cy2) =
+                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk);
             c1_x[i] = cx1;
             c2_x[i] = cx2;
             c1_y[i] = cy1;
@@ -166,8 +166,12 @@ mod tests {
             pallas::Base::from(999u64),
         );
 
-        let prover = MockProver::run(K, &bundle.circuit, vec![bundle.instance.to_halo2_instance()])
-            .unwrap();
+        let prover = MockProver::run(
+            K,
+            &bundle.circuit,
+            vec![bundle.instance.to_halo2_instance()],
+        )
+        .unwrap();
         assert_eq!(prover.verify(), Ok(()));
     }
 }
