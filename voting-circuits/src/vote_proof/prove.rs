@@ -47,6 +47,14 @@ fn get_vote_proof_keys() -> &'static (
     })
 }
 
+/// Warm the process-lifetime vote proof params/proving-key cache.
+///
+/// This lets callers pay deterministic keygen before the first user-visible
+/// proof generation path needs the key.
+pub fn warm_vote_proof_keys() {
+    let _ = get_vote_proof_keys();
+}
+
 // ================================================================
 // Params / key generation (public API, non-cached fallbacks)
 // ================================================================
