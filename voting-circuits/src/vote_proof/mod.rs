@@ -34,5 +34,5 @@ pub use circuit::{
 };
 pub use prove::{
     create_vote_proof, verify_vote_proof, verify_vote_proof_raw, vote_proof_params,
-    vote_proof_proving_key,
+    vote_proof_proving_key, warm_vote_proof_keys,
 };
