@@ -1,6 +1,6 @@
 [package]
 name = "voting-circuits"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol."
 license = "MIT OR Apache-2.0"
@@ -23,7 +23,7 @@ sinsemilla = "0.1"
 
 [dev-dependencies]
 imt-tree = "0.1"
-criterion = "0.4"
+criterion = "0.8"
 rand = "0.8"
 incrementalmerkletree = "0.8.1"
 
