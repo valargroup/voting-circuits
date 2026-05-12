@@ -505,6 +505,7 @@ pub fn build_vote_proof_from_delegation(
             "CommitIvk chain mismatch: [ivk]*g_d != pk_d from address"
         );
 
+        #[cfg(feature = "mock-prover-checks")]
         std::eprintln!("[BUILDER] key-chain consistency checks passed");
     }
 
@@ -735,8 +736,8 @@ pub fn build_vote_proof_from_delegation(
         ea_pk_y,
     );
 
-    // ---- MockProver check ----
-
+    // ---- Optional MockProver check ----
+    #[cfg(feature = "mock-prover-checks")]
     {
         use halo2_proofs::dev::MockProver;
         let mock_circuit = circuit.clone();
