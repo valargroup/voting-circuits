@@ -345,7 +345,7 @@ pub struct NoteSlotWitness {
     pub(crate) rho: Value<pallas::Base>,
     pub(crate) psi: Value<pallas::Base>,
     pub(crate) rcm: Value<NoteCommitTrapdoor>,
-    pub(crate) cm: Value<NoteCommitment>,
+    pub(crate) cm: Value<pallas::Point>,
     pub(crate) path: Value<[MerkleHashOrchard; MERKLE_DEPTH_ORCHARD]>,
     pub(crate) pos: Value<u32>,
     pub(crate) imt_nf_bounds: Value<[pallas::Base; 3]>,
@@ -432,6 +432,15 @@ impl Circuit {
     pub fn with_notes(mut self, notes: [NoteSlotWitness; 5]) -> Self {
         self.notes = notes;
         self
+    }
+
+    /// Test-only accessor for the per-slot witnesses, used by sibling-module
+    /// tests in `delegation::builder` to lock the end-to-end padding-derivation
+    /// path (which slot is real vs. synthetic, and that synthetic slots come
+    /// from `padding_points`).
+    #[cfg(test)]
+    pub(crate) fn notes_for_testing(&self) -> &[NoteSlotWitness; 5] {
+        &self.notes
     }
 
     /// Sets the governance commitment blinding factor (condition 7).
@@ -1526,7 +1535,7 @@ fn synthesize_note_slot(
     let cm = Point::new(
         ecc_chip.clone(),
         layouter.namespace(|| format!("note {s} witness cm")),
-        note.cm.as_ref().map(|cm| cm.inner().to_affine()),
+        note.cm.as_ref().map(|cm| cm.to_affine()),
     )?;
 
     // Recompute NoteCommit from the plaintext and constrain it equals the
@@ -1920,14 +1929,12 @@ mod tests {
 
         NoteSlotWitness {
             g_d: Value::known(recipient.g_d()),
-            pk_d: Value::known(
-                NonIdentityPallasPoint::from_bytes(&recipient.pk_d().to_bytes()).unwrap(),
-            ),
+            pk_d: Value::known(recipient.pk_d().inner()),
             v: Value::known(note.value()),
             rho: Value::known(rho.into_inner()),
             psi: Value::known(psi),
             rcm: Value::known(rcm),
-            cm: Value::known(cm),
+            cm: Value::known(cm.inner()),
             path: Value::known(*auth_path),
             pos: Value::known(pos),
             imt_nf_bounds: Value::known(imt.nf_bounds),
@@ -2010,46 +2017,27 @@ mod tests {
 
         let slot_0 = make_note_slot(&real_note, &auth_path_0, 0u32, &imt_0, false);
 
-        // Padded notes (slots 1-4): zero-value notes with addresses from the real ivk.
+        // Padded notes (slots 1-4): zero-value synthetic note slots bound to the real ivk.
         let mut note_slots = vec![slot_0];
         let mut cmx_values = vec![cmx_real];
         let mut gov_nulls = vec![gov_null_0];
         let mut note_nullifiers = vec![real_nf.inner()];
 
-        let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
-
         for i in 1..5u32 {
-            // Exercise the same padding-address derivation as the production
-            // builder so the test catches drift if the convention changes.
-            // The shared constant pins the diversifier base; Scope::External
-            // matches condition 11's mux (is_internal = false for padding).
-            let pad_addr = fvk.address_at(
-                crate::delegation::builder::PADDING_DIVERSIFIER_BASE + i,
-                Scope::External,
-            );
-            let (_, _, dummy) = Note::dummy(&mut rng, None);
-            let pad_note = Note::new(
-                pad_addr,
-                NoteValue::ZERO,
-                Rho::from_nf_old(dummy.nullifier(&fvk)),
+            let padding = crate::delegation::builder::build_padding_slot_for_testing(
+                i as usize,
+                (i - 1) as usize,
+                &fvk,
+                &ak,
+                dom,
+                &imt_provider,
                 &mut rng,
-            );
-
-            let pad_cmx = ExtractedNoteCommitment::from(pad_note.commitment()).inner();
-            let pad_nf = pad_note.nullifier(&fvk);
-            let pad_imt = imt_provider.non_membership_proof(pad_nf.inner()).unwrap();
-            let pad_gov_null = gov_null_hash(nk_val, dom, pad_nf.inner());
-
-            note_slots.push(make_note_slot(
-                &pad_note,
-                &dummy_auth_path,
-                0u32,
-                &pad_imt,
-                false,
-            ));
-            cmx_values.push(pad_cmx);
-            gov_nulls.push(pad_gov_null);
-            note_nullifiers.push(pad_nf.inner());
+            )
+            .unwrap();
+            note_slots.push(padding.witness);
+            cmx_values.push(padding.cmx);
+            gov_nulls.push(padding.gov_null);
+            note_nullifiers.push(padding.real_nf);
         }
 
         let notes: [NoteSlotWitness; 5] = note_slots.try_into().unwrap();

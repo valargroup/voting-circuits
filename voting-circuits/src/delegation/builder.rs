@@ -6,13 +6,21 @@
 //! Handles padding unused note slots with zero-value notes that still carry
 //! valid IMT non-membership proofs against the real tree root.
 
-use group::Curve;
+use ff::{Field, PrimeField, PrimeFieldBits};
+use group::{Curve, Group, GroupEncoding};
 use halo2_proofs::circuit::Value;
-use pasta_curves::{arithmetic::CurveAffine, pallas};
+use pasta_curves::{
+    arithmetic::{CurveAffine, CurveExt},
+    pallas,
+};
 use rand::RngCore;
-use std::vec::Vec;
+use std::{iter, vec::Vec};
 
 use orchard::{
+    constants::{
+        fixed_bases::{COMMIT_IVK_PERSONALIZATION, NOTE_COMMITMENT_PERSONALIZATION},
+        L_ORCHARD_BASE, L_VALUE,
+    },
     keys::{FullViewingKey, Scope, SpendValidatingKey},
     note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, RandomSeed, Rho},
     spec::NonIdentityPallasPoint,
@@ -24,8 +32,8 @@ use super::{
     circuit::{self, rho_binding_hash, van_commitment_hash, NoteSlotWitness},
     imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
 };
-
-pub(crate) const PADDING_DIVERSIFIER_BASE: u32 = 1000;
+use crate::circuit::elgamal::base_to_scalar;
+use crate::protocol_hash::poseidon_hash_2;
 
 /// Rho and rseed for a single padded note, captured during Phase 1 (PCZT construction).
 #[derive(Clone, Debug)]
@@ -42,6 +50,7 @@ pub struct PaddedNoteData {
 #[derive(Clone, Debug)]
 pub struct PrecomputedRandomness {
     /// Rho + rseed for each padded note (0–4 entries).
+    /// Padding note addresses are synthesized during proof building.
     pub padded_notes: Vec<PaddedNoteData>,
     /// Rseed for the signed (keystone) note.
     pub rseed_signed: [u8; 32],
@@ -82,6 +91,298 @@ pub struct DelegationBundle {
     pub circuit: circuit::Circuit,
     /// Public inputs (14 field elements).
     pub instance: circuit::Instance,
+}
+
+// `ExtractP` from the Orchard spec: the x-coordinate of a non-identity Pallas
+// point. Panics on identity.
+// Note: Orchard's `spec::extract_p` is `pub(crate)`; we mirror it here.
+fn point_x(point: &pallas::Point) -> pallas::Base {
+    *point
+        .to_affine()
+        .coordinates()
+        .expect("ExtractP requires a non-identity Pallas point")
+        .x()
+}
+
+// Expands a 32-byte compressed encoding into a stream of little-endian bits.
+// Orchard’s note commitment hashes `g_d` and `pk_d` as
+// little-endian bits of their 32-byte compressed encodings.
+fn byte_bits(bytes: [u8; 32]) -> impl Iterator<Item = bool> {
+    bytes
+        .into_iter()
+        .flat_map(|byte| (0..8).map(move |bit| ((byte >> bit) & 1) == 1))
+}
+
+// Expands a 64-bit little-endian integer into a stream of little-endian bits.
+// Orchard’s note commitment hashes `value` as a 64-bit little-endian integer.
+fn u64_bits(value: u64) -> impl Iterator<Item = bool> {
+    value
+        .to_le_bytes()
+        .into_iter()
+        .flat_map(|byte| (0..8).map(move |bit| ((byte >> bit) & 1) == 1))
+}
+
+// Derives the external IVK scalar from the full viewing key and spend validating key.
+// Used to construct padding `(g_d_pad, pk_d_pad)` pairs such that the in-circuit
+// `pk_d = [selected_ivk] * g_d` check (condition 11) holds against the same ivk
+// the circuit derives in condition 5. Padding always uses `is_internal = false`,
+// so the external rivk is the correct scope.
+// Note: Orchard's `FullViewingKey::to_ivk` does not expose the inner Ivk scalar;
+// if it did (e.g. `fvk.ivk_scalar(scope)`), we could drop this re-implementation.
+fn external_ivk_scalar(fvk: &FullViewingKey, ak: &SpendValidatingKey) -> pallas::Scalar {
+    let ak_point: pallas::Point = ak.into();
+    let ak_x = point_x(&ak_point);
+    let rivk = fvk.rivk(Scope::External).inner();
+    let domain = sinsemilla::CommitDomain::new(COMMIT_IVK_PERSONALIZATION);
+    let ivk = domain
+        .short_commit(
+            iter::empty()
+                .chain(ak_x.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
+                .chain(
+                    fvk.nk()
+                        .inner()
+                        .to_le_bits()
+                        .iter()
+                        .by_vals()
+                        .take(L_ORCHARD_BASE),
+                ),
+            &rivk,
+        )
+        .expect("external ivk must not be bottom");
+    base_to_scalar(ivk).expect("external ivk must fit in the scalar field")
+}
+
+// Wraps a `pallas::Point` as `NonIdentityPallasPoint` after asserting non-identity.
+//
+// Synthesized padding points come from `hash_to_curve` and scalar multiplication
+// by `ivk`; both are cryptographically non-identity (identity from `hash_to_curve`
+// is negligible, and `ivk = 0` is already rejected by `CommitIvk`'s ⊥ branch upstream).
+// We assert here so the invariant fails at the construction site rather than
+// silently flowing into the witness — the in-circuit `NonIdentityPoint::new`
+// would catch identity at proof time, but a build-time assert is cheaper to debug.
+fn assert_non_identity(point: pallas::Point) -> NonIdentityPallasPoint {
+    assert!(
+        !bool::from(point.is_identity()),
+        "padding point must not be the identity"
+    );
+    NonIdentityPallasPoint::from_bytes(&point.to_affine().to_bytes())
+        .expect("non-identity point round-trips through canonical encoding")
+}
+
+// Derives the synthetic `(g_d_pad, pk_d_pad)` pair for padding slot `slot_index`.
+// `g_d_pad` is domain-separated from Orchard's `DiversifyHash`, so the pair is
+// intentionally not a valid `orchard::Address`. `pk_d_pad = [ivk] * g_d_pad`
+// satisfies condition 11 by construction (callers must pass the external ivk,
+// since padding pins `is_internal = false`). Both points are wrapped as
+// `NonIdentityPallasPoint` via `assert_non_identity` so the invariant fails at
+// the builder rather than at proof time.
+fn padding_points(
+    slot_index: usize,
+    ivk: pallas::Scalar,
+) -> (NonIdentityPallasPoint, NonIdentityPallasPoint) {
+    let slot_index = u32::try_from(slot_index).expect("padding slot index fits in u32");
+    let g_d_pad =
+        pallas::Point::hash_to_curve("shielded-vote/padding-v1")(&slot_index.to_le_bytes());
+    let pk_d_pad = g_d_pad * ivk;
+    (assert_non_identity(g_d_pad), assert_non_identity(pk_d_pad))
+}
+
+// Generates a random seed for a given rho.
+// The random seed is used to derive the psi and rcm for the note.
+// Note: Orchard's RandomSeed::random is not exposed. If it was exposed,
+// we could use it here instead of sampling a random seed.
+fn random_seed_for_rho(rho: &Rho, rng: &mut impl RngCore) -> RandomSeed {
+    loop {
+        let mut rseed = [0u8; 32];
+        rng.fill_bytes(&mut rseed);
+        let rseed = RandomSeed::from_bytes(rseed, rho);
+        if bool::from(rseed.is_some()) {
+            return rseed.unwrap();
+        }
+    }
+}
+
+// Derives the note commitment point for a synthetic padding note.
+// Orchard has this low-level operation internally as NoteCommitment::derive,
+// but does not expose it as a public helper. Mirror it here so padding can use
+// domain-separated synthetic (g_d, pk_d) points.
+//
+// The returned point is guaranteed non-identity: sinsemilla's `CommitDomain::commit`
+// returns `None` (handled below by `.expect`) precisely when the commitment would
+// be the identity ("bottom"), so callers may treat the result as a valid Pallas
+// curve point. The slot witness still uses `Value<pallas::Point>` for `cm` (rather
+// than `Value<NoteCommitment>`) because Orchard's `NoteCommitment` newtype has a
+// private constructor; the in-circuit `NoteCommit` (condition 9) re-derives and
+// constrain-equals the witnessed `cm`, so any drift from a real `NoteCommitment`
+// shape would be caught at proof time.
+fn note_commitment_point(
+    g_d: pallas::Point,
+    pk_d: pallas::Point,
+    value: NoteValue,
+    rho: pallas::Base,
+    psi: pallas::Base,
+    rcm: pallas::Scalar,
+) -> pallas::Point {
+    let domain = sinsemilla::CommitDomain::new(NOTE_COMMITMENT_PERSONALIZATION);
+    // Mirrors Orchard NoteCommit while allowing synthetic padding points.
+    let cm = domain
+        .commit(
+            iter::empty()
+                .chain(byte_bits(g_d.to_affine().to_bytes()))
+                .chain(byte_bits(pk_d.to_affine().to_bytes()))
+                .chain(u64_bits(value.inner()).take(L_VALUE))
+                .chain(rho.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
+                .chain(psi.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE)),
+            &rcm,
+        )
+        .expect("padding note commitment must not be bottom");
+    debug_assert!(
+        !bool::from(cm.is_identity()),
+        "sinsemilla::CommitDomain::commit returning Some(_) implies non-identity"
+    );
+    cm
+}
+
+// Derives the note nullifier for a given note.
+// Note: Orchard has this low-level operation internally as Note::nullifier,
+// but does not expose it as a public helper. Mirror it here so padding can use
+// the same derivation logic.
+fn derive_note_nullifier(
+    nk: pallas::Base,
+    rho: pallas::Base,
+    psi: pallas::Base,
+    cm: pallas::Point,
+) -> pallas::Base {
+    let k = pallas::Point::hash_to_curve("z.cash:Orchard")(b"K");
+    let prf_nf = poseidon_hash_2(nk, rho);
+    // Pallas base elements embed directly into the larger scalar field.
+    let scalar = pallas::Scalar::from_repr((prf_nf + psi).to_repr())
+        .expect("Pallas base field is smaller than its scalar field");
+    point_x(&(k * scalar + cm))
+}
+
+// A single padding note slot in the delegation.
+struct PaddingSlot {
+    witness: NoteSlotWitness,
+    cmx: pallas::Base,
+    v_raw: u64,
+    gov_null: pallas::Base,
+    #[cfg(test)]
+    real_nf: pallas::Base,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_padding_slot(
+    slot_index: usize,
+    pad_idx: usize,
+    nk: pallas::Base,
+    dom: pallas::Base,
+    ivk: pallas::Scalar,
+    imt_provider: &impl ImtProvider,
+    rng: &mut impl RngCore,
+    precomputed: Option<&PrecomputedRandomness>,
+) -> Result<PaddingSlot, DelegationBuildError> {
+    let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk);
+
+    let (rho, rseed) = if let Some(pre) = precomputed {
+        // Reuse randomness so the prover commits to the same values.
+        assert!(
+            pad_idx < pre.padded_notes.len(),
+            "precomputed.padded_notes has {} entries but need index {}",
+            pre.padded_notes.len(),
+            pad_idx
+        );
+        let pd = &pre.padded_notes[pad_idx];
+        let rho = Rho::from_bytes(&pd.rho).expect("precomputed rho must be valid");
+        let rseed =
+            RandomSeed::from_bytes(pd.rseed, &rho).expect("precomputed rseed must be valid");
+        (rho, rseed)
+    } else {
+        let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
+        let rseed = random_seed_for_rho(&rho, &mut *rng);
+        (rho, rseed)
+    };
+
+    let psi = rseed.psi(&rho);
+    let rcm = rseed.rcm(&rho);
+    let cm = note_commitment_point(
+        *g_d_pad,
+        *pk_d_pad,
+        NoteValue::ZERO,
+        rho.into_inner(),
+        psi,
+        rcm.inner(),
+    );
+    let cmx = point_x(&cm);
+
+    let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm);
+    let gov_null = gov_null_hash(nk, dom, real_nf);
+    let imt_proof = imt_provider.non_membership_proof(real_nf)?;
+
+    // Merkle path is unconstrained for zero-value padding because condition 10
+    // is gated by v=0; IMT non-membership and address ownership still run.
+    let merkle_path = MerklePath::dummy(&mut *rng);
+    let witness = NoteSlotWitness {
+        g_d: Value::known(g_d_pad),
+        pk_d: Value::known(pk_d_pad),
+        v: Value::known(NoteValue::ZERO),
+        rho: Value::known(rho.into_inner()),
+        psi: Value::known(psi),
+        rcm: Value::known(rcm),
+        cm: Value::known(cm),
+        path: Value::known(merkle_path.auth_path()),
+        pos: Value::known(merkle_path.position()),
+        imt_nf_bounds: Value::known(imt_proof.nf_bounds),
+        imt_leaf_pos: Value::known(imt_proof.leaf_pos),
+        imt_path: Value::known(imt_proof.path),
+        is_internal: Value::known(false),
+    };
+
+    Ok(PaddingSlot {
+        witness,
+        cmx,
+        v_raw: 0,
+        gov_null,
+        #[cfg(test)]
+        real_nf,
+    })
+}
+
+#[cfg(test)]
+pub(crate) struct PaddingSlotForTesting {
+    pub witness: NoteSlotWitness,
+    pub cmx: pallas::Base,
+    pub gov_null: pallas::Base,
+    pub real_nf: pallas::Base,
+}
+
+#[cfg(test)]
+pub(crate) fn build_padding_slot_for_testing(
+    slot_index: usize,
+    pad_idx: usize,
+    fvk: &FullViewingKey,
+    ak: &SpendValidatingKey,
+    dom: pallas::Base,
+    imt_provider: &impl ImtProvider,
+    rng: &mut impl RngCore,
+) -> Result<PaddingSlotForTesting, DelegationBuildError> {
+    let padding = build_padding_slot(
+        slot_index,
+        pad_idx,
+        fvk.nk().inner(),
+        dom,
+        external_ivk_scalar(fvk, ak),
+        imt_provider,
+        rng,
+        None,
+    )?;
+
+    Ok(PaddingSlotForTesting {
+        witness: padding.witness,
+        cmx: padding.cmx,
+        gov_null: padding.gov_null,
+        real_nf: padding.real_nf,
+    })
 }
 
 /// Errors from delegation bundle construction.
@@ -210,6 +511,7 @@ pub fn build_delegation_bundle(
     // Derive key material.
     let nk_val = fvk.nk().inner();
     let ak: SpendValidatingKey = fvk.clone().into();
+    let ivk = external_ivk_scalar(fvk, &ak);
 
     // Derive the nullifier domain for this round (ZIP §Nullifier Domains).
     let dom = derive_nullifier_domain(vote_round_id);
@@ -239,14 +541,12 @@ pub fn build_delegation_bundle(
 
         let slot = NoteSlotWitness {
             g_d: Value::known(recipient.g_d()),
-            pk_d: Value::known(
-                NonIdentityPallasPoint::from_bytes(&recipient.pk_d().to_bytes()).unwrap(),
-            ),
+            pk_d: Value::known(recipient.pk_d().inner()),
             v: Value::known(note.value()),
             rho: Value::known(rho.into_inner()),
             psi: Value::known(psi),
             rcm: Value::known(rcm),
-            cm: Value::known(cm),
+            cm: Value::known(cm.inner()),
             path: Value::known(input.merkle_path.auth_path()),
             pos: Value::known(input.merkle_path.position()),
             imt_nf_bounds: Value::known(input.imt_proof.nf_bounds),
@@ -265,77 +565,14 @@ pub fn build_delegation_bundle(
     // Dummy notes use v=0, which gates condition 10 (Merkle path) via
     // v * (root - anchor) = 0. All other conditions run unconditionally.
     for i in n_real..circuit::MAX_REAL_NOTES {
-        // Padding-address derivation: see PADDING_DIVERSIFIER_BASE's docstring
-        // for the convention (base + offset, Scope::External, bound to the
-        // real ivk via condition 11's mux with is_internal = false).
-        let pad_addr = fvk.address_at(PADDING_DIVERSIFIER_BASE + i as u32, Scope::External);
         let pad_idx = i - n_real; // index into precomputed.padded_notes
+        let padding =
+            build_padding_slot(i, pad_idx, nk_val, dom, ivk, imt_provider, rng, precomputed)?;
 
-        let pad_note = if let Some(pre) = precomputed {
-            // Reuse precomputed padded note randomness so the prover commits to the same values.
-            let pd = pre.padded_notes.get(pad_idx).ok_or(
-                DelegationBuildError::MissingPrecomputedPaddedNote {
-                    index: pad_idx,
-                    actual: pre.padded_notes.len(),
-                },
-            )?;
-            let rho = Rho::from_bytes(&pd.rho)
-                .into_option()
-                .ok_or(DelegationBuildError::InvalidPrecomputedRho { index: pad_idx })?;
-            let location = PrecomputedRandomnessLocation::PaddedNote(pad_idx);
-            let rseed = RandomSeed::from_bytes(pd.rseed, &rho)
-                .into_option()
-                .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
-            Note::from_parts(pad_addr, NoteValue::ZERO, rho, rseed)
-                .into_option()
-                .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
-        } else {
-            let (_, _, dummy) = Note::dummy(&mut *rng, None);
-            Note::new(
-                pad_addr,
-                NoteValue::ZERO,
-                Rho::from_nf_old(dummy.nullifier(fvk)),
-                &mut *rng,
-            )
-        };
-
-        let rho = pad_note.rho();
-        let psi = pad_note.rseed().psi(&rho);
-        let rcm = pad_note.rseed().rcm(&rho);
-        let cm = pad_note.commitment();
-        let cmx = ExtractedNoteCommitment::from(cm.clone()).inner();
-
-        let real_nf = pad_note.nullifier(fvk);
-        let gov_null = gov_null_hash(nk_val, dom, real_nf.inner());
-
-        // Get IMT non-membership proof for this padded note's nullifier.
-        let imt_proof = imt_provider.non_membership_proof(real_nf.inner())?;
-
-        // Merkle path: dummy (condition 10 is skipped for v=0 notes).
-        let merkle_path = MerklePath::dummy(&mut *rng);
-
-        let slot = NoteSlotWitness {
-            g_d: Value::known(pad_addr.g_d()),
-            pk_d: Value::known(
-                NonIdentityPallasPoint::from_bytes(&pad_addr.pk_d().to_bytes()).unwrap(),
-            ),
-            v: Value::known(NoteValue::ZERO),
-            rho: Value::known(rho.into_inner()),
-            psi: Value::known(psi),
-            rcm: Value::known(rcm),
-            cm: Value::known(cm),
-            path: Value::known(merkle_path.auth_path()),
-            pos: Value::known(merkle_path.position()),
-            imt_nf_bounds: Value::known(imt_proof.nf_bounds),
-            imt_leaf_pos: Value::known(imt_proof.leaf_pos),
-            imt_path: Value::known(imt_proof.path),
-            is_internal: Value::known(false),
-        };
-
-        note_slots.push(slot);
-        cmx_values.push(cmx);
-        v_values.push(0);
-        gov_nulls.push(gov_null);
+        note_slots.push(padding.witness);
+        cmx_values.push(padding.cmx);
+        v_values.push(padding.v_raw);
+        gov_nulls.push(padding.gov_null);
     }
 
     let notes: [NoteSlotWitness; circuit::MAX_REAL_NOTES] =
@@ -473,7 +710,7 @@ pub fn build_delegation_bundle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delegation::imt::SpacedLeafImtProvider;
+    use crate::delegation::imt::{ImtError, SpacedLeafImtProvider};
     use ff::Field;
     use halo2_proofs::dev::MockProver;
     use incrementalmerkletree::{Hashable, Level};
@@ -486,9 +723,132 @@ mod tests {
     };
     use pasta_curves::pallas;
     use rand::rngs::OsRng;
+    use std::cell::{Cell, RefCell};
 
     /// Merged circuit K value.
     const K: u32 = 14;
+
+    #[derive(Debug)]
+    struct RecordingImtProvider {
+        proof: ImtProofData,
+        error: Option<ImtError>,
+        requested_nfs: RefCell<Vec<pallas::Base>>,
+    }
+
+    impl RecordingImtProvider {
+        fn returning(proof: ImtProofData) -> Self {
+            Self {
+                proof,
+                error: None,
+                requested_nfs: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn failing(error: ImtError) -> Self {
+            Self {
+                proof: test_imt_proof(),
+                error: Some(error),
+                requested_nfs: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl ImtProvider for RecordingImtProvider {
+        fn root(&self) -> pallas::Base {
+            self.proof.root
+        }
+
+        fn non_membership_proof(&self, nf: pallas::Base) -> Result<ImtProofData, ImtError> {
+            self.requested_nfs.borrow_mut().push(nf);
+            match &self.error {
+                Some(error) => Err(error.clone()),
+                None => Ok(self.proof.clone()),
+            }
+        }
+    }
+
+    fn test_imt_proof() -> ImtProofData {
+        ImtProofData {
+            root: pallas::Base::from(900u64),
+            nf_bounds: [
+                pallas::Base::from(10u64),
+                pallas::Base::from(20u64),
+                pallas::Base::from(30u64),
+            ],
+            leaf_pos: 7,
+            path: std::array::from_fn(|i| pallas::Base::from(1_000u64 + i as u64)),
+        }
+    }
+
+    fn precomputed_padding_note(rng: &mut impl RngCore) -> (PaddedNoteData, Rho, RandomSeed) {
+        let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
+        let rseed = random_seed_for_rho(&rho, &mut *rng);
+        (
+            PaddedNoteData {
+                rho: rho.to_bytes(),
+                rseed: *rseed.as_bytes(),
+            },
+            rho,
+            rseed,
+        )
+    }
+
+    fn assert_known<T>(value: &Value<T>, f: impl FnOnce(&T) -> bool) {
+        let checked = Cell::new(false);
+        value.assert_if_known(|actual| {
+            checked.set(true);
+            f(actual)
+        });
+        assert!(checked.get(), "expected known witness value");
+    }
+
+    fn assert_padding_slot_matches(
+        padding: &PaddingSlot,
+        slot_index: usize,
+        nk: pallas::Base,
+        dom: pallas::Base,
+        ivk: pallas::Scalar,
+        rho: Rho,
+        rseed: RandomSeed,
+        imt_proof: &ImtProofData,
+        requested_nfs: &[pallas::Base],
+    ) {
+        let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk);
+        let psi = rseed.psi(&rho);
+        let rcm = rseed.rcm(&rho);
+        let cm = note_commitment_point(
+            *g_d_pad,
+            *pk_d_pad,
+            NoteValue::ZERO,
+            rho.into_inner(),
+            psi,
+            rcm.inner(),
+        );
+        let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm);
+
+        assert_eq!(padding.cmx, point_x(&cm));
+        assert_eq!(padding.v_raw, 0);
+        assert_eq!(padding.gov_null, gov_null_hash(nk, dom, real_nf));
+        assert_eq!(requested_nfs, &[real_nf]);
+
+        assert_known(&padding.witness.g_d, |actual| *actual == g_d_pad);
+        assert_known(&padding.witness.pk_d, |actual| *actual == pk_d_pad);
+        assert_known(&padding.witness.v, |actual| *actual == NoteValue::ZERO);
+        assert_known(&padding.witness.rho, |actual| *actual == rho.into_inner());
+        assert_known(&padding.witness.psi, |actual| *actual == psi);
+        assert_known(&padding.witness.rcm, |actual| actual.inner() == rcm.inner());
+        assert_known(&padding.witness.cm, |actual| *actual == cm);
+        assert_known(&padding.witness.imt_nf_bounds, |actual| {
+            *actual == imt_proof.nf_bounds
+        });
+        assert_known(&padding.witness.imt_leaf_pos, |actual| {
+            *actual == imt_proof.leaf_pos
+        });
+        assert_known(&padding.witness.imt_path, |actual| {
+            *actual == imt_proof.path
+        });
+        assert_known(&padding.witness.is_internal, |actual| !*actual);
+    }
 
     /// Helper: create 1 to `circuit::MAX_REAL_NOTES` real note inputs with a
     /// shared Merkle tree and anchor.
@@ -646,27 +1006,13 @@ mod tests {
         )
     }
 
-    fn make_valid_padded_note_data(
-        fvk: &FullViewingKey,
-        n_real: usize,
-        pad_idx: usize,
-        rng: &mut impl RngCore,
-    ) -> PaddedNoteData {
-        let pad_addr = fvk.address_at(
-            PADDING_DIVERSIFIER_BASE + (n_real + pad_idx) as u32,
-            Scope::External,
-        );
-        let (_, _, dummy) = Note::dummy(&mut *rng, None);
-        let pad_note = Note::new(
-            pad_addr,
-            NoteValue::ZERO,
-            Rho::from_nf_old(dummy.nullifier(fvk)),
-            &mut *rng,
-        );
+    fn make_valid_padded_note_data(rng: &mut impl RngCore) -> PaddedNoteData {
+        let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
+        let rseed = random_seed_for_rho(&rho, rng);
 
         PaddedNoteData {
-            rho: pad_note.rho().to_bytes(),
-            rseed: *pad_note.rseed().as_bytes(),
+            rho: rho.to_bytes(),
+            rseed: *rseed.as_bytes(),
         }
     }
 
@@ -696,6 +1042,374 @@ mod tests {
     fn test_single_real_note() {
         let bundle = build_bundle(&[13_000_000], &[Scope::External]);
         verify_bundle(&bundle);
+    }
+
+    /// Build a bundle without verifying so callers can inspect the circuit
+    /// witnesses. Mirrors `build_and_verify` minus the MockProver step and
+    /// returns `(bundle, fvk, ak)` so the test can recompute the external IVK.
+    fn build_bundle_for_inspection(
+        values: &[u64],
+        scopes: &[Scope],
+    ) -> (DelegationBundle, FullViewingKey, SpendValidatingKey) {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let output_recipient = fvk.address_at(1u32, Scope::External);
+        let vote_round_id = pallas::Base::random(&mut rng);
+        let van_comm_rand = pallas::Base::random(&mut rng);
+        let alpha = pallas::Scalar::random(&mut rng);
+        let imt = SpacedLeafImtProvider::new();
+        let (inputs, nc_root) = make_real_note_inputs(&fvk, values, scopes, &imt, &mut rng);
+
+        let bundle = build_delegation_bundle(
+            inputs,
+            &fvk,
+            alpha,
+            output_recipient,
+            vote_round_id,
+            nc_root,
+            van_comm_rand,
+            &imt,
+            &mut rng,
+            None,
+        )
+        .unwrap();
+        (bundle, fvk, ak)
+    }
+
+    #[test]
+    fn test_single_real_note_locks_padding_witnesses() {
+        // With 1 real note, slots 1..5 must be padding and their (g_d, pk_d)
+        // must come from `padding_points(slot_index, external_ivk_scalar(...))`.
+        // Catches regressions where the synthetic padding path is silently
+        // replaced (e.g. a fallback to `fvk.address_at(...)`) or where the
+        // slot index passed to `padding_points` skews off-by-one.
+        let (bundle, fvk, ak) = build_bundle_for_inspection(&[13_000_000], &[Scope::External]);
+        let ivk = external_ivk_scalar(&fvk, &ak);
+        let notes = bundle.circuit.notes_for_testing();
+        for slot_index in 1..5 {
+            let (expected_g_d, expected_pk_d) = padding_points(slot_index, ivk);
+            assert_known(&notes[slot_index].g_d, |actual| *actual == expected_g_d);
+            assert_known(&notes[slot_index].pk_d, |actual| *actual == expected_pk_d);
+        }
+    }
+
+    #[test]
+    fn test_five_real_notes_uses_no_padding() {
+        // With 5 real notes there are no padding slots. Assert that no slot's
+        // g_d matches the synthetic padding point for *any* slot index — this
+        // catches an off-by-one in the `n_real..5` iteration boundary that
+        // would smuggle a padding point into a real slot (which would silently
+        // zero that slot's vote weight in condition 10's `v * (root - anchor)`
+        // gate path because padding always has `v = 0`).
+        let (bundle, fvk, ak) = build_bundle_for_inspection(&[2_500_000; 5], &[Scope::External; 5]);
+        let ivk = external_ivk_scalar(&fvk, &ak);
+        let padding_g_ds: Vec<_> = (0..5).map(|i| padding_points(i, ivk).0).collect();
+        let notes = bundle.circuit.notes_for_testing();
+        for slot_index in 0..5 {
+            for pad_g_d in &padding_g_ds {
+                assert_known(&notes[slot_index].g_d, |actual| actual != pad_g_d);
+            }
+        }
+    }
+
+    #[test]
+    fn test_padding_points_are_synthetic_and_ivk_bound() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let ivk = external_ivk_scalar(&fvk, &ak);
+
+        for slot_index in 1..5 {
+            let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk);
+            let real_orchard_addr = fvk.address_at(slot_index as u32, Scope::External);
+
+            // Deref `NonIdentityPallasPoint` to `pallas::Point` for arithmetic and
+            // coordinate access; the wrapper enforces the non-identity invariant
+            // at construction (`padding_points` -> `assert_non_identity`).
+            assert_eq!(*pk_d_pad, *g_d_pad * ivk);
+            assert_ne!(
+                g_d_pad.to_affine().to_bytes(),
+                real_orchard_addr.g_d().to_affine().to_bytes()
+            );
+            assert_ne!(
+                pk_d_pad.to_affine().to_bytes(),
+                real_orchard_addr.pk_d().to_bytes()
+            );
+        }
+    }
+
+    // ---- Orchard drift tests ----
+    //
+    // `note_commitment_point`, `derive_note_nullifier`, and `external_ivk_scalar`
+    // mirror internal Orchard logic bit-for-bit because Orchard does not expose
+    // the corresponding low-level helpers publicly. If Orchard ever changes the
+    // bit-encoding, domain personalization, scope handling, or any other input
+    // to these primitives, the mirrored helpers in this module will silently
+    // desync from in-circuit `NoteCommit` / `DeriveNullifier` / `CommitIvk`
+    // (which still consume Orchard's gadgets via `note_commit`, `derive_nullifier`,
+    // and `prove_address_ownership`). These tests use real Orchard `Note` /
+    // `FullViewingKey` instances as the source of truth and fail loudly on drift.
+
+    /// Builds a real Orchard `Note` for use as ground truth in drift tests.
+    fn fixture_real_note(
+        scope: Scope,
+        rng: &mut impl RngCore,
+    ) -> (FullViewingKey, SpendValidatingKey, Note) {
+        let sk = SpendingKey::random(rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let recipient = fvk.address_at(0u32, scope);
+        let (_, _, dummy_parent) = Note::dummy(rng, None);
+        let note = Note::new(
+            recipient,
+            NoteValue::from_raw(12_500_000),
+            Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
+            rng,
+        );
+        (fvk, ak, note)
+    }
+
+    #[test]
+    fn test_note_commitment_point_matches_orchard() {
+        // Locks `note_commitment_point` to Orchard's `NoteCommitment::derive`.
+        // The builder uses this helper for padding slots (where g_d/pk_d are
+        // synthetic), so any drift in the underlying bit encoding would yield
+        // padding commitments that the in-circuit NoteCommit (cond 9) rejects.
+        let mut rng = OsRng;
+        for scope in [Scope::External, Scope::Internal] {
+            let (_fvk, _ak, note) = fixture_real_note(scope, &mut rng);
+            let recipient = note.recipient();
+            let rho = note.rho();
+            let psi = note.rseed().psi(&rho);
+            let rcm = note.rseed().rcm(&rho);
+
+            let mirrored = note_commitment_point(
+                *recipient.g_d(),
+                *recipient.pk_d().inner(),
+                note.value(),
+                rho.into_inner(),
+                psi,
+                rcm.inner(),
+            );
+            let orchard = note.commitment().inner();
+
+            assert_eq!(
+                mirrored, orchard,
+                "note_commitment_point drifted from Orchard NoteCommitment::derive ({scope:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_derive_note_nullifier_matches_orchard() {
+        // Locks `derive_note_nullifier` to Orchard's `Nullifier::derive`. The
+        // builder uses this for padding slots; drift would produce padding
+        // nullifiers that disagree with in-circuit `DeriveNullifier` (cond 12)
+        // and break the IMT non-membership / gov-null derivation (conds 13, 14).
+        let mut rng = OsRng;
+        for scope in [Scope::External, Scope::Internal] {
+            let (fvk, _ak, note) = fixture_real_note(scope, &mut rng);
+            let nk = fvk.nk().inner();
+            let rho = note.rho();
+            let psi = note.rseed().psi(&rho);
+            let cm = note.commitment().inner();
+
+            let mirrored = derive_note_nullifier(nk, rho.into_inner(), psi, cm);
+            let orchard = note.nullifier(&fvk).inner();
+
+            assert_eq!(
+                mirrored, orchard,
+                "derive_note_nullifier drifted from Orchard Nullifier::derive ({scope:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_external_ivk_scalar_matches_orchard_address_derivation() {
+        // Orchard does not expose `IncomingViewingKey`'s inner scalar, so we
+        // check the IVK indirectly via the diversified-address invariant
+        // `pk_d = [ivk_external] * g_d` on a real external-scope Orchard
+        // address. If `external_ivk_scalar` drifts (wrong personalization,
+        // wrong bit-take, wrong rivk scope, missing base_to_scalar), this
+        // equation will fail and so will in-circuit condition 11 for padding.
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let ivk = external_ivk_scalar(&fvk, &ak);
+
+        // Sweep several diversifier indices to catch accidental fixed-index
+        // shortcuts in the derivation.
+        for idx in [0u32, 1, 7, 1234] {
+            let addr = fvk.address_at(idx, Scope::External);
+            assert_eq!(
+                *addr.g_d() * ivk,
+                *addr.pk_d().inner(),
+                "external_ivk_scalar drifted: [ivk] * g_d != pk_d at diversifier index {idx}"
+            );
+        }
+
+        // Sanity: the external ivk must NOT validate internal-scope addresses,
+        // catching a bug where `rivk(Scope::External)` is silently swapped for
+        // `rivk(Scope::Internal)`.
+        let internal_addr = fvk.address_at(0u32, Scope::Internal);
+        assert_ne!(
+            *internal_addr.g_d() * ivk,
+            *internal_addr.pk_d().inner(),
+            "external_ivk_scalar incorrectly validates an internal-scope address"
+        );
+    }
+
+    #[test]
+    fn test_build_padding_slot_fresh_randomness_populates_strict_witnesses() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let nk = fvk.nk().inner();
+        let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
+        let ivk = external_ivk_scalar(&fvk, &ak);
+        let imt_proof = test_imt_proof();
+        let imt = RecordingImtProvider::returning(imt_proof.clone());
+
+        let padding = build_padding_slot(3, 0, nk, dom, ivk, &imt, &mut rng, None).unwrap();
+
+        let (g_d_pad, pk_d_pad) = padding_points(3, ivk);
+        assert_known(&padding.witness.g_d, |actual| *actual == g_d_pad);
+        assert_known(&padding.witness.pk_d, |actual| *actual == pk_d_pad);
+        let generated_padding_values = padding
+            .witness
+            .rho
+            .as_ref()
+            .copied()
+            .zip(padding.witness.psi.as_ref().copied())
+            .zip(padding.witness.rcm.as_ref().cloned())
+            .zip(padding.witness.cm.as_ref().copied());
+        assert_known(
+            &generated_padding_values,
+            |(((rho_inner, psi), rcm), cm_witness)| {
+                let cm = note_commitment_point(
+                    *g_d_pad,
+                    *pk_d_pad,
+                    NoteValue::ZERO,
+                    *rho_inner,
+                    *psi,
+                    rcm.inner(),
+                );
+                let real_nf = derive_note_nullifier(nk, *rho_inner, *psi, cm);
+
+                *cm_witness == cm
+                    && padding.cmx == point_x(&cm)
+                    && padding.gov_null == gov_null_hash(nk, dom, real_nf)
+                    && imt.requested_nfs.borrow().as_slice() == [real_nf]
+            },
+        );
+        assert_known(&padding.witness.v, |actual| *actual == NoteValue::ZERO);
+        assert_known(&padding.witness.is_internal, |actual| !*actual);
+        assert_known(&padding.witness.imt_nf_bounds, |actual| {
+            *actual == imt_proof.nf_bounds
+        });
+        assert_known(&padding.witness.imt_leaf_pos, |actual| {
+            *actual == imt_proof.leaf_pos
+        });
+        assert_known(&padding.witness.imt_path, |actual| {
+            *actual == imt_proof.path
+        });
+        assert_eq!(padding.v_raw, 0);
+        assert_eq!(imt.requested_nfs.borrow().len(), 1);
+    }
+
+    #[test]
+    fn test_build_padding_slot_reuses_selected_precomputed_randomness() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let nk = fvk.nk().inner();
+        let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
+        let ivk = external_ivk_scalar(&fvk, &ak);
+        let imt_proof = test_imt_proof();
+        let imt = RecordingImtProvider::returning(imt_proof.clone());
+
+        let (unused_pd, _, _) = precomputed_padding_note(&mut rng);
+        let (selected_pd, selected_rho, selected_rseed) = precomputed_padding_note(&mut rng);
+        let precomputed = PrecomputedRandomness {
+            padded_notes: vec![unused_pd, selected_pd],
+            rseed_signed: [0; 32],
+            rseed_output: [0; 32],
+        };
+
+        let padding =
+            build_padding_slot(4, 1, nk, dom, ivk, &imt, &mut rng, Some(&precomputed)).unwrap();
+
+        let requested_nfs = imt.requested_nfs.borrow();
+        assert_padding_slot_matches(
+            &padding,
+            4,
+            nk,
+            dom,
+            ivk,
+            selected_rho,
+            selected_rseed,
+            &imt_proof,
+            &requested_nfs,
+        );
+    }
+
+    #[test]
+    fn test_build_padding_slot_propagates_imt_errors() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let imt = RecordingImtProvider::failing(ImtError("fixture failure".to_string()));
+
+        let result = build_padding_slot(
+            2,
+            0,
+            fvk.nk().inner(),
+            derive_nullifier_domain(pallas::Base::random(&mut rng)),
+            external_ivk_scalar(&fvk, &ak),
+            &imt,
+            &mut rng,
+            None,
+        );
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::ImtFetchFailed(ImtError(message)))
+                if message == "fixture failure"
+        ));
+        assert_eq!(imt.requested_nfs.borrow().len(), 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "precomputed.padded_notes has 0 entries but need index 0")]
+    fn test_build_padding_slot_rejects_missing_precomputed_padding_entry() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let imt = RecordingImtProvider::returning(test_imt_proof());
+        let precomputed = PrecomputedRandomness {
+            padded_notes: vec![],
+            rseed_signed: [0; 32],
+            rseed_output: [0; 32],
+        };
+
+        let _ = build_padding_slot(
+            1,
+            0,
+            fvk.nk().inner(),
+            derive_nullifier_domain(pallas::Base::random(&mut rng)),
+            external_ivk_scalar(&fvk, &ak),
+            &imt,
+            &mut rng,
+            Some(&precomputed),
+        );
     }
 
     #[test]
@@ -882,8 +1596,8 @@ mod tests {
         let fvk: FullViewingKey = (&sk).into();
         let precomputed = PrecomputedRandomness {
             padded_notes: vec![
-                make_valid_padded_note_data(&fvk, 1, 0, &mut rng),
-                make_valid_padded_note_data(&fvk, 1, 1, &mut rng),
+                make_valid_padded_note_data(&mut rng),
+                make_valid_padded_note_data(&mut rng),
             ],
             rseed_signed: [0u8; 32],
             rseed_output: [0u8; 32],
