@@ -2017,7 +2017,10 @@ mod tests {
 
         let slot_0 = make_note_slot(&real_note, &auth_path_0, 0u32, &imt_0, false);
 
-        // Padded notes (slots 1-4): zero-value synthetic note slots bound to the real ivk.
+        // Padded notes (slots 1-4): synthetic IVK-bound padding points produced by
+        // the shared `build_padding_slot` helper. Using the same helper the
+        // production builder uses keeps this test from drifting from the live
+        // padding-derivation path (ZCA-450).
         let mut note_slots = vec![slot_0];
         let mut cmx_values = vec![cmx_real];
         let mut gov_nulls = vec![gov_null_0];
