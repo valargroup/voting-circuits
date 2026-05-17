@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Update delegation padding notes to use synthetic, IVK-bound padding points with custom derivation, avoiding overlap with the universe of Zcash mainnet diversified addresses.
+
 ## 0.4.2 - 2026-05-11
 
 - Added an explicit `mock-prover-checks` feature for vote-proof builder diagnostics.

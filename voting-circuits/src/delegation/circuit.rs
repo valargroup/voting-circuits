@@ -325,7 +325,7 @@ pub struct NoteSlotWitness {
     pub(crate) rho: Value<pallas::Base>,
     pub(crate) psi: Value<pallas::Base>,
     pub(crate) rcm: Value<NoteCommitTrapdoor>,
-    pub(crate) cm: Value<NoteCommitment>,
+    pub(crate) cm: Value<pallas::Point>,
     pub(crate) path: Value<[MerkleHashOrchard; MERKLE_DEPTH_ORCHARD]>,
     pub(crate) pos: Value<u32>,
     pub(crate) imt_nf_bounds: Value<[pallas::Base; 3]>,
@@ -412,6 +412,15 @@ impl Circuit {
     pub fn with_notes(mut self, notes: [NoteSlotWitness; 5]) -> Self {
         self.notes = notes;
         self
+    }
+
+    /// Test-only accessor for the per-slot witnesses, used by sibling-module
+    /// tests in `delegation::builder` to lock the end-to-end padding-derivation
+    /// path (which slot is real vs. synthetic, and that synthetic slots come
+    /// from `padding_points`).
+    #[cfg(test)]
+    pub(crate) fn notes_for_testing(&self) -> &[NoteSlotWitness; 5] {
+        &self.notes
     }
 
     /// Sets the governance commitment blinding factor (condition 7).
@@ -1489,7 +1498,7 @@ fn synthesize_note_slot(
     let cm = Point::new(
         ecc_chip.clone(),
         layouter.namespace(|| format!("note {s} witness cm")),
-        note.cm.as_ref().map(|cm| cm.inner().to_affine()),
+        note.cm.as_ref().map(|cm| cm.to_affine()),
     )?;
 
     // Recompute NoteCommit from the plaintext and constrain it equals the
@@ -1850,14 +1859,12 @@ mod tests {
 
         NoteSlotWitness {
             g_d: Value::known(recipient.g_d()),
-            pk_d: Value::known(
-                NonIdentityPallasPoint::from_bytes(&recipient.pk_d().to_bytes()).unwrap(),
-            ),
+            pk_d: Value::known(recipient.pk_d().inner()),
             v: Value::known(note.value()),
             rho: Value::known(rho.into_inner()),
             psi: Value::known(psi),
             rcm: Value::known(rcm),
-            cm: Value::known(cm),
+            cm: Value::known(cm.inner()),
             path: Value::known(*auth_path),
             pos: Value::known(pos),
             imt_nf_bounds: Value::known(imt.nf_bounds),
