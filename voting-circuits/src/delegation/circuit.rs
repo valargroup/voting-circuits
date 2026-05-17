@@ -1826,7 +1826,7 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delegation::builder::{build_padding_slot, external_ivk_scalar};
+    use crate::delegation::builder::build_padding_slot;
     use crate::delegation::imt::{
         derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider, SpacedLeafImtProvider,
     };
@@ -1890,7 +1890,8 @@ mod tests {
         let output_recipient = fvk.address_at(1u32, Scope::External);
 
         // Key material.
-        let nk_val = fvk.nk().inner();
+        let nk = fvk.nk();
+        let nk_val = nk.inner();
         let ak: SpendValidatingKey = fvk.clone().into();
 
         let vote_round_id = pallas::Base::random(&mut rng);
@@ -1954,20 +1955,11 @@ mod tests {
         let mut cmx_values = vec![cmx_real];
         let mut gov_nulls = vec![gov_null_0];
 
-        let ivk = external_ivk_scalar(&fvk, &ak);
+        let ivk = fvk.ivk_scalar(Scope::External);
 
         for i in 1..5usize {
-            let padding = build_padding_slot(
-                i,
-                i - 1,
-                nk_val,
-                dom,
-                ivk,
-                &imt_provider,
-                &mut rng,
-                None,
-            )
-            .expect("test IMT provider must return a non-membership proof");
+            let padding = build_padding_slot(i, i - 1, nk, dom, ivk, &imt_provider, &mut rng, None)
+                .expect("test IMT provider must return a non-membership proof");
 
             note_slots.push(padding.witness);
             cmx_values.push(padding.cmx);

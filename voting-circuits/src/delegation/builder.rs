@@ -5,7 +5,7 @@
 //! Handles padding unused note slots with zero-value notes that still carry
 //! valid IMT non-membership proofs against the real tree root.
 
-use ff::{Field, PrimeField, PrimeFieldBits};
+use ff::Field;
 use group::{Curve, Group, GroupEncoding};
 use halo2_proofs::circuit::Value;
 use pasta_curves::{
@@ -13,15 +13,14 @@ use pasta_curves::{
     pallas,
 };
 use rand::RngCore;
-use std::{iter, vec::Vec};
+use std::vec::Vec;
 
 use orchard::{
-    constants::{
-        fixed_bases::{COMMIT_IVK_PERSONALIZATION, NOTE_COMMITMENT_PERSONALIZATION},
-        L_ORCHARD_BASE, L_VALUE,
+    keys::{FullViewingKey, NullifierDerivingKey, Scope, SpendValidatingKey},
+    note::{
+        commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, NoteCommitment,
+        RandomSeed, Rho,
     },
-    keys::{FullViewingKey, Scope, SpendValidatingKey},
-    note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, RandomSeed, Rho},
     spec::NonIdentityPallasPoint,
     tree::MerklePath,
     value::NoteValue,
@@ -29,9 +28,8 @@ use orchard::{
 
 use super::{
     circuit::{self, rho_binding_hash, van_commitment_hash, NoteSlotWitness},
-    imt::{derive_nullifier_domain, gov_null_hash, poseidon_hash_2, ImtProofData, ImtProvider},
+    imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
 };
-use crate::circuit::elgamal::base_to_scalar;
 
 // Hash-to-curve personalization for synthetic padding `g_d_pad` points.
 //
@@ -88,68 +86,6 @@ pub struct DelegationBundle {
     pub instance: circuit::Instance,
 }
 
-// `ExtractP` from the Orchard spec: the x-coordinate of a non-identity Pallas
-// point. Panics on identity.
-// Note: Orchard's `spec::extract_p` is `pub(crate)`; we mirror it here.
-fn point_x(point: &pallas::Point) -> pallas::Base {
-    *point
-        .to_affine()
-        .coordinates()
-        .expect("ExtractP requires a non-identity Pallas point")
-        .x()
-}
-
-// Expands a 32-byte compressed encoding into a stream of little-endian bits.
-// Orchard’s note commitment hashes `g_d` and `pk_d` as
-// little-endian bits of their 32-byte compressed encodings.
-fn byte_bits(bytes: [u8; 32]) -> impl Iterator<Item = bool> {
-    bytes
-        .into_iter()
-        .flat_map(|byte| (0..8).map(move |bit| ((byte >> bit) & 1) == 1))
-}
-
-// Expands a 64-bit little-endian integer into a stream of little-endian bits.
-// Orchard’s note commitment hashes `value` as a 64-bit little-endian integer.
-fn u64_bits(value: u64) -> impl Iterator<Item = bool> {
-    value
-        .to_le_bytes()
-        .into_iter()
-        .flat_map(|byte| (0..8).map(move |bit| ((byte >> bit) & 1) == 1))
-}
-
-// Derives the external IVK scalar from the full viewing key and spend validating key.
-// Used to construct padding `(g_d_pad, pk_d_pad)` pairs such that the in-circuit
-// `pk_d = [selected_ivk] * g_d` check (condition 11) holds against the same ivk
-// the circuit derives in condition 5. Padding always uses `is_internal = false`,
-// so the external rivk is the correct scope.
-// Note: Orchard's `FullViewingKey::to_ivk` does not expose the inner Ivk scalar;
-// if it did (e.g. `fvk.ivk_scalar(scope)`), we could drop this re-implementation.
-pub(crate) fn external_ivk_scalar(
-    fvk: &FullViewingKey,
-    ak: &SpendValidatingKey,
-) -> pallas::Scalar {
-    let ak_point: pallas::Point = ak.into();
-    let ak_x = point_x(&ak_point);
-    let rivk = fvk.rivk(Scope::External).inner();
-    let domain = sinsemilla::CommitDomain::new(COMMIT_IVK_PERSONALIZATION);
-    let ivk = domain
-        .short_commit(
-            iter::empty()
-                .chain(ak_x.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
-                .chain(
-                    fvk.nk()
-                        .inner()
-                        .to_le_bits()
-                        .iter()
-                        .by_vals()
-                        .take(L_ORCHARD_BASE),
-                ),
-            &rivk,
-        )
-        .expect("external ivk must not be bottom");
-    base_to_scalar(ivk).expect("external ivk must fit in the scalar field")
-}
-
 // Wraps a `pallas::Point` as `NonIdentityPallasPoint` after asserting non-identity.
 //
 // Synthesized padding points come from `hash_to_curve` and scalar multiplication
@@ -199,65 +135,6 @@ fn random_seed_for_rho(rho: &Rho, rng: &mut impl RngCore) -> RandomSeed {
     }
 }
 
-// Derives the note commitment point for a synthetic padding note.
-// Orchard has this low-level operation internally as NoteCommitment::derive,
-// but does not expose it as a public helper. Mirror it here so padding can use
-// domain-separated synthetic (g_d, pk_d) points.
-//
-// The returned point is guaranteed non-identity: sinsemilla's `CommitDomain::commit`
-// returns `None` (handled below by `.expect`) precisely when the commitment would
-// be the identity ("bottom"), so callers may treat the result as a valid Pallas
-// curve point. The slot witness still uses `Value<pallas::Point>` for `cm` (rather
-// than `Value<NoteCommitment>`) because Orchard's `NoteCommitment` newtype has a
-// private constructor; the in-circuit `NoteCommit` (condition 9) re-derives and
-// constrain-equals the witnessed `cm`, so any drift from a real `NoteCommitment`
-// shape would be caught at proof time.
-fn note_commitment_point(
-    g_d: pallas::Point,
-    pk_d: pallas::Point,
-    value: NoteValue,
-    rho: pallas::Base,
-    psi: pallas::Base,
-    rcm: pallas::Scalar,
-) -> pallas::Point {
-    let domain = sinsemilla::CommitDomain::new(NOTE_COMMITMENT_PERSONALIZATION);
-    // Mirrors Orchard NoteCommit while allowing synthetic padding points.
-    let cm = domain
-        .commit(
-            iter::empty()
-                .chain(byte_bits(g_d.to_affine().to_bytes()))
-                .chain(byte_bits(pk_d.to_affine().to_bytes()))
-                .chain(u64_bits(value.inner()).take(L_VALUE))
-                .chain(rho.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
-                .chain(psi.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE)),
-            &rcm,
-        )
-        .expect("padding note commitment must not be bottom");
-    debug_assert!(
-        !bool::from(cm.is_identity()),
-        "sinsemilla::CommitDomain::commit returning Some(_) implies non-identity"
-    );
-    cm
-}
-
-// Derives the note nullifier for a given note.
-// Note: Orchard has this low-level operation internally as Note::nullifier,
-// but does not expose it as a public helper. Mirror it here so padding can use
-// the same derivation logic.
-fn derive_note_nullifier(
-    nk: pallas::Base,
-    rho: pallas::Base,
-    psi: pallas::Base,
-    cm: pallas::Point,
-) -> pallas::Base {
-    let k = pallas::Point::hash_to_curve("z.cash:Orchard")(b"K");
-    let prf_nf = poseidon_hash_2(nk, rho);
-    // Pallas base elements embed directly into the larger scalar field.
-    let scalar = pallas::Scalar::from_repr((prf_nf + psi).to_repr())
-        .expect("Pallas base field is smaller than its scalar field");
-    point_x(&(k * scalar + cm))
-}
-
 // A single padding note slot in the delegation. Fields are `pub(crate)` so
 // `delegation::circuit` tests can drive the same source-of-truth padding
 // construction the production builder uses.
@@ -272,7 +149,7 @@ pub(crate) struct PaddingSlot {
 pub(crate) fn build_padding_slot(
     slot_index: usize,
     pad_idx: usize,
-    nk: pallas::Base,
+    nk: &NullifierDerivingKey,
     dom: pallas::Base,
     ivk: pallas::Scalar,
     imt_provider: &impl ImtProvider,
@@ -302,18 +179,20 @@ pub(crate) fn build_padding_slot(
 
     let psi = rseed.psi(&rho);
     let rcm = rseed.rcm(&rho);
-    let cm = note_commitment_point(
-        *g_d_pad,
-        *pk_d_pad,
+    let cm = NoteCommitment::derive(
+        g_d_pad.to_affine().to_bytes(),
+        pk_d_pad.to_affine().to_bytes(),
         NoteValue::ZERO,
         rho.into_inner(),
         psi,
-        rcm.inner(),
-    );
-    let cmx = point_x(&cm);
+        rcm.clone(),
+    )
+    .expect("padding note commitment must not be bottom");
+    let cm_point = cm.inner();
+    let cmx = ExtractedNoteCommitment::from(cm.clone()).inner();
 
-    let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm);
-    let gov_null = gov_null_hash(nk, dom, real_nf);
+    let real_nf = Nullifier::derive(nk, rho.into_inner(), psi, cm).inner();
+    let gov_null = gov_null_hash(nk.inner(), dom, real_nf);
     let imt_proof = imt_provider.non_membership_proof(real_nf)?;
 
     // Merkle path is unconstrained for zero-value padding because condition 10
@@ -326,7 +205,7 @@ pub(crate) fn build_padding_slot(
         rho: Value::known(rho.into_inner()),
         psi: Value::known(psi),
         rcm: Value::known(rcm),
-        cm: Value::known(cm),
+        cm: Value::known(cm_point),
         path: Value::known(merkle_path.auth_path()),
         pos: Value::known(merkle_path.position()),
         imt_nf_bounds: Value::known(imt_proof.nf_bounds),
@@ -409,9 +288,10 @@ pub fn build_delegation_bundle(
     let nf_imt_root = imt_provider.root();
 
     // Derive key material.
-    let nk_val = fvk.nk().inner();
+    let nk = fvk.nk();
+    let nk_val = nk.inner();
     let ak: SpendValidatingKey = fvk.clone().into();
-    let ivk = external_ivk_scalar(fvk, &ak);
+    let ivk = fvk.ivk_scalar(Scope::External);
 
     // Derive the nullifier domain for this round (ZIP §Nullifier Domains).
     let dom = derive_nullifier_domain(vote_round_id);
@@ -466,8 +346,7 @@ pub fn build_delegation_bundle(
     // v * (root - anchor) = 0. All other conditions run unconditionally.
     for i in n_real..5 {
         let pad_idx = i - n_real; // index into precomputed.padded_notes
-        let padding =
-            build_padding_slot(i, pad_idx, nk_val, dom, ivk, imt_provider, rng, precomputed)?;
+        let padding = build_padding_slot(i, pad_idx, nk, dom, ivk, imt_provider, rng, precomputed)?;
 
         note_slots.push(padding.witness);
         cmx_values.push(padding.cmx);
@@ -698,7 +577,7 @@ mod tests {
     fn assert_padding_slot_matches(
         padding: &PaddingSlot,
         slot_index: usize,
-        nk: pallas::Base,
+        nk: &NullifierDerivingKey,
         dom: pallas::Base,
         ivk: pallas::Scalar,
         rho: Rho,
@@ -709,19 +588,22 @@ mod tests {
         let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk);
         let psi = rseed.psi(&rho);
         let rcm = rseed.rcm(&rho);
-        let cm = note_commitment_point(
-            *g_d_pad,
-            *pk_d_pad,
+        let cm = NoteCommitment::derive(
+            g_d_pad.to_affine().to_bytes(),
+            pk_d_pad.to_affine().to_bytes(),
             NoteValue::ZERO,
             rho.into_inner(),
             psi,
-            rcm.inner(),
-        );
-        let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm);
+            rcm.clone(),
+        )
+        .expect("padding note commitment must not be bottom");
+        let cm_point = cm.inner();
+        let cmx = ExtractedNoteCommitment::from(cm.clone()).inner();
+        let real_nf = Nullifier::derive(nk, rho.into_inner(), psi, cm).inner();
 
-        assert_eq!(padding.cmx, point_x(&cm));
+        assert_eq!(padding.cmx, cmx);
         assert_eq!(padding.v_raw, 0);
-        assert_eq!(padding.gov_null, gov_null_hash(nk, dom, real_nf));
+        assert_eq!(padding.gov_null, gov_null_hash(nk.inner(), dom, real_nf));
         assert_eq!(requested_nfs, &[real_nf]);
 
         assert_known(&padding.witness.g_d, |actual| *actual == g_d_pad);
@@ -730,7 +612,7 @@ mod tests {
         assert_known(&padding.witness.rho, |actual| *actual == rho.into_inner());
         assert_known(&padding.witness.psi, |actual| *actual == psi);
         assert_known(&padding.witness.rcm, |actual| actual.inner() == rcm.inner());
-        assert_known(&padding.witness.cm, |actual| *actual == cm);
+        assert_known(&padding.witness.cm, |actual| *actual == cm_point);
         assert_known(&padding.witness.imt_nf_bounds, |actual| {
             *actual == imt_proof.nf_bounds
         });
@@ -906,13 +788,12 @@ mod tests {
     #[test]
     fn test_single_real_note_locks_padding_witnesses() {
         // With 1 real note, slots 1..5 must be padding and their (g_d, pk_d)
-        // must come from `padding_points(slot_index, external_ivk_scalar(...))`.
+        // must come from `padding_points(slot_index, fvk.ivk_scalar(...))`.
         // Catches regressions where the synthetic padding path is silently
         // replaced (e.g. a fallback to `fvk.address_at(...)`) or where the
         // slot index passed to `padding_points` skews off-by-one.
-        let (bundle, fvk, ak) =
-            build_bundle_for_inspection(&[13_000_000], &[Scope::External]);
-        let ivk = external_ivk_scalar(&fvk, &ak);
+        let (bundle, fvk, _ak) = build_bundle_for_inspection(&[13_000_000], &[Scope::External]);
+        let ivk = fvk.ivk_scalar(Scope::External);
         let notes = bundle.circuit.notes_for_testing();
         for slot_index in 1..5 {
             let (expected_g_d, expected_pk_d) = padding_points(slot_index, ivk);
@@ -929,11 +810,9 @@ mod tests {
         // would smuggle a padding point into a real slot (which would silently
         // zero that slot's vote weight in condition 10's `v * (root - anchor)`
         // gate path because padding always has `v = 0`).
-        let (bundle, fvk, ak) = build_bundle_for_inspection(
-            &[2_500_000; 5],
-            &[Scope::External; 5],
-        );
-        let ivk = external_ivk_scalar(&fvk, &ak);
+        let (bundle, fvk, _ak) =
+            build_bundle_for_inspection(&[2_500_000; 5], &[Scope::External; 5]);
+        let ivk = fvk.ivk_scalar(Scope::External);
         let padding_g_ds: Vec<_> = (0..5).map(|i| padding_points(i, ivk).0).collect();
         let notes = bundle.circuit.notes_for_testing();
         for slot_index in 0..5 {
@@ -948,8 +827,7 @@ mod tests {
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
-        let ak: SpendValidatingKey = fvk.clone().into();
-        let ivk = external_ivk_scalar(&fvk, &ak);
+        let ivk = fvk.ivk_scalar(Scope::External);
 
         for slot_index in 1..5 {
             let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk);
@@ -997,19 +875,13 @@ mod tests {
         );
     }
 
-    // ---- Orchard drift tests ----
+    // ---- Low-level Orchard API checks ----
     //
-    // `note_commitment_point`, `derive_note_nullifier`, and `external_ivk_scalar`
-    // mirror internal Orchard logic bit-for-bit because Orchard does not expose
-    // the corresponding low-level helpers publicly. If Orchard ever changes the
-    // bit-encoding, domain personalization, scope handling, or any other input
-    // to these primitives, the mirrored helpers in this module will silently
-    // desync from in-circuit `NoteCommit` / `DeriveNullifier` / `CommitIvk`
-    // (which still consume Orchard's gadgets via `note_commit`, `derive_nullifier`,
-    // and `prove_address_ownership`). These tests use real Orchard `Note` /
-    // `FullViewingKey` instances as the source of truth and fail loudly on drift.
+    // The builder calls these APIs directly for synthetic padding notes. These
+    // tests use ordinary Orchard `Note` / `FullViewingKey` instances as ground
+    // truth so the POC still catches accidental API or call-site drift.
 
-    /// Builds a real Orchard `Note` for use as ground truth in drift tests.
+    /// Builds a real Orchard `Note` for exercising the low-level Orchard APIs.
     fn fixture_real_note(
         scope: Scope,
         rng: &mut impl RngCore,
@@ -1030,10 +902,8 @@ mod tests {
 
     #[test]
     fn test_note_commitment_point_matches_orchard() {
-        // Locks `note_commitment_point` to Orchard's `NoteCommitment::derive`.
-        // The builder uses this helper for padding slots (where g_d/pk_d are
-        // synthetic), so any drift in the underlying bit encoding would yield
-        // padding commitments that the in-circuit NoteCommit (cond 9) rejects.
+        // The builder uses `NoteCommitment::derive` directly for synthetic
+        // padding slots, so check it also matches ordinary Orchard notes.
         let mut rng = OsRng;
         for scope in [Scope::External, Scope::Internal] {
             let (_fvk, _ak, note) = fixture_real_note(scope, &mut rng);
@@ -1042,60 +912,55 @@ mod tests {
             let psi = note.rseed().psi(&rho);
             let rcm = note.rseed().rcm(&rho);
 
-            let mirrored = note_commitment_point(
-                *recipient.g_d(),
-                *recipient.pk_d().inner(),
+            let derived = NoteCommitment::derive(
+                recipient.g_d().to_affine().to_bytes(),
+                recipient.pk_d().inner().to_affine().to_bytes(),
                 note.value(),
                 rho.into_inner(),
                 psi,
-                rcm.inner(),
-            );
+                rcm,
+            )
+            .expect("fixture note commitment must not be bottom")
+            .inner();
             let orchard = note.commitment().inner();
 
             assert_eq!(
-                mirrored, orchard,
-                "note_commitment_point drifted from Orchard NoteCommitment::derive ({scope:?})"
+                derived, orchard,
+                "NoteCommitment::derive disagrees with ordinary Orchard note ({scope:?})"
             );
         }
     }
 
     #[test]
     fn test_derive_note_nullifier_matches_orchard() {
-        // Locks `derive_note_nullifier` to Orchard's `Nullifier::derive`. The
-        // builder uses this for padding slots; drift would produce padding
-        // nullifiers that disagree with in-circuit `DeriveNullifier` (cond 12)
-        // and break the IMT non-membership / gov-null derivation (conds 13, 14).
+        // The builder uses `Nullifier::derive` directly for synthetic padding
+        // slots, so check it also matches ordinary Orchard notes.
         let mut rng = OsRng;
         for scope in [Scope::External, Scope::Internal] {
             let (fvk, _ak, note) = fixture_real_note(scope, &mut rng);
-            let nk = fvk.nk().inner();
+            let nk = fvk.nk();
             let rho = note.rho();
             let psi = note.rseed().psi(&rho);
-            let cm = note.commitment().inner();
+            let cm = note.commitment();
 
-            let mirrored = derive_note_nullifier(nk, rho.into_inner(), psi, cm);
+            let derived = Nullifier::derive(nk, rho.into_inner(), psi, cm).inner();
             let orchard = note.nullifier(&fvk).inner();
 
             assert_eq!(
-                mirrored, orchard,
-                "derive_note_nullifier drifted from Orchard Nullifier::derive ({scope:?})"
+                derived, orchard,
+                "Nullifier::derive disagrees with ordinary Orchard note ({scope:?})"
             );
         }
     }
 
     #[test]
-    fn test_external_ivk_scalar_matches_orchard_address_derivation() {
-        // Orchard does not expose `IncomingViewingKey`'s inner scalar, so we
-        // check the IVK indirectly via the diversified-address invariant
-        // `pk_d = [ivk_external] * g_d` on a real external-scope Orchard
-        // address. If `external_ivk_scalar` drifts (wrong personalization,
-        // wrong bit-take, wrong rivk scope, missing base_to_scalar), this
-        // equation will fail and so will in-circuit condition 11 for padding.
+    fn test_fvk_ivk_scalar_matches_orchard_address_derivation() {
+        // Check the exposed IVK scalar via the diversified-address invariant
+        // `pk_d = [ivk_external] * g_d` on real external-scope Orchard addresses.
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
-        let ak: SpendValidatingKey = fvk.clone().into();
-        let ivk = external_ivk_scalar(&fvk, &ak);
+        let ivk = fvk.ivk_scalar(Scope::External);
 
         // Sweep several diversifier indices to catch accidental fixed-index
         // shortcuts in the derivation.
@@ -1104,7 +969,7 @@ mod tests {
             assert_eq!(
                 *addr.g_d() * ivk,
                 *addr.pk_d().inner(),
-                "external_ivk_scalar drifted: [ivk] * g_d != pk_d at diversifier index {idx}"
+                "FullViewingKey::ivk_scalar drifted: [ivk] * g_d != pk_d at diversifier index {idx}"
             );
         }
 
@@ -1115,7 +980,7 @@ mod tests {
         assert_ne!(
             *internal_addr.g_d() * ivk,
             *internal_addr.pk_d().inner(),
-            "external_ivk_scalar incorrectly validates an internal-scope address"
+            "FullViewingKey::ivk_scalar incorrectly validates an internal-scope address"
         );
     }
 
@@ -1124,10 +989,9 @@ mod tests {
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
-        let ak: SpendValidatingKey = fvk.clone().into();
-        let nk = fvk.nk().inner();
+        let nk = fvk.nk();
         let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
-        let ivk = external_ivk_scalar(&fvk, &ak);
+        let ivk = fvk.ivk_scalar(Scope::External);
         let imt_proof = test_imt_proof();
         let imt = RecordingImtProvider::returning(imt_proof.clone());
 
@@ -1147,19 +1011,22 @@ mod tests {
         assert_known(
             &generated_padding_values,
             |(((rho_inner, psi), rcm), cm_witness)| {
-                let cm = note_commitment_point(
-                    *g_d_pad,
-                    *pk_d_pad,
+                let cm = NoteCommitment::derive(
+                    g_d_pad.to_affine().to_bytes(),
+                    pk_d_pad.to_affine().to_bytes(),
                     NoteValue::ZERO,
                     *rho_inner,
                     *psi,
-                    rcm.inner(),
-                );
-                let real_nf = derive_note_nullifier(nk, *rho_inner, *psi, cm);
+                    rcm.clone(),
+                )
+                .expect("padding note commitment must not be bottom");
+                let cm_point = cm.inner();
+                let cmx = ExtractedNoteCommitment::from(cm.clone()).inner();
+                let real_nf = Nullifier::derive(nk, *rho_inner, *psi, cm).inner();
 
-                *cm_witness == cm
-                    && padding.cmx == point_x(&cm)
-                    && padding.gov_null == gov_null_hash(nk, dom, real_nf)
+                *cm_witness == cm_point
+                    && padding.cmx == cmx
+                    && padding.gov_null == gov_null_hash(nk.inner(), dom, real_nf)
                     && imt.requested_nfs.borrow().as_slice() == [real_nf]
             },
         );
@@ -1183,10 +1050,9 @@ mod tests {
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
-        let ak: SpendValidatingKey = fvk.clone().into();
-        let nk = fvk.nk().inner();
+        let nk = fvk.nk();
         let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
-        let ivk = external_ivk_scalar(&fvk, &ak);
+        let ivk = fvk.ivk_scalar(Scope::External);
         let imt_proof = test_imt_proof();
         let imt = RecordingImtProvider::returning(imt_proof.clone());
 
@@ -1220,15 +1086,14 @@ mod tests {
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
-        let ak: SpendValidatingKey = fvk.clone().into();
         let imt = RecordingImtProvider::failing(ImtError("fixture failure".to_string()));
 
         let result = build_padding_slot(
             2,
             0,
-            fvk.nk().inner(),
+            fvk.nk(),
             derive_nullifier_domain(pallas::Base::random(&mut rng)),
-            external_ivk_scalar(&fvk, &ak),
+            fvk.ivk_scalar(Scope::External),
             &imt,
             &mut rng,
             None,
@@ -1248,7 +1113,6 @@ mod tests {
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
-        let ak: SpendValidatingKey = fvk.clone().into();
         let imt = RecordingImtProvider::returning(test_imt_proof());
         let precomputed = PrecomputedRandomness {
             padded_notes: vec![],
@@ -1259,9 +1123,9 @@ mod tests {
         let _ = build_padding_slot(
             1,
             0,
-            fvk.nk().inner(),
+            fvk.nk(),
             derive_nullifier_domain(pallas::Base::random(&mut rng)),
-            external_ivk_scalar(&fvk, &ak),
+            fvk.ivk_scalar(Scope::External),
             &imt,
             &mut rng,
             Some(&precomputed),
