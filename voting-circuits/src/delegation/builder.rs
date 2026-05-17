@@ -40,7 +40,6 @@ use crate::protocol_hash::poseidon_hash_2;
 // Domain-separated from Orchard's `KEY_DIVERSIFICATION_PERSONALIZATION`
 // (`"z.cash:Orchard-gd"`) so that `g_d_pad = hash_to_curve(PADDING_PERSONALIZATION)(...)`
 // cannot collide with any real Orchard diversified base `g_d = DiversifyHash(d)`.
-// Locked against the Orchard constant by `test_padding_personalization_is_domain_separated_from_orchard`.
 pub(crate) const PADDING_PERSONALIZATION: &str = "shielded-vote/padding-v1";
 
 /// Rho and rseed for a single padded note, captured during Phase 1 (PCZT construction).
@@ -58,7 +57,6 @@ pub struct PaddedNoteData {
 #[derive(Clone, Debug)]
 pub struct PrecomputedRandomness {
     /// Rho + rseed for each padded note (0–4 entries).
-    /// Padding note addresses are synthesized during proof building.
     pub padded_notes: Vec<PaddedNoteData>,
     /// Rseed for the signed (keystone) note.
     pub rseed_signed: [u8; 32],
