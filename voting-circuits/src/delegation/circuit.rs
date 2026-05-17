@@ -1826,6 +1826,7 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::delegation::builder::{build_padding_slot, external_ivk_scalar};
     use crate::delegation::imt::{
         derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider, SpacedLeafImtProvider,
     };
@@ -1945,38 +1946,32 @@ mod tests {
 
         let slot_0 = make_note_slot(&real_note, &auth_path_0, 0u32, &imt_0, false);
 
-        // Padded notes (slots 1-4): zero-value notes with addresses from the real ivk.
+        // Padded notes (slots 1-4): synthetic IVK-bound padding points produced by
+        // the shared `build_padding_slot` helper. Using the same helper the
+        // production builder uses keeps this test from drifting from the live
+        // padding-derivation path (ZCA-450).
         let mut note_slots = vec![slot_0];
         let mut cmx_values = vec![cmx_real];
         let mut gov_nulls = vec![gov_null_0];
 
-        let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
+        let ivk = external_ivk_scalar(&fvk, &ak);
 
-        for i in 1..5u32 {
-            // Use fvk.address_at() so pk_d = [ivk] * g_d with the REAL ivk.
-            let pad_addr = fvk.address_at(100 + i, Scope::External);
-            let (_, _, dummy) = Note::dummy(&mut rng, None);
-            let pad_note = Note::new(
-                pad_addr,
-                NoteValue::ZERO,
-                Rho::from_nf_old(dummy.nullifier(&fvk)),
+        for i in 1..5usize {
+            let padding = build_padding_slot(
+                i,
+                i - 1,
+                nk_val,
+                dom,
+                ivk,
+                &imt_provider,
                 &mut rng,
-            );
+                None,
+            )
+            .expect("test IMT provider must return a non-membership proof");
 
-            let pad_cmx = ExtractedNoteCommitment::from(pad_note.commitment()).inner();
-            let pad_nf = pad_note.nullifier(&fvk);
-            let pad_imt = imt_provider.non_membership_proof(pad_nf.inner()).unwrap();
-            let pad_gov_null = gov_null_hash(nk_val, dom, pad_nf.inner());
-
-            note_slots.push(make_note_slot(
-                &pad_note,
-                &dummy_auth_path,
-                0u32,
-                &pad_imt,
-                false,
-            ));
-            cmx_values.push(pad_cmx);
-            gov_nulls.push(pad_gov_null);
+            note_slots.push(padding.witness);
+            cmx_values.push(padding.cmx);
+            gov_nulls.push(padding.gov_null);
         }
 
         let notes: [NoteSlotWitness; 5] = note_slots.try_into().unwrap();

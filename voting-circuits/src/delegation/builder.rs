@@ -33,6 +33,14 @@ use super::{
 };
 use crate::circuit::elgamal::base_to_scalar;
 
+// Hash-to-curve personalization for synthetic padding `g_d_pad` points.
+//
+// Domain-separated from Orchard's `KEY_DIVERSIFICATION_PERSONALIZATION`
+// (`"z.cash:Orchard-gd"`) so that `g_d_pad = hash_to_curve(PADDING_PERSONALIZATION)(...)`
+// cannot collide with any real Orchard diversified base `g_d = DiversifyHash(d)`.
+// Locked against the Orchard constant by `test_padding_personalization_is_domain_separated_from_orchard`.
+pub(crate) const PADDING_PERSONALIZATION: &str = "shielded-vote/padding-v1";
+
 /// Rho and rseed for a single padded note, captured during Phase 1 (PCZT construction).
 #[derive(Clone, Debug)]
 pub struct PaddedNoteData {
@@ -116,7 +124,10 @@ fn u64_bits(value: u64) -> impl Iterator<Item = bool> {
 // so the external rivk is the correct scope.
 // Note: Orchard's `FullViewingKey::to_ivk` does not expose the inner Ivk scalar;
 // if it did (e.g. `fvk.ivk_scalar(scope)`), we could drop this re-implementation.
-fn external_ivk_scalar(fvk: &FullViewingKey, ak: &SpendValidatingKey) -> pallas::Scalar {
+pub(crate) fn external_ivk_scalar(
+    fvk: &FullViewingKey,
+    ak: &SpendValidatingKey,
+) -> pallas::Scalar {
     let ak_point: pallas::Point = ak.into();
     let ak_x = point_x(&ak_point);
     let rivk = fvk.rivk(Scope::External).inner();
@@ -163,13 +174,12 @@ fn assert_non_identity(point: pallas::Point) -> NonIdentityPallasPoint {
 // since padding pins `is_internal = false`). Both points are wrapped as
 // `NonIdentityPallasPoint` via `assert_non_identity` so the invariant fails at
 // the builder rather than at proof time.
-fn padding_points(
+pub(crate) fn padding_points(
     slot_index: usize,
     ivk: pallas::Scalar,
 ) -> (NonIdentityPallasPoint, NonIdentityPallasPoint) {
     let slot_index = u32::try_from(slot_index).expect("padding slot index fits in u32");
-    let g_d_pad =
-        pallas::Point::hash_to_curve("shielded-vote/padding-v1")(&slot_index.to_le_bytes());
+    let g_d_pad = pallas::Point::hash_to_curve(PADDING_PERSONALIZATION)(&slot_index.to_le_bytes());
     let pk_d_pad = g_d_pad * ivk;
     (assert_non_identity(g_d_pad), assert_non_identity(pk_d_pad))
 }
@@ -248,16 +258,18 @@ fn derive_note_nullifier(
     point_x(&(k * scalar + cm))
 }
 
-// A single padding note slot in the delegation.
-struct PaddingSlot {
-    witness: NoteSlotWitness,
-    cmx: pallas::Base,
-    v_raw: u64,
-    gov_null: pallas::Base,
+// A single padding note slot in the delegation. Fields are `pub(crate)` so
+// `delegation::circuit` tests can drive the same source-of-truth padding
+// construction the production builder uses.
+pub(crate) struct PaddingSlot {
+    pub(crate) witness: NoteSlotWitness,
+    pub(crate) cmx: pallas::Base,
+    pub(crate) v_raw: u64,
+    pub(crate) gov_null: pallas::Base,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_padding_slot(
+pub(crate) fn build_padding_slot(
     slot_index: usize,
     pad_idx: usize,
     nk: pallas::Base,
@@ -956,6 +968,33 @@ mod tests {
                 real_orchard_addr.pk_d().to_bytes()
             );
         }
+    }
+
+    /// Locks the structural property that makes ZCA-450's fix correct: the
+    /// hash-to-curve personalization for padding `g_d_pad` is **different**
+    /// from Orchard's `KEY_DIVERSIFICATION_PERSONALIZATION`. Domain separation
+    /// of `hash_to_curve` ensures the two personalizations produce disjoint
+    /// images with overwhelming probability, so no real Orchard sender can
+    /// derive a `g_d = DiversifyHash(d)` that collides with any padding
+    /// `g_d_pad`. If either constant is ever renamed (here or upstream) so
+    /// they coincide, this test fails loudly before a release ships a
+    /// padding scheme that re-enters the real-Orchard address universe.
+    ///
+    /// Exhaustive testing of the inverse property — that no 88-bit `d`
+    /// satisfies `DiversifyHash(d) == g_d_pad_i` — is infeasible (2^88
+    /// preimage search), so we lock the construction-time invariant
+    /// (different personalization → disjoint hash-to-curve domains)
+    /// instead of the runtime invariant (no collision exists).
+    #[test]
+    fn test_padding_personalization_is_domain_separated_from_orchard() {
+        use orchard::constants::KEY_DIVERSIFICATION_PERSONALIZATION;
+
+        assert_ne!(
+            PADDING_PERSONALIZATION, KEY_DIVERSIFICATION_PERSONALIZATION,
+            "padding personalization must be domain-separated from Orchard's \
+             DiversifyHash personalization; otherwise synthetic padding `g_d_pad` \
+             can collide with real diversified bases and ZCA-450's fix regresses"
+        );
     }
 
     // ---- Orchard drift tests ----
