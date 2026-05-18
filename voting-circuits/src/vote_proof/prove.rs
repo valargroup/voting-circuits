@@ -8,11 +8,13 @@ use std::vec::Vec;
 
 use halo2_proofs::{
     pasta::EqAffine,
-    plonk::{self, create_proof, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
+    plonk::{self, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
     poly::commitment::Params,
-    transcript::{Blake2bRead, Blake2bWrite, Challenge255},
+    transcript::{Blake2bRead, Challenge255},
 };
-use rand::rngs::OsRng;
+
+use crate::prove_error::create_proof_bytes;
+use crate::ProveError;
 
 use super::circuit::{Circuit, Instance, K};
 
@@ -83,28 +85,18 @@ pub fn vote_proof_proving_key(
 
 /// Create a real Halo2 proof for the vote proof circuit.
 ///
-/// Returns the serialized proof bytes. The caller must have constructed
-/// a valid `Circuit` (with all witnesses populated) and a matching
-/// `Instance` ([`Instance::NUM_PUBLIC_INPUTS`] public inputs).
+/// Returns the serialized proof bytes. Returns an error if the caller
+/// provides a circuit without all witnesses populated or an instance
+/// that Halo2 cannot prove against.
 ///
 /// **Expensive**: K=13 proof generation takes ~30-60 seconds in release mode.
 /// Params and keys are cached so only the first call pays keygen.
-pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
+pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8>, ProveError> {
     let (params, pk, _vk) = vote_proof_cached_keys();
 
     let public_inputs = instance.to_halo2_instance();
 
-    let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<_>>::init(vec![]);
-    create_proof(
-        params,
-        pk,
-        &[circuit],
-        &[&[&public_inputs]],
-        OsRng,
-        &mut transcript,
-    )
-    .expect("vote proof generation should not fail");
-    transcript.finalize()
+    create_proof_bytes(params, pk, circuit, &public_inputs)
 }
 
 // ================================================================
@@ -169,6 +161,8 @@ pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ProveError;
+    use halo2_proofs::plonk;
     use pasta_curves::group::ff::PrimeField;
     use pasta_curves::pallas;
 
@@ -180,9 +174,8 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn public_input_count_matches_instance_layout() {
-        let instance = Instance::from_parts(
+    fn minimal_instance() -> Instance {
+        Instance::from_parts(
             pallas::Base::from(1),
             pallas::Base::from(2),
             pallas::Base::from(3),
@@ -194,7 +187,26 @@ mod tests {
             pallas::Base::from(9),
             pallas::Base::from(10),
             pallas::Base::from(11),
-        );
+        )
+    }
+
+    #[test]
+    fn create_vote_proof_signature_returns_result() {
+        let _: fn(Circuit, &Instance) -> Result<Vec<u8>, ProveError> = create_vote_proof;
+    }
+
+    #[test]
+    #[ignore = "long-running K=13 proof keygen; run when touching vote proof creation"]
+    fn create_vote_proof_returns_err_for_missing_witnesses() {
+        let instance = minimal_instance();
+        let err = create_vote_proof(Circuit::default(), &instance).unwrap_err();
+
+        assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
+    }
+
+    #[test]
+    fn public_input_count_matches_instance_layout() {
+        let instance = minimal_instance();
 
         assert_eq!(
             instance.to_halo2_instance().len(),

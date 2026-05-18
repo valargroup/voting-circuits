@@ -8,11 +8,13 @@ use std::vec::Vec;
 
 use halo2_proofs::{
     pasta::EqAffine,
-    plonk::{self, create_proof, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
+    plonk::{self, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
     poly::commitment::Params,
-    transcript::{Blake2bRead, Blake2bWrite, Challenge255},
+    transcript::{Blake2bRead, Challenge255},
 };
-use rand::rngs::OsRng;
+
+use crate::prove_error::create_proof_bytes;
+use crate::ProveError;
 
 use super::circuit::{Circuit, Instance, K};
 
@@ -82,28 +84,21 @@ pub fn warm_delegation_keys() {
 
 /// Create a real Halo2 proof for the delegation circuit.
 ///
-/// Returns the serialized proof bytes. The caller must have constructed
-/// a valid `Circuit` (with all witnesses populated) and a matching
-/// `Instance` (14 public inputs).
+/// Returns the serialized proof bytes. Returns an error if the caller
+/// provides a circuit without all witnesses populated or an instance
+/// that Halo2 cannot prove against.
 ///
 /// **Expensive**: K=14 proof generation takes ~30-60 seconds in release mode.
 /// Params and keys are cached so only the first call pays keygen.
-pub fn create_delegation_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
+pub fn create_delegation_proof(
+    circuit: Circuit,
+    instance: &Instance,
+) -> Result<Vec<u8>, ProveError> {
     let (params, pk, _vk) = delegation_cached_keys();
 
     let public_inputs = instance.to_halo2_instance();
 
-    let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<_>>::init(vec![]);
-    create_proof(
-        params,
-        pk,
-        &[circuit],
-        &[&[&public_inputs]],
-        OsRng,
-        &mut transcript,
-    )
-    .expect("delegation proof generation should not fail");
-    transcript.finalize()
+    create_proof_bytes(params, pk, circuit, &public_inputs)
 }
 
 // ================================================================
@@ -164,16 +159,53 @@ mod prove_tests {
     use super::*;
     use crate::delegation::builder::{build_delegation_bundle, RealNoteInput};
     use crate::delegation::imt::{ImtProvider, SpacedLeafImtProvider};
+    use crate::ProveError;
     use ff::Field;
+    use halo2_proofs::plonk;
     use incrementalmerkletree::{Hashable, Level};
     use orchard::{
-        keys::{FullViewingKey, Scope, SpendingKey},
-        note::{commitment::ExtractedNoteCommitment, Note, Rho},
+        keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
+        note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, Rho},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
     use pasta_curves::pallas;
     use rand::rngs::OsRng;
+
+    fn minimal_instance() -> Instance {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.into();
+        let rk = ak.randomize(&pallas::Scalar::from(1));
+
+        Instance::from_parts(
+            Nullifier::from_inner(pallas::Base::from(1)),
+            rk,
+            pallas::Base::from(2),
+            pallas::Base::from(3),
+            pallas::Base::from(4),
+            pallas::Base::from(5),
+            pallas::Base::from(6),
+            [pallas::Base::from(7); 5],
+            pallas::Base::from(8),
+        )
+        .expect("test rk must be non-identity")
+    }
+
+    #[test]
+    fn create_delegation_proof_signature_returns_result() {
+        let _: fn(Circuit, &Instance) -> Result<Vec<u8>, ProveError> = create_delegation_proof;
+    }
+
+    #[test]
+    #[ignore = "long-running K=14 proof keygen; run when touching delegation proof creation"]
+    fn create_delegation_proof_returns_err_for_missing_witnesses() {
+        let instance = minimal_instance();
+        let err = create_delegation_proof(Circuit::default(), &instance).unwrap_err();
+
+        assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
+    }
 
     #[test]
     #[ignore = "long-running real proof roundtrip; run with `cargo test -- --ignored`"]
@@ -241,7 +273,8 @@ mod prove_tests {
         )
         .unwrap();
 
-        let proof = create_delegation_proof(bundle.circuit, &bundle.instance);
+        let proof = create_delegation_proof(bundle.circuit, &bundle.instance)
+            .expect("delegation proof creation should succeed");
         verify_delegation_proof(&proof, &bundle.instance).expect("real proof roundtrip failed");
     }
 }

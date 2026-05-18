@@ -7,9 +7,11 @@
 - Declared Rust 1.86 as the minimum supported Rust version.
 - Added `vote_proof_cached_keys()` so callers can warm and reuse the vote proof
   params, proving key, and verifying key together.
+- Added `ProveError` for typed Halo2 proof creation failures.
 
 ### Changed
 
+- `create_delegation_proof`, `create_vote_proof`, and `create_share_reveal_proof` now return `Result<Vec<u8>, ProveError>` instead of panicking when Halo2 proof creation fails.
 - Share-reveal APIs are now always available; the `share-reveal` Cargo feature was removed.
 
 ### Removed
@@ -42,6 +44,9 @@
 - Replace `delegation::builder::*` and `delegation::imt::*` imports with named `delegation::*` root exports.
 - Replace `vote_proof::builder::*` and `vote_proof::circuit::*` imports with named `vote_proof::*` root exports.
 - Replace `share_reveal::builder::*` imports with named `share_reveal::*` root exports.
+- Remove `features = ["share-reveal"]` from `voting-circuits` dependency entries and refresh downstream lockfiles.
+- Handle or propagate errors from all `create_*_proof` calls.
+- Account for the new `VoteProofBuildError::Prove` variant in exhaustive matches.
 - Shared gadget helpers such as `vote_proof::elgamal_encrypt` are no longer
   public API. `vote_proof::spend_auth_g_affine` remains public for downstream
   encryption code.
