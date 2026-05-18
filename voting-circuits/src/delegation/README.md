@@ -260,7 +260,7 @@ Where:
 - **psi_new**: pseudorandom field element derived from `rseed_new` and `rho_new`.
 - **cmx_new**: the public input. `ExtractP` extracts the x-coordinate of the commitment point.
 
-**Chain from condition 2**: The `nf_signed` cell computed in condition 2 is reused directly as `rho_new`. Since that cell is also constrained to the `NF_SIGNED` public input, the chain is: `nf_signed` (public) = `DeriveNullifier(nk, rho_signed, psi_signed, cm_signed)` = `rho_new` (input to output NoteCommit).
+**Chain from condition 2**: The `nf_signed` cell computed in condition 2 is reused directly as `rho_new`. Since that cell is also constrained to the `NF_SIGNED_PUBLIC_OFFSET` public input, the chain is: `nf_signed` (public) = `DeriveNullifier(nk, rho_signed, psi_signed, cm_signed)` = `rho_new` (input to output NoteCommit).
 
 **Constructions:** `SinsemillaChip` (config 2), `EccChip`, `NoteCommitChip` (new).
 
@@ -421,7 +421,7 @@ Single Poseidon hash (`ConstantLength<4>`, 2 permutations at rate 2):
 - **dom** — the nullifier domain (public input at offset 13), constrained in-circuit to `Poseidon("governance authorization", vote_round_id)`. Scopes the alternate nullifier to this application instance and voting round.
 - **real_nf** — the note's true nullifier from condition 12.
 
-The result is constrained to the public input at offset `GOV_NULL_1..5`.
+The result is constrained to the public input offsets in `GOV_NULL_PUBLIC_OFFSETS`.
 
 **Constructions:** `PoseidonChip`.
 
