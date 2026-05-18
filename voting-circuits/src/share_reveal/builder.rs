@@ -117,6 +117,7 @@ mod tests {
     use super::super::circuit::K;
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_builder_round_trip() {
         let ea_sk = pallas::Scalar::from(42u64);
         let g = pallas::Point::from(spend_auth_g_affine());

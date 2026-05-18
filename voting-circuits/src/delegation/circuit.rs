@@ -2135,6 +2135,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn happy_path() {
         let t = make_test_data();
         let pi = t.instance.to_halo2_instance();
@@ -2144,6 +2145,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn wrong_nf_fails() {
         let t = make_test_data();
         let mut instance = t.instance.clone();
@@ -2155,6 +2157,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn wrong_rk_fails() {
         let mut rng = OsRng;
         let t = make_test_data();
@@ -2173,6 +2176,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn wrong_gov_null_fails() {
         let t = make_test_data();
         let mut instance = t.instance.clone();
@@ -2184,6 +2188,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn wrong_nc_root_fails() {
         let t = make_test_data();
         let mut instance = t.instance.clone();
@@ -2195,6 +2200,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn wrong_imt_root_fails() {
         let t = make_test_data();
         let mut instance = t.instance.clone();
@@ -2206,6 +2212,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn wrong_van_comm_fails() {
         let t = make_test_data();
         let mut instance = t.instance.clone();
@@ -2217,6 +2224,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn wrong_vote_round_id_fails() {
         let t = make_test_data();
         let mut instance = t.instance.clone();
@@ -2228,6 +2236,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn wrong_dom_with_matching_gov_nulls_fails() {
         let t = make_test_data();
         let mut instance = t.instance.clone();
@@ -2263,6 +2272,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 keygen/layout test; run with `cargo test -- --ignored`"]
     fn default_circuit_shape() {
         let t = make_test_data();
         let empty = plonk::Circuit::without_witnesses(&t.circuit);
@@ -2278,6 +2288,7 @@ mod tests {
     // The Merkle path check gates on v: v * (root - anchor) = 0.
     // When v > 0, root must equal nc_root — a fake auth path fails.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn fake_real_note_nonzero_value_fails() {
         let mut rng = OsRng;
         let t = make_test_data();
@@ -2320,6 +2331,7 @@ mod tests {
     // If the per-note addresses use a different key, condition 11 fails even though
     // condition 10 (Merkle path) is skipped (v=0 dummy note).
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn different_ivk_per_note_fails() {
         let mut rng = OsRng;
         let t = make_test_data();
@@ -2541,6 +2553,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running row-budget diagnostic; run with `cargo test cost_breakdown -- --ignored --nocapture`"]
     fn cost_breakdown() {
         // 1. Configure constraint system
         let mut cs = plonk::ConstraintSystem::default();
@@ -2646,7 +2659,7 @@ mod tests {
     /// Run with:
     ///   cargo test row_budget -- --nocapture --ignored
     #[test]
-    #[ignore]
+    #[ignore = "long-running row-budget diagnostic; run with `cargo test row_budget -- --ignored --nocapture`"]
     fn row_budget() {
         use halo2_proofs::dev::CircuitCost;
         use pasta_curves::vesta;

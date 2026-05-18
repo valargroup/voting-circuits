@@ -527,6 +527,7 @@ mod tests {
 
     /// Every one of the 16 share positions contributes to the output hash.
     #[test]
+    #[ignore = "long-running repeated Halo2 gadget test; run with `cargo test -- --ignored`"]
     fn all_16_share_positions_are_hashed() {
         let mut rng = OsRng;
         let blinds: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));

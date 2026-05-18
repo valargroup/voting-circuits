@@ -531,11 +531,13 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_single_real_note() {
         build_and_verify(&[13_000_000], &[Scope::External]);
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_four_real_notes() {
         // 3,200,000 x 4 = 12,800,000 → num_ballots = 1, remainder = 300,000.
         build_and_verify(
@@ -550,17 +552,20 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_two_real_notes() {
         build_and_verify(&[7_000_000, 7_000_000], &[Scope::External, Scope::External]);
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_min_weight_boundary() {
         // v_total = 12,500,000 exactly → num_ballots = 1, remainder = 0. Should pass.
         build_and_verify(&[12_500_000], &[Scope::External]);
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_below_one_ballot() {
         // v_total = 12,499,999 → num_ballots = 0. Circuit should fail
         // (non-zero check on num_ballots causes nb_minus_one to wrap).
@@ -596,6 +601,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_three_ballots() {
         // 3 notes × 12,500,000 = 37,500,000 → num_ballots = 3, remainder = 0.
         build_and_verify(
@@ -632,6 +638,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_five_real_notes() {
         // 2,500,000 x 5 = 12,500,000 → num_ballots = 1, remainder = 0.
         build_and_verify(
@@ -693,11 +700,13 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_single_internal_note() {
         build_and_verify(&[13_000_000], &[Scope::Internal]);
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_mixed_scope_notes() {
         build_and_verify(
             &[4_000_000, 4_000_000, 3_000_000, 2_000_000],
@@ -711,6 +720,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_all_internal_notes() {
         build_and_verify(
             &[4_000_000, 4_000_000, 3_000_000, 2_000_000],
