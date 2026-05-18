@@ -291,16 +291,20 @@ fn build_padding_slot(
 
     let (rho, rseed) = if let Some(pre) = precomputed {
         // Reuse randomness so the prover commits to the same values.
-        assert!(
-            pad_idx < pre.padded_notes.len(),
-            "precomputed.padded_notes has {} entries but need index {}",
-            pre.padded_notes.len(),
-            pad_idx
-        );
+        if pad_idx >= pre.padded_notes.len() {
+            return Err(DelegationBuildError::MissingPrecomputedPaddedNote {
+                index: pad_idx,
+                actual: pre.padded_notes.len(),
+            });
+        }
         let pd = &pre.padded_notes[pad_idx];
-        let rho = Rho::from_bytes(&pd.rho).expect("precomputed rho must be valid");
-        let rseed =
-            RandomSeed::from_bytes(pd.rseed, &rho).expect("precomputed rseed must be valid");
+        let rho = Rho::from_bytes(&pd.rho)
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedRho { index: pad_idx })?;
+        let location = PrecomputedRandomnessLocation::PaddedNote(pad_idx);
+        let rseed = RandomSeed::from_bytes(pd.rseed, &rho)
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
         (rho, rseed)
     } else {
         let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
@@ -1419,7 +1423,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "precomputed.padded_notes has 0 entries but need index 0")]
     fn test_build_padding_slot_rejects_missing_precomputed_padding_entry() {
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
@@ -1432,7 +1435,7 @@ mod tests {
             rseed_output: [0; 32],
         };
 
-        let _ = build_padding_slot(
+        let result = build_padding_slot(
             1,
             0,
             fvk.nk().inner(),
@@ -1442,6 +1445,14 @@ mod tests {
             &mut rng,
             Some(&precomputed),
         );
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::MissingPrecomputedPaddedNote {
+                index: 0,
+                actual: 0
+            })
+        ));
     }
 
     #[test]

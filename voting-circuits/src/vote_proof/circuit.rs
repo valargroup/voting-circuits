@@ -166,16 +166,6 @@ const VOTE_COMMITMENT: usize = 4;
 /// Public input offset for the vote commitment tree root.
 const VOTE_COMM_TREE_ROOT: usize = 5;
 /// Public input offset for the tree anchor height.
-const VOTE_COMM_TREE_ANCHOR_HEIGHT: usize = 6;
-/// Public input offset for the proposal identifier.
-const PROPOSAL_ID: usize = 7;
-/// Public input offset for the voting round identifier.
-const VOTING_ROUND_ID: usize = 8;
-/// Public input offset for the election authority public key x-coordinate.
-const EA_PK_X: usize = 9;
-/// Public input offset for the election authority public key y-coordinate.
-const EA_PK_Y: usize = 10;
-
 // Suppress dead-code warnings for public input offsets that are
 // defined but not yet used by any condition's constraint logic.
 // VOTE_COMM_TREE_ANCHOR_HEIGHT is validated out-of-circuit by the chain's
@@ -185,7 +175,16 @@ const EA_PK_Y: usize = 10;
 // passed as the VoteCommTreeRoot public input to the ZKP verifier, which the
 // circuit constrains via constrain_instance. This binds the anchor height to
 // the in-circuit tree root, mirroring Zcash's out-of-circuit anchor design.
-const _: usize = VOTE_COMM_TREE_ANCHOR_HEIGHT;
+#[allow(dead_code)]
+const VOTE_COMM_TREE_ANCHOR_HEIGHT: usize = 6;
+/// Public input offset for the proposal identifier.
+const PROPOSAL_ID: usize = 7;
+/// Public input offset for the voting round identifier.
+const VOTING_ROUND_ID: usize = 8;
+/// Public input offset for the election authority public key x-coordinate.
+const EA_PK_X: usize = 9;
+/// Public input offset for the election authority public key y-coordinate.
+const EA_PK_Y: usize = 10;
 
 // ================================================================
 // Out-of-circuit helpers
