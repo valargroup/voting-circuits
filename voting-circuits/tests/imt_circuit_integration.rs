@@ -217,13 +217,29 @@ struct ProductionSentinelImtAdapter {
     levels: Vec<Vec<pallas::Base>>,
 }
 
+fn test_sentinel_list_with_extra(extra_nfs: &[pallas::Base]) -> Vec<pallas::Base> {
+    let mut all_nfs = build_sentinel_list();
+    all_nfs.extend_from_slice(extra_nfs);
+    all_nfs.sort();
+    all_nfs.dedup();
+    // Mirror production `prepare_nullifiers`: preserve the odd-count invariant
+    // after real nullifiers are merged, just before punctured ranges are built.
+    if all_nfs.len() % 2 == 0 {
+        let padding = std::iter::once(2u64)
+            .chain(1u64..)
+            .map(pallas::Base::from)
+            .find(|candidate| all_nfs.binary_search(candidate).is_err())
+            .expect("small field-element padding candidate should exist");
+        let insert_at = all_nfs.binary_search(&padding).unwrap_err();
+        all_nfs.insert(insert_at, padding);
+    }
+    all_nfs
+}
+
 impl ProductionSentinelImtAdapter {
     /// Uses the production sentinel injection shared with the crate IMT provider.
     fn new(extra_nfs: &[pallas::Base]) -> Self {
-        let mut all_nfs = build_sentinel_list();
-        all_nfs.extend_from_slice(extra_nfs);
-        all_nfs.sort();
-        all_nfs.dedup();
+        let all_nfs = test_sentinel_list_with_extra(extra_nfs);
 
         let ranges = build_punctured_ranges(&all_nfs);
         verify_punctured_range_spans(&ranges).expect("all spans must be ≤ 2^250");
@@ -237,6 +253,13 @@ impl ProductionSentinelImtAdapter {
             levels,
         }
     }
+}
+
+#[test]
+fn production_sentinel_adapter_accepts_odd_extra_nullifier_count() {
+    let imt = ProductionSentinelImtAdapter::new(&[pallas::Base::from(12345u64)]);
+
+    assert!(!imt.ranges.is_empty());
 }
 
 impl ImtProvider for ProductionSentinelImtAdapter {
