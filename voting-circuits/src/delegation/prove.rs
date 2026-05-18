@@ -20,6 +20,12 @@ use super::circuit::{Circuit, Instance, K};
 // Params / key generation
 // ================================================================
 
+static DELEGATION_PK_CACHE: std::sync::OnceLock<(
+    Params<EqAffine>,
+    plonk::ProvingKey<EqAffine>,
+    plonk::VerifyingKey<EqAffine>,
+)> = std::sync::OnceLock::new();
+
 /// Generate the IPA params (SRS) for the delegation circuit.
 /// Deterministic for a given `K`.
 ///
@@ -46,6 +52,30 @@ pub fn delegation_proving_key(
     (pk, vk)
 }
 
+/// Return cached params and proving/verifying keys for the delegation circuit.
+///
+/// Key generation is deterministic and expensive enough to dominate proof and
+/// verification latency if repeated. Compute it once per process and reuse it.
+pub fn delegation_cached_keys() -> &'static (
+    Params<EqAffine>,
+    plonk::ProvingKey<EqAffine>,
+    plonk::VerifyingKey<EqAffine>,
+) {
+    DELEGATION_PK_CACHE.get_or_init(|| {
+        let params = delegation_params();
+        let (pk, vk) = delegation_proving_key(&params);
+        (params, pk, vk)
+    })
+}
+
+/// Warm the process-lifetime delegation params/proving-key cache.
+///
+/// This lets callers pay deterministic keygen before the first user-visible
+/// proof generation or verification path needs the key.
+pub fn warm_delegation_keys() {
+    let _ = delegation_cached_keys();
+}
+
 // ================================================================
 // Prove
 // ================================================================
@@ -57,16 +87,16 @@ pub fn delegation_proving_key(
 /// `Instance` (14 public inputs).
 ///
 /// **Expensive**: K=14 proof generation takes ~30-60 seconds in release mode.
+/// Params and keys are cached so only the first call pays keygen.
 pub fn create_delegation_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
-    let params = delegation_params();
-    let (pk, _vk) = delegation_proving_key(&params);
+    let (params, pk, _vk) = delegation_cached_keys();
 
     let public_inputs = instance.to_halo2_instance();
 
     let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<_>>::init(vec![]);
     create_proof(
-        &params,
-        &pk,
+        params,
+        pk,
         &[circuit],
         &[&[&public_inputs]],
         OsRng,
@@ -118,22 +148,15 @@ pub fn create_delegation_proof(circuit: Circuit, instance: &Instance) -> Vec<u8>
 /// - `instance.cmx_new`
 /// - `instance.gov_null[..]`
 pub fn verify_delegation_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
-    let params = delegation_params();
-    let (_pk, vk) = delegation_proving_key(&params);
+    let (params, _pk, vk) = delegation_cached_keys();
 
     let public_inputs = instance.to_halo2_instance();
 
-    let strategy = SingleVerifier::new(&params);
+    let strategy = SingleVerifier::new(params);
     let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);
 
-    verify_proof(
-        &params,
-        &vk,
-        strategy,
-        &[&[&public_inputs]],
-        &mut transcript,
-    )
-    .map_err(|e| format!("delegation verification failed: {:?}", e))
+    verify_proof(params, vk, strategy, &[&[&public_inputs]], &mut transcript)
+        .map_err(|e| format!("delegation verification failed: {:?}", e))
 }
 
 #[cfg(test)]

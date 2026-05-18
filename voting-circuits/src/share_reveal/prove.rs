@@ -69,6 +69,14 @@ pub fn share_reveal_cached_keys() -> &'static (
     })
 }
 
+/// Warm the process-lifetime share reveal params/proving-key cache.
+///
+/// This lets callers pay deterministic keygen before the first user-visible
+/// proof generation or verification path needs the key.
+pub fn warm_share_reveal_keys() {
+    let _ = share_reveal_cached_keys();
+}
+
 // ================================================================
 // Prove
 // ================================================================
