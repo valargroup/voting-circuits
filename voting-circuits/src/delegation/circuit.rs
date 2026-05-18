@@ -26,7 +26,7 @@ use halo2_proofs::{
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
 use std::vec::Vec;
 
-use super::imt::IMT_DEPTH;
+use super::imt::{gov_auth_domain_tag, IMT_DEPTH};
 use super::imt_circuit::{synthesize_imt_non_membership, ImtNonMembershipConfig};
 use crate::circuit::address_ownership::prove_address_ownership;
 use crate::circuit::gadget::assign_constant;
@@ -963,8 +963,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         )?;
 
         // dom: the nullifier domain (ZIP §Nullifier Domains). Used in condition 14
-        // (alternate nullifier derivation). Derived out-of-circuit as
-        // Poseidon("governance authorization", vote_round_id).
+        // (alternate nullifier derivation). It is a public input for API
+        // but the circuit enforces that it is derived from
+        // vote_round_id rather than trusting the public input directly.
         let dom_cell = layouter.assign_region(
             || "copy dom from instance",
             |mut region| {
@@ -976,6 +977,33 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                     0,
                 )
             },
+        )?;
+
+        let gov_auth_tag_cell = assign_constant(
+            layouter.namespace(|| "gov_auth_domain_tag constant"),
+            config.advices[0],
+            gov_auth_domain_tag(),
+        )?;
+        let derived_dom = {
+            let poseidon_hasher = PoseidonHash::<
+                pallas::Base,
+                _,
+                poseidon::P128Pow5T3,
+                ConstantLength<2>,
+                3,
+                2,
+            >::init(
+                config.poseidon_chip(),
+                layouter.namespace(|| "derive dom init"),
+            )?;
+            poseidon_hasher.hash(
+                layouter.namespace(|| "Poseidon(gov_auth_domain_tag, vote_round_id)"),
+                [gov_auth_tag_cell, vote_round_id_cell.clone()],
+            )?
+        };
+        layouter.assign_region(
+            || "dom binding",
+            |mut region| region.constrain_equal(derived_dom.cell(), dom_cell.cell()),
         )?;
 
         // nc_root: the note commitment tree anchor. Each real note's Merkle root
@@ -1871,6 +1899,8 @@ mod tests {
     struct TestData {
         circuit: Circuit,
         instance: Instance,
+        nk: pallas::Base,
+        note_nullifiers: [pallas::Base; 5],
     }
 
     /// Build a valid merged circuit with 1 real note + 4 padded notes.
@@ -1942,6 +1972,7 @@ mod tests {
         let mut note_slots = vec![slot_0];
         let mut cmx_values = vec![cmx_real];
         let mut gov_nulls = vec![gov_null_0];
+        let mut note_nullifiers = vec![real_nf.inner()];
 
         let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
 
@@ -1970,9 +2001,11 @@ mod tests {
             ));
             cmx_values.push(pad_cmx);
             gov_nulls.push(pad_gov_null);
+            note_nullifiers.push(pad_nf.inner());
         }
 
         let notes: [NoteSlotWitness; 5] = note_slots.try_into().unwrap();
+        let note_nullifiers: [pallas::Base; 5] = note_nullifiers.try_into().unwrap();
 
         // Values: real note = 13M, padded = 0.
         // Ballot scaling: 13,000,000 / 12,500,000 = 1 ballot, remainder = 500,000.
@@ -2063,7 +2096,12 @@ mod tests {
             dom,
         );
 
-        TestData { circuit, instance }
+        TestData {
+            circuit,
+            instance,
+            nk: nk_val,
+            note_nullifiers,
+        }
     }
 
     #[test]
@@ -2153,6 +2191,27 @@ mod tests {
         let t = make_test_data();
         let mut instance = t.instance.clone();
         instance.vote_round_id = pallas::Base::random(&mut OsRng);
+
+        let pi = instance.to_halo2_instance();
+        let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
+        assert!(prover.verify().is_err());
+    }
+
+    #[test]
+    fn wrong_dom_with_matching_gov_nulls_fails() {
+        let t = make_test_data();
+        let mut instance = t.instance.clone();
+        let mut wrong_dom = pallas::Base::random(&mut OsRng);
+        while wrong_dom == t.instance.dom {
+            wrong_dom = pallas::Base::random(&mut OsRng);
+        }
+
+        // Model a prover that keeps the same round but chooses a non-canonical
+        // nullifier domain and recomputes every public governance nullifier.
+        instance.dom = wrong_dom;
+        for (slot, real_nf) in t.note_nullifiers.iter().enumerate() {
+            instance.gov_null[slot] = gov_null_hash(t.nk, instance.dom, *real_nf);
+        }
 
         let pi = instance.to_halo2_instance();
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
