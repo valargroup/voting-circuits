@@ -9,8 +9,6 @@
 //! `(nf_lo, nf_hi)` and is not equal to `nf_mid`.
 //! Used by the delegation circuit and builder.
 
-use ff::PrimeField;
-use halo2_gadgets::poseidon::primitives::{self as poseidon, ConstantLength};
 use pasta_curves::pallas;
 use std::string::String;
 
