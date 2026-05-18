@@ -115,7 +115,7 @@ pub fn create_delegation_proof(circuit: Circuit, instance: &Instance) -> Vec<u8>
 /// the caller does not need a separate trusted channel:
 ///
 /// - `instance.nf_signed`
-/// - `instance.rk`
+/// - `instance.rk_x` / `instance.rk_y`
 /// - `instance.cmx_new`
 /// - `instance.gov_null[..]`
 pub fn verify_delegation_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
