@@ -362,14 +362,14 @@ Where:
 
 Total: 32 fixed-base scalar multiplications, 16 variable-base scalar multiplications (ea_pk), 16 point additions, 1 `NonIdentityPoint` witness (ea_pk, reused), 32 `constrain_equal` constraints.
 
-**Scalar field handling:** All scalars (r_i, v_i) are base field elements. For the fixed-base path (`[r_i]*G`, `[v_i]*G`), the advice cell is passed directly as a `BaseFieldElem` input to `FixedPointBaseField::mul`. For the variable-base path (`[r_i]*ea_pk`), `ScalarVar::from_base` decomposes the cell into a running-sum `ScalarVar`. For shares (< 2^30, guaranteed by condition 9), the integer representation is identical in both fields. For randomness, the probability of a base element exceeding the scalar field modulus is ≈ 2^{-254}.
+**Scalar field handling:** All scalars (r_i, v_i) are base field elements. For the fixed-base path (`[r_i]*G`, `[v_i]*G`), the advice cell is passed directly as a `BaseFieldElem` input to `FixedPointBaseField::mul`. For the variable-base path (`[r_i]*ea_pk`), `ScalarVar::from_base` decomposes the cell into a running-sum `ScalarVar`. For shares (< 2^30, guaranteed by condition 9), the integer representation is identical in both fields. For randomness, every canonical Pallas base field element fits in the scalar field because the base field modulus is smaller than the scalar field modulus.
 
 **Security properties:**
 - **Generator binding:** G = SpendAuthG is structurally fixed via the `FixedPointBaseField` lookup tables loaded into the proving key. A prover cannot substitute −G or any other base point because the table entries are committed to during setup.
 - **ea_pk binding:** Witnessed once as `NonIdentityPoint` and immediately pinned to the instance column (both x and y). The verifier checks the instance against the published round parameter.
 - **Randomness binding:** The same `r_cells[i]` advice cell is cloned for both the C1 fixed-base mul and the C2 variable-base mul. Cell equality ensures both paths decompose the same value.
 
-**Out-of-circuit helpers:** In `circuit::elgamal`: `elgamal_encrypt()` computes the same El Gamal encryption outside the circuit; `spend_auth_g_affine()` returns the SpendAuthG generator; `base_to_scalar()` converts base field elements to scalars.
+**Out-of-circuit helper:** `vote_proof::spend_auth_g_affine()` returns the SpendAuthG generator used by the circuit and downstream encryption code.
 
 **Constructions:** Shared `circuit::elgamal::prove_elgamal_encryptions`; `EccChip`, `FixedPointBaseField` (for C1 [r_i]*G, 85 windows), `FixedPointShort` (for C2 [v_i]*G, 22 windows), `NonIdentityPoint`, `ScalarVar`, `Point::add`, `Point::extract_p`.
 
