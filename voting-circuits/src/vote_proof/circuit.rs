@@ -63,6 +63,7 @@ use crate::circuit::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
 use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
 use crate::circuit::van_integrity;
 use crate::circuit::vote_commitment;
+pub use crate::protocol_hash::poseidon_hash_2;
 use crate::shares_hash::compute_shares_hash_in_circuit;
 #[cfg(test)]
 use crate::shares_hash::hash_share_commitment_in_circuit;
@@ -227,15 +228,6 @@ pub(super) fn van_nullifier_hash(
         voting_round_id,
         vote_authority_note_old,
     ])
-}
-
-/// Out-of-circuit Poseidon hash of two field elements.
-///
-/// `Poseidon(a, b)` with P128Pow5T3, ConstantLength<2>, width 3, rate 2.
-/// Used for Merkle path computation (condition 1) and tests. This is the
-/// same hash function used by `vote_commitment_tree::MerkleHashVote::combine`.
-pub fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([a, b])
 }
 
 /// Out-of-circuit per-share blinded commitment (condition 10).

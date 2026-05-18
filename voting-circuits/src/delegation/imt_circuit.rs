@@ -21,10 +21,7 @@ use pasta_curves::pallas;
 use ff::Field;
 use halo2_gadgets::{
     ecc::chip::EccConfig,
-    poseidon::{
-        primitives::{self as poseidon, ConstantLength},
-        Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
-    },
+    poseidon::{Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig},
     utilities::lookup_range_check::LookupRangeCheck,
 };
 
@@ -33,6 +30,7 @@ use orchard::constants::OrchardFixedBases;
 
 use super::imt::IMT_DEPTH;
 use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
+use crate::protocol_hash::poseidon_hash_in_circuit;
 
 // ================================================================
 // PuncturedIntervalGate
@@ -298,17 +296,12 @@ pub(crate) fn synthesize_imt_non_membership(
     )?;
 
     // Compute leaf hash: Poseidon3(nf_lo, nf_mid, nf_hi).
-    let leaf_hash = {
-        let poseidon_hasher =
-            PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init(
-                PoseidonChip::construct(poseidon_config.clone()),
-                layouter.namespace(|| format!("note {s} imt leaf hash init")),
-            )?;
-        poseidon_hasher.hash(
-            layouter.namespace(|| format!("note {s} Poseidon3(nf_lo, nf_mid, nf_hi)")),
-            [imt_nf_lo.clone(), imt_nf_mid.clone(), imt_nf_hi.clone()],
-        )?
-    };
+    let leaf_hash = poseidon_hash_in_circuit(
+        PoseidonChip::construct(poseidon_config.clone()),
+        layouter.namespace(|| format!("note {s} imt leaf hash")),
+        "Poseidon3(nf_lo, nf_mid, nf_hi)",
+        [imt_nf_lo.clone(), imt_nf_mid.clone(), imt_nf_hi.clone()],
+    )?;
 
     // 29-level Poseidon Merkle path from leaf_hash to imt_root.
     let imt_root = synthesize_poseidon_merkle_path::<IMT_DEPTH>(

@@ -19,14 +19,13 @@ use halo2_proofs::{
 use pasta_curves::pallas;
 
 use halo2_gadgets::{
-    poseidon::{
-        primitives::{self as poseidon, ConstantLength},
-        Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
-    },
+    poseidon::{Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig},
     utilities::bool_check,
 };
 
 use orchard::circuit::gadget::assign_free_advice;
+
+use crate::protocol_hash::poseidon_hash_in_circuit;
 
 // ================================================================
 // MerkleSwapGate
@@ -173,23 +172,12 @@ pub(crate) fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
             |mut region| swap_gate.assign(&mut region, 0, &pos_bit, &current, &sibling),
         )?;
 
-        let parent = {
-            let hasher = PoseidonHash::<
-                pallas::Base,
-                _,
-                poseidon::P128Pow5T3,
-                ConstantLength<2>,
-                3,
-                2,
-            >::init(
-                PoseidonChip::construct(poseidon_config.clone()),
-                layouter.namespace(|| format!("{label} hash init level {i}")),
-            )?;
-            hasher.hash(
-                layouter.namespace(|| format!("{label} Poseidon(left, right) level {i}")),
-                [left, right],
-            )?
-        };
+        let parent = poseidon_hash_in_circuit(
+            PoseidonChip::construct(poseidon_config.clone()),
+            layouter.namespace(|| format!("{label} hash level {i}")),
+            "Poseidon(left, right)",
+            [left, right],
+        )?;
 
         current = parent;
     }
@@ -204,17 +192,14 @@ pub(crate) fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol_hash::poseidon_hash_2;
+    use halo2_gadgets::poseidon::primitives as poseidon;
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::MockProver,
         plonk::{Circuit, ConstraintSystem, Fixed, Instance},
     };
     use std::vec::Vec;
-
-    /// Out-of-circuit Poseidon hash matching the in-circuit `Poseidon(left, right)`.
-    fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base {
-        poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([a, b])
-    }
 
     /// Computes a Merkle root out-of-circuit for test oracle comparison.
     fn merkle_root(leaf: pallas::Base, position: u32, path: &[pallas::Base]) -> pallas::Base {
