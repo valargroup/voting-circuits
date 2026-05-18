@@ -15,7 +15,10 @@ use std::vec::Vec;
 use ff::{FromUniformBytes, PrimeField};
 use group::{Curve, GroupEncoding};
 use halo2_proofs::circuit::Value;
-use pasta_curves::{arithmetic::CurveAffine, pallas};
+use pasta_curves::{
+    arithmetic::{Coordinates, CurveAffine},
+    pallas,
+};
 
 use orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
 
@@ -45,6 +48,8 @@ const NUM_SHARES: usize = 16;
 /// | 10         | 1.25        |
 /// | 1          | 0.125       |
 const DENOMINATIONS: [u64; 8] = [10_000_000, 1_000_000, 100_000, 10_000, 1_000, 100, 10, 1];
+
+type PallasAffineCoordinates = Coordinates<pallas::Affine>;
 
 /// Maximum slots used for standard denomination shares.
 ///
@@ -243,6 +248,12 @@ pub enum VoteProofBuildError {
     InvalidRandomness(String),
     /// The total note value cannot be split into valid shares.
     InvalidShares(String),
+    /// The election authority's public key is the identity point.
+    InvalidElectionPublicKey,
+    /// The randomized voting public key is the identity point.
+    InvalidRandomizedVotingPublicKey,
+    /// A derived El Gamal ciphertext point was the identity point.
+    InvalidEncryptedShare(String),
 }
 
 impl core::fmt::Display for VoteProofBuildError {
@@ -254,8 +265,34 @@ impl core::fmt::Display for VoteProofBuildError {
             VoteProofBuildError::InvalidShares(msg) => {
                 write!(f, "invalid shares: {}", msg)
             }
+            VoteProofBuildError::InvalidElectionPublicKey => {
+                write!(f, "invalid election public key: identity point")
+            }
+            VoteProofBuildError::InvalidRandomizedVotingPublicKey => {
+                write!(f, "invalid randomized voting public key: identity point")
+            }
+            VoteProofBuildError::InvalidEncryptedShare(msg) => {
+                write!(f, "invalid encrypted share: {}", msg)
+            }
         }
     }
+}
+
+fn pallas_coordinates(point: pallas::Affine) -> Option<PallasAffineCoordinates> {
+    point.coordinates().into()
+}
+
+fn encrypted_share_coordinates(
+    point: pallas::Affine,
+    share_index: usize,
+    component: &'static str,
+) -> Result<PallasAffineCoordinates, VoteProofBuildError> {
+    pallas_coordinates(point).ok_or_else(|| {
+        VoteProofBuildError::InvalidEncryptedShare(format!(
+            "share {} {} is identity",
+            share_index, component
+        ))
+    })
 }
 
 /// Extract the voting spending key scalar from a SpendingKey.
@@ -453,6 +490,12 @@ pub fn build_vote_proof_from_delegation(
     proposal_authority_old_u64: u64,
     single_share: bool,
 ) -> Result<VoteProofBundle, VoteProofBuildError> {
+    let ea_pk_coords =
+        pallas_coordinates(ea_pk).ok_or(VoteProofBuildError::InvalidElectionPublicKey)?;
+    let ea_pk_x = *ea_pk_coords.x();
+    let ea_pk_y = *ea_pk_coords.y();
+    let ea_pk_point = pallas::Point::from(ea_pk);
+
     // ---- Key derivation (matches delegation's key hierarchy) ----
 
     let vsk = extract_vsk(sk);
@@ -591,10 +634,6 @@ pub fn build_vote_proof_from_delegation(
     // Encrypts each share and captures both the x-coordinates (for circuit constraints)
     // and the full compressed point bytes (for reveal-share payloads).
 
-    let ea_pk_point = pallas::Point::from(ea_pk);
-    let ea_pk_x = *ea_pk.coordinates().unwrap().x();
-    let ea_pk_y = *ea_pk.coordinates().unwrap().y();
-
     let g = pallas::Point::from(spend_auth_g_affine());
     let mut enc_c1_x = [pallas::Base::zero(); 16];
     let mut enc_c2_x = [pallas::Base::zero(); 16];
@@ -625,10 +664,13 @@ pub fn build_vote_proof_from_delegation(
         let c1_point = (g * r_scalar).to_affine();
         let c2_point = (g * v_scalar + ea_pk_point * r_scalar).to_affine();
 
-        enc_c1_x[i] = *c1_point.coordinates().unwrap().x();
-        enc_c2_x[i] = *c2_point.coordinates().unwrap().x();
-        enc_c1_y[i] = *c1_point.coordinates().unwrap().y();
-        enc_c2_y[i] = *c2_point.coordinates().unwrap().y();
+        let c1_coords = encrypted_share_coordinates(c1_point, i, "c1")?;
+        let c2_coords = encrypted_share_coordinates(c2_point, i, "c2")?;
+
+        enc_c1_x[i] = *c1_coords.x();
+        enc_c2_x[i] = *c2_coords.x();
+        enc_c1_y[i] = *c1_coords.y();
+        enc_c2_y[i] = *c2_coords.y();
 
         enc_share_outputs[i].c1 = c1_point.to_bytes();
         enc_share_outputs[i].c2 = c2_point.to_bytes();
@@ -659,8 +701,10 @@ pub fn build_vote_proof_from_delegation(
     // alpha_v is now provided by the caller so they can sign with rsk_v.
     let ak_point = pallas::Point::from(spend_auth_g_affine()) * vsk;
     let r_vpk = (ak_point + pallas::Point::from(spend_auth_g_affine()) * alpha_v).to_affine();
-    let r_vpk_x = *r_vpk.coordinates().unwrap().x();
-    let r_vpk_y = *r_vpk.coordinates().unwrap().y();
+    let r_vpk_coords =
+        pallas_coordinates(r_vpk).ok_or(VoteProofBuildError::InvalidRandomizedVotingPublicKey)?;
+    let r_vpk_x = *r_vpk_coords.x();
+    let r_vpk_y = *r_vpk_coords.y();
     let r_vpk_bytes: [u8; 32] = r_vpk.to_bytes();
 
     // ---- Vote commitment ----
@@ -776,6 +820,8 @@ pub fn build_vote_proof_from_delegation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ff::Field;
+    use group::Group;
 
     fn test_sk() -> SpendingKey {
         SpendingKey::from_bytes([0x42; 32]).expect("valid spending key")
@@ -787,6 +833,133 @@ mod tests {
 
     fn test_van() -> pallas::Base {
         pallas::Base::from(0xDEAD_u64)
+    }
+
+    #[test]
+    fn build_vote_proof_rejects_identity_ea_pk() {
+        let sk = test_sk();
+        let err = build_vote_proof_from_delegation(
+            &sk,
+            1,
+            BALLOT_DIVISOR,
+            test_van(),
+            test_round_id(),
+            [pallas::Base::from(0u64); VOTE_COMM_TREE_DEPTH],
+            0,
+            123,
+            1,
+            1,
+            pallas::Point::identity().to_affine(),
+            pallas::Scalar::from(7u64),
+            65535,
+            true,
+        )
+        .expect_err("identity ea_pk should be rejected before proof generation");
+
+        assert!(matches!(err, VoteProofBuildError::InvalidElectionPublicKey));
+    }
+
+    #[test]
+    fn encrypted_share_coordinates_rejects_identity_c1_point() {
+        let err = encrypted_share_coordinates(pallas::Point::identity().to_affine(), 7, "c1")
+            .expect_err("identity c1 point should be rejected");
+
+        assert!(matches!(
+            err,
+            VoteProofBuildError::InvalidEncryptedShare(msg)
+                if msg == "share 7 c1 is identity"
+        ));
+    }
+
+    #[test]
+    fn build_vote_proof_rejects_identity_c2_point() {
+        let sk = test_sk();
+        let voting_round_id = test_round_id();
+        let proposal_id = 1;
+        let proposal_authority_old_u64 = 65535;
+        let van_comm_rand = test_van();
+        let num_ballots_base = pallas::Base::from(1u64);
+
+        let fvk: FullViewingKey = (&sk).into();
+        let address = fvk.address_at(1u32, Scope::External);
+        let vpk_g_d_affine = address.g_d().to_affine();
+        let vpk_pk_d_affine = address.pk_d().inner().to_affine();
+        let vpk_g_d_x = *vpk_g_d_affine.coordinates().unwrap().x();
+        let vpk_pk_d_x = *vpk_pk_d_affine.coordinates().unwrap().x();
+
+        let vote_authority_note_old = van_integrity_hash(
+            vpk_g_d_x,
+            vpk_pk_d_x,
+            num_ballots_base,
+            voting_round_id,
+            pallas::Base::from(proposal_authority_old_u64),
+            van_comm_rand,
+        );
+        let r = derive_share_randomness(
+            &sk,
+            voting_round_id,
+            proposal_id,
+            vote_authority_note_old,
+            0,
+        );
+        let r_scalar = base_to_scalar(r).expect("test randomness should be scalar-range");
+        let r_inv: Option<pallas::Scalar> = r_scalar.invert().into();
+        let ea_pk_scalar =
+            -pallas::Scalar::from(1u64) * r_inv.expect("test randomness should be non-zero");
+        let ea_pk = (pallas::Point::from(spend_auth_g_affine()) * ea_pk_scalar).to_affine();
+
+        let err = build_vote_proof_from_delegation(
+            &sk,
+            1,
+            BALLOT_DIVISOR,
+            van_comm_rand,
+            voting_round_id,
+            [pallas::Base::from(0u64); VOTE_COMM_TREE_DEPTH],
+            0,
+            123,
+            proposal_id,
+            1,
+            ea_pk,
+            pallas::Scalar::from(7u64),
+            proposal_authority_old_u64,
+            true,
+        )
+        .expect_err("crafted ea_pk should make share 0 c2 the identity");
+
+        assert!(matches!(
+            err,
+            VoteProofBuildError::InvalidEncryptedShare(msg)
+                if msg == "share 0 c2 is identity"
+        ));
+    }
+
+    #[test]
+    fn build_vote_proof_rejects_identity_r_vpk() {
+        let sk = test_sk();
+        let ea_pk =
+            (pallas::Point::from(spend_auth_g_affine()) * pallas::Scalar::from(42u64)).to_affine();
+        let err = build_vote_proof_from_delegation(
+            &sk,
+            1,
+            BALLOT_DIVISOR,
+            test_van(),
+            test_round_id(),
+            [pallas::Base::from(0u64); VOTE_COMM_TREE_DEPTH],
+            0,
+            123,
+            1,
+            1,
+            ea_pk,
+            -extract_vsk(&sk),
+            65535,
+            true,
+        )
+        .expect_err("alpha_v = -vsk should make r_vpk the identity");
+
+        assert!(matches!(
+            err,
+            VoteProofBuildError::InvalidRandomizedVotingPublicKey
+        ));
     }
 
     #[test]
