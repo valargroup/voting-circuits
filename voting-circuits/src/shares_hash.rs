@@ -1,8 +1,9 @@
 //! Shared circuit gadget for the shares-hash computation used in ZKP #2 and ZKP #3.
 //!
-//! Both the vote-proof circuit (ZKP #2, condition 10) and the share-reveal
-//! circuit (ZKP #3, condition 3) compute exactly the same two-level Poseidon
-//! hash over the sixteen encrypted shares:
+//! This module is the authoritative in-tree definition of the two-level
+//! encrypted-share hash. Both the vote-proof circuit (ZKP #2, condition 10) and
+//! the share-reveal circuit (ZKP #3, condition 3) call this implementation
+//! rather than maintaining separate formula copies:
 //!
 //! ```text
 //! share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i ∈ 0..16

@@ -39,6 +39,12 @@
 //! to the public `vote_comm_tree_root` via
 //! `shares_hash → vote_commitment → Merkle path`.
 //!
+//! Authoritative hash sources: `crate::shares_hash` owns the per-share and
+//! aggregate encrypted-share preimages, `crate::circuit::vote_commitment` owns
+//! the vote commitment preimage, and `crate::domain_tags` owns the share-spend
+//! domain tag encoding. This module's prose points to those owners rather than
+//! defining competing formulas.
+//!
 //! ## Column layout
 //!
 //! - 9 advice columns: advices\[0..4\] general + Merkle swap, \[5\] Poseidon partial
@@ -563,12 +569,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         //                          enc_c1_y, enc_c2_y)
         //   share_comms[share_index] == derived_comm
         //
-        // Defense: an adversary that has seen the on-chain ciphertexts
-        // but does not hold the blind cannot claim the wrong share is
-        // the revealed one — the binding goes via the blind, which only
-        // the voting client knows. All ciphertext coordinates come from
-        // the public instance column. Including y-coordinates prevents
-        // sign-malleability attacks.
+        // Defense-by-rejection: an adversary that has seen the on-chain
+        // ciphertexts but does not hold the blind cannot claim the wrong share
+        // is the revealed one. The recomputed commitment must match the muxed
+        // `share_comms[share_index]`; otherwise condition 4 rejects.
         // ---------------------------------------------------------------
 
         let enc_c1_x = layouter.assign_region(
@@ -791,7 +795,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // posted on-chain, so an observer cannot enumerate vote commitments
         // to link nullifiers to their source.
         // Round-binding is transitive through vote_commitment, which already
-        // commits to voting_round_id as one of its Poseidon inputs.
+        // commits to voting_round_id as one of its Poseidon inputs. Likewise, a
+        // wrong public `vote_decision` changes the condition-2 commitment and
+        // is rejected by the Merkle path binding in condition 1.
         // ---------------------------------------------------------------
         {
             // "share spend" domain tag — constant-constrained so the

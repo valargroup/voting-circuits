@@ -5,6 +5,12 @@ Proves that a registered voter is casting a valid vote, without revealing which 
 **Public inputs:** 11 field elements.
 **Current K:** 13 (8,192 rows) — accommodates conditions 1–4 and 5–12, including 15 variable-base ECC scalar multiplications (condition 11), ~31 Poseidon hashes, and the 10-bit lookup table. High-water mark is ~3,512 rows (43% utilization).
 
+**Authoritative hash sources:** this README is explanatory. Reusable hash
+preimages are owned by `crate::circuit::van_integrity` (VAN integrity),
+`crate::circuit::vote_commitment` (vote commitment), and
+`crate::shares_hash` (encrypted-share commitments and `shares_hash`).
+Domain-tag encoding is owned by `crate::domain_tags`.
+
 ## Inputs
 
 - Public (11 field elements)
@@ -45,7 +51,7 @@ Proves that a registered voter is casting a valid vote, without revealing which 
    * **voting_round_id cell**: copied from the instance column, used in condition 2 Poseidon hash and condition 5 inner hash.
    * **domain_van_nullifier cell**: constant encoding of `"vote authority spend"` (condition 5).
    * **proposal_authority_new**: derived as `proposal_authority_old - (1 << proposal_id)` (condition 6).
-   * **shares_hash**: two-level Poseidon hash over 16 blinded share commitments (condition 10). Internal wire consumed by condition 12. See `crate::shares_hash` for the authoritative preimage shape — `share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`; y-coordinates defend against ciphertext sign-malleability.
+   * **shares_hash**: two-level Poseidon hash over 16 blinded share commitments (condition 10). Internal wire consumed by condition 12. See `crate::shares_hash` for the authoritative preimage shape; y-coordinates defend against ciphertext sign-malleability.
    * **SpendAuthG x, y constants**: coordinates of the El Gamal generator (condition 11). Baked into the verification key via `assign_advice_from_constant`.
    * **ea_pk_x, ea_pk_y cells**: copied from the instance column (condition 11). Each ea_pk `NonIdentityPoint` witness is constrained to match these cells.
    * **DOMAIN_VC constant**: `1`. Domain separation tag for Vote Commitments (condition 12). Baked into the verification key.
@@ -241,7 +247,7 @@ The builder decomposes `num_ballots` into 16 shares using a three-phase algorith
 
 **Phase 3 — Deterministic shuffle.** A [Fisher-Yates shuffle](https://en.wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle) (iterating from the last index down, swapping each position with a uniformly random earlier position) seeded by the PRF (`DOMAIN_SHUFFLE = 0x02`) randomizes all 16 slot positions. Without this, share indices would encode denomination rank (e.g. index 0 = largest denomination), leaking balance magnitude to any adversary that decrypts a single share.
 
-All PRF derivations are keyed by the spending key and bound to `(voting_round_id, proposal_id, van_commitment)`. This means:
+All PRF derivations are keyed by the spending key and bound to `(voting_round_id, proposal_id, van_commitment)`. The resulting `r_i` values are accepted by the circuit as witnesses; the relation does not enforce `r_i != 0`. Under this crate's threat model that is a documented self-leakage surface, not a proof-soundness failure. This means:
 - Two voters with the **same balance** produce different remainder weights and shuffle orders (different `sk`).
 - The same voter with **multiple VANs** produces different patterns per VAN (different `van_commitment`).
 - Secrets are deterministically re-derivable after a crash without persisting them.

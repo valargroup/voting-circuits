@@ -1,7 +1,9 @@
 //! VAN (Vote Authority Note) integrity gadget.
 //!
-//! Shared two-layer Poseidon hash used by both ZKP #1 (delegation,
-//! condition 7) and ZKP #2 (vote proof, conditions 2 and 6):
+//! Authoritative in-tree definition of the two-layer Poseidon hash used by
+//! both ZKP #1 (delegation, condition 7) and ZKP #2 (vote proof, conditions 2
+//! and 6). README prose should cite this module instead of restating the
+//! preimage shape as an independent source of truth:
 //!
 //! ```text
 //! van_comm_core = Poseidon(DOMAIN_VAN, g_d_x, pk_d_x, value,
@@ -35,8 +37,8 @@ pub use crate::domain_tags::DOMAIN_VAN;
 
 /// Out-of-circuit VAN integrity hash.
 ///
-/// Two-layer structure used by both ZKP #1 (delegation) and ZKP #2
-/// (vote proof) for cross-circuit interoperability:
+/// This is the authoritative native implementation of the two-layer VAN
+/// commitment preimage shared by delegation and vote proof:
 /// ```text
 /// van_comm_core = Poseidon(DOMAIN_VAN, g_d_x, pk_d_x, value,
 ///                          voting_round_id, proposal_authority)

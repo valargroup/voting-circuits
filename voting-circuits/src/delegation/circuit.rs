@@ -572,8 +572,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         });
 
         // Scope selection gate (condition 11): muxes between external and internal ivk.
-        // Per-note, selects ivk or ivk_internal based on the is_internal flag, so that
-        // internal (change) notes use ivk_internal for the pk_d ownership check.
+        // Defense-by-rejection: `is_internal` is client-witnessed, but a wrong
+        // flag selects the wrong ivk and makes the downstream
+        // `pk_d = [selected_ivk] * g_d` equality fail.
         let q_scope_select = meta.selector();
         meta.create_gate("scope ivk select", |meta| {
             let q = meta.query_selector(q_scope_select);
@@ -1538,9 +1539,10 @@ fn synthesize_note_slot(
         note.cm.as_ref().map(|cm| cm.to_affine()),
     )?;
 
-    // Recompute NoteCommit from the plaintext and constrain it equals the
-    // witnessed cm. If any input (g_d, pk_d, v, rho, psi, rcm) is wrong,
-    // the recomputed commitment won't match and the proof fails.
+    // Defense-by-rejection: `psi` and `rcm` are witnessed rather than derived
+    // in-circuit. If the client supplies either value incorrectly, the
+    // recomputed NoteCommit differs from the witnessed `cm` and the proof
+    // rejects.
     let derived_cm = note_commit(
         layouter.namespace(|| format!("note {s} NoteCommit")),
         config.sinsemilla_chip_1(),
@@ -1579,8 +1581,9 @@ fn synthesize_note_slot(
 
     // Proves this note belongs to the prover's key. External notes use ivk
     // (derived from rivk in condition 5); internal (change) notes use
-    // ivk_internal (derived from rivk_internal). The q_scope_select gate
-    // constrains the mux: selected_ivk = ivk + is_internal * (ivk_internal - ivk).
+    // ivk_internal (derived from rivk_internal). Defense-by-rejection: if a
+    // client witnesses the wrong `is_internal` flag, the mux selects the wrong
+    // ivk and the address ownership check below rejects.
 
     // Witness the is_internal flag for this note.
     let is_internal = assign_free_advice(
@@ -1953,7 +1956,7 @@ mod tests {
     }
 
     /// Build a valid merged circuit with 1 real note + 4 padded notes.
-    fn make_test_data() -> TestData {
+    fn make_test_data_with_alpha(alpha_override: Option<pallas::Scalar>) -> TestData {
         let mut rng = OsRng;
 
         let sk = SpendingKey::random(&mut rng);
@@ -2105,7 +2108,7 @@ mod tests {
         );
         let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
 
-        let alpha = pallas::Scalar::random(&mut rng);
+        let alpha = alpha_override.unwrap_or_else(|| pallas::Scalar::random(&mut rng));
         let rk = ak.randomize(&alpha);
 
         let circuit = Circuit::from_note_unchecked(&fvk, &signed_note, alpha)
@@ -2144,10 +2147,27 @@ mod tests {
         }
     }
 
+    fn make_test_data() -> TestData {
+        make_test_data_with_alpha(None)
+    }
+
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn happy_path() {
         let t = make_test_data();
+        let pi = t.instance.to_halo2_instance();
+
+        let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
+    /// Documents the current upstream-compatible spend-authority relation:
+    /// alpha = 0 is accepted when the public rk is correspondingly equal to ak_P.
+    /// This is a self-linking/coercion surface, not a proof-soundness failure.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn spend_authority_alpha_zero_is_accepted_by_relation() {
+        let t = make_test_data_with_alpha(Some(pallas::Scalar::zero()));
         let pi = t.instance.to_halo2_instance();
 
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
