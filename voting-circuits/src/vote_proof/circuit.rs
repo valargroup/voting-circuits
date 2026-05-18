@@ -103,8 +103,8 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 
 /// Circuit size (2^K rows).
 ///
-/// K=14 (16,384 rows). `CircuitCost::measure` reports a floor-planner
-/// high-water mark of **3,512 rows** (21% of 16,384). The `V1` floor planner
+/// K=13 (8,192 rows). `CircuitCost::measure` reports a floor-planner
+/// high-water mark of **7,945 rows** (97.0% of 8,192). The `V1` floor planner
 /// packs non-overlapping regions into the same row range across different
 /// columns, so the high-water mark is much lower than a naive sum-of-heights
 /// estimate.
@@ -116,11 +116,8 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 ///   Poseidon regions in non-overlapping columns.
 /// - 10-bit Sinsemilla/range-check lookup table: 1,024 fixed rows.
 ///
-/// The `[v_i]*G` term uses `FixedPointShort` (22-window short-scalar path)
-/// rather than `FixedPointBaseField` (85-window full-scalar path), saving
-/// 315 rows (3,827 → 3,512 measured). Run the `row_budget` benchmark to
-/// re-measure after circuit changes:
-///   `cargo test --features vote-proof row_budget -- --nocapture --ignored`
+/// Run the `row_budget` diagnostic to re-measure after circuit changes:
+///   `cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
 pub const K: u32 = 13;
 
 pub(crate) use van_integrity::DOMAIN_VAN;
@@ -166,15 +163,12 @@ const VOTE_COMMITMENT: usize = 4;
 /// Public input offset for the vote commitment tree root.
 const VOTE_COMM_TREE_ROOT: usize = 5;
 /// Public input offset for the tree anchor height.
-// Suppress dead-code warnings for public input offsets that are
-// defined but not yet used by any condition's constraint logic.
-// VOTE_COMM_TREE_ANCHOR_HEIGHT is validated out-of-circuit by the chain's
-// ante handler: sdk/x/vote/ante/validate.go calls GetCommitmentRootAtHeight
-// with msg.VoteCommTreeAnchorHeight and rejects the transaction if no root
-// exists at that height (ErrInvalidAnchorHeight). The retrieved root is then
-// passed as the VoteCommTreeRoot public input to the ZKP verifier, which the
-// circuit constrains via constrain_instance. This binds the anchor height to
-// the in-circuit tree root, mirroring Zcash's out-of-circuit anchor design.
+// The circuit does not constrain this slot to a witness cell. It is
+// transcript-bound metadata whose meaning is authenticated by the verifier's
+// caller. In the chain path, the ante handler looks up the commitment root at
+// msg.VoteCommTreeAnchorHeight and passes that root as VOTE_COMM_TREE_ROOT,
+// which the circuit does constrain. This keeps the binding between height and
+// root in the chain state lookup rather than in this proof.
 #[allow(dead_code)]
 const VOTE_COMM_TREE_ANCHOR_HEIGHT: usize = 6;
 /// Public input offset for the proposal identifier.
@@ -288,7 +282,7 @@ pub fn shares_hash(
 /// uses neither AddChip nor LookupRangeCheck).
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// Public input column (9 field elements).
+    /// Public input column (11 field elements).
     primary: Column<InstanceColumn>,
     /// 10 advice columns for private witness data.
     ///
@@ -392,14 +386,14 @@ impl Config {
 /// The Vote Proof circuit (ZKP #2).
 ///
 /// Proves that a registered voter is casting a valid vote, without
-/// revealing which VAN they hold. Contains witness fields for all
-/// 12 conditions (condition 4 enforced out-of-circuit); constraint logic is added incrementally.
+/// revealing which VAN they hold. Contains witness fields and constraint logic
+/// for all 12 conditions.
 ///
-/// Conditions 1–3 and 5–12 are fully constrained in-circuit; condition 4 (Spend Authority) is
-/// enforced out-of-circuit via signature verification.
+/// Condition 4 constrains `r_vpk` in-circuit. The vote signature is verified
+/// out-of-circuit under that constrained key.
 #[derive(Clone, Debug, Default)]
 pub struct Circuit {
-    // === VAN ownership and spending (conditions 1–5; condition 4 out-of-circuit) ===
+    // === VAN ownership and spending (conditions 1–5) ===
 
     // Condition 1 (VAN Membership): Poseidon-based Merkle path from
     // vote_authority_note_old to vote_comm_tree_root.
@@ -1379,7 +1373,11 @@ pub struct Instance {
     pub vote_commitment: pallas::Base,
     /// Root of the vote commitment tree at anchor height.
     pub vote_comm_tree_root: pallas::Base,
-    /// The vote-chain height at which the tree is snapshotted.
+    /// Caller-authenticated chain height used to source `vote_comm_tree_root`.
+    ///
+    /// This public input is transcript-bound but not constrained to a witness
+    /// cell. Verifiers must check that `vote_comm_tree_root` is the chain root
+    /// at this height.
     pub vote_comm_tree_anchor_height: pallas::Base,
     /// Which proposal this vote is for.
     pub proposal_id: pallas::Base,
@@ -1399,12 +1397,12 @@ impl Instance {
     ///
     /// Callers should authenticate `vote_comm_tree_root`,
     /// `vote_comm_tree_anchor_height`, `proposal_id`, `voting_round_id`,
-    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here —
-    /// see [`crate::vote_proof::prove::verify_vote_proof`] for the trust
-    /// contract (and why wiring `ea_pk_*` from the same bundle as the
-    /// proof is a custody-attack surface). The remaining fields are
-    /// proof-attested outputs derived outside the circuit but constrained
-    /// in-circuit against authenticated inputs and private witnesses.
+    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here. See
+    /// [`crate::vote_proof::prove::verify_vote_proof`] for the trust contract
+    /// and why wiring `ea_pk_*` from the same bundle as the proof is a
+    /// custody-attack surface. The remaining fields are proof-attested outputs
+    /// derived outside the circuit but constrained in-circuit against
+    /// authenticated inputs and private witnesses.
     pub fn from_parts(
         van_nullifier: pallas::Base,
         r_vpk_x: pallas::Base,
@@ -1601,7 +1599,7 @@ mod tests {
         )
     }
 
-    /// Build valid test data for all 11 conditions.
+    /// Build valid test data for all 12 conditions.
     ///
     /// Returns a circuit with correctly-hashed VAN witnesses, valid
     /// shares, real El Gamal ciphertexts, and a matching instance.
@@ -3310,7 +3308,7 @@ mod tests {
     // Instance and circuit sanity
     // ================================================================
 
-    /// Instance must serialize to exactly 9 public inputs.
+    /// Instance must serialize to exactly 11 public inputs.
     #[test]
     fn instance_has_eleven_public_inputs() {
         let (_, instance) = make_test_data();
@@ -3337,9 +3335,9 @@ mod tests {
     /// number rather than the theoretical 2^K capacity.
     ///
     /// Run with:
-    ///   cargo test --features vote-proof row_budget -- --nocapture --ignored
+    ///   cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1
     #[test]
-    #[ignore = "long-running row-budget diagnostic; run with `cargo test row_budget -- --ignored --nocapture`"]
+    #[ignore = "long-running row-budget diagnostic; run with `cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --ignored --nocapture --test-threads=1`"]
     fn row_budget() {
         use halo2_proofs::dev::CircuitCost;
         use pasta_curves::vesta;

@@ -137,8 +137,7 @@ pub(crate) fn compute_shares_hash_in_circuit(
 ///
 /// Unlike [`compute_shares_hash_in_circuit`], this skips the per-share
 /// blind hashing (level 1) because the caller already provides the 16
-/// `share_comm` values — e.g. as public inputs copied from the instance
-/// column in ZKP #3.
+/// `share_comm` values — e.g. as private witness cells in ZKP #3.
 pub(crate) fn compute_shares_hash_from_comms_in_circuit(
     poseidon_chip: PoseidonChip<pallas::Base, 3, 2>,
     mut layouter: impl Layouter<pallas::Base>,

@@ -41,7 +41,7 @@ src/
 │   ├── imt_circuit.rs            #   IMT non-membership proof gadget
 │   └── README.md                 #   Detailed specification
 │
-├── vote_proof/                   # ZKP #2 — Vote Proof circuit (K=14)
+├── vote_proof/                   # ZKP #2 — Vote Proof circuit (K=13)
 │   ├── circuit.rs                #   12-condition halo2 circuit
 │   ├── builder.rs                #   Builder producing VoteProofBundle
 │   ├── prove.rs                  #   Prove / verify helpers
@@ -76,7 +76,7 @@ Reusable halo2 gadgets that appear in more than one circuit:
 | Circuit | K | Rows | Conditions | Spec |
 |---------|---|------|------------|------|
 | Delegation | 14 | 16 384 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) |
-| Vote Proof | 14 | 16 384 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
+| Vote Proof | 13 | 8 192 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
 | Share Reveal | 11 | 2 048 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
 
 ## Companion crate
@@ -86,22 +86,22 @@ The `orchard/` directory at the workspace root is a local fork of the Zcash Orch
 ## Building
 
 ```bash
-cargo build
+cargo build --manifest-path voting-circuits/Cargo.toml
 ```
 
 ## Testing
 
 ```bash
-cargo test
+cargo test --manifest-path voting-circuits/Cargo.toml
 
-# Row-budget smoke tests (ignored by default, prints utilization)
-cargo test row_budget -- --nocapture --ignored
+# Vote-proof row-budget diagnostic (ignored by default, prints utilization)
+cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1
 ```
 
 ## Benchmarks
 
 ```bash
-cargo bench   # runs delegation proving benchmarks via Criterion
+cargo bench --manifest-path voting-circuits/Cargo.toml   # runs delegation proving benchmarks via Criterion
 ```
 
 ## Key dependencies

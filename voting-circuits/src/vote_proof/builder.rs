@@ -239,7 +239,8 @@ pub struct VoteProofBundle {
     /// Each commitment binds the blind and both coordinates of both El Gamal
     /// ciphertext points; `crate::shares_hash` is the source of truth for the
     /// preimage order.
-    /// Provided as public inputs to ZKP #3 (share reveal) so the helper
+    /// Provided as private witness inputs to the ZKP #3 builder. The reveal
+    /// circuit binds them transitively through `shares_hash`, so the helper
     /// server only needs the primary share's blind, not all 16.
     pub share_comms: [pallas::Base; 16],
 }
@@ -469,8 +470,9 @@ fn deterministic_shuffle(
 /// * `vote_comm_tree_path` - Merkle authentication path (24 siblings) for
 ///   the VAN in the vote commitment tree.
 /// * `vote_comm_tree_position` - Leaf position of the VAN in the tree.
-/// * `anchor_height` - The block height at which the tree was snapshotted
-///   (must match the on-chain commitment tree root).
+/// * `anchor_height` - Caller-authenticated chain height used by the verifier
+///   or chain to source the vote commitment tree root. The circuit carries this
+///   as a public input but does not derive or constrain the height itself.
 /// * `proposal_id` - Which proposal to vote on (1-indexed, must be in [1, 15]).
 /// * `vote_decision` - The voter's choice.
 /// * `ea_pk` - Election authority public key (Pallas affine point from session).
@@ -485,7 +487,7 @@ fn deterministic_shuffle(
 /// This allows the client to re-derive the same secrets after a crash without
 /// persisting them.
 ///
-/// **Expensive**: K=14 proof generation takes ~30-60 seconds in release mode.
+/// **Expensive**: K=13 proof generation takes ~30-60 seconds in release mode.
 #[allow(clippy::too_many_arguments)]
 pub fn build_vote_proof_from_delegation(
     sk: &SpendingKey,
@@ -645,8 +647,8 @@ pub fn build_vote_proof_from_delegation(
 
     // ---- El Gamal encryption of shares ----
     //
-    // Encrypts each share and captures both the x-coordinates (for circuit constraints)
-    // and the full compressed point bytes (for reveal-share payloads).
+    // Encrypts each share and captures both point coordinates for circuit
+    // constraints plus the full compressed point bytes for reveal-share payloads.
 
     let g = pallas::Point::from(spend_auth_g_affine());
     let mut enc_c1_x = [pallas::Base::zero(); 16];

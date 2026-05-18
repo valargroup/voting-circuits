@@ -19,7 +19,7 @@ use super::circuit::{share_nullifier_hash, Circuit, Instance};
 pub struct ShareRevealBundle {
     /// The share reveal circuit with all witnesses populated.
     pub circuit: Circuit,
-    /// Public inputs (7 field elements).
+    /// Public inputs (9 field elements).
     pub instance: Instance,
 }
 
