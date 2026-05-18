@@ -4,7 +4,7 @@
 
 ### Added
 
-- Declared Rust 1.85.1 as the minimum supported Rust version.
+- Declared Rust 1.86 as the minimum supported Rust version.
 
 ### Changed
 
