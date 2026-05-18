@@ -39,8 +39,7 @@ src/
 │   ├── prove.rs                  #   Prove / verify helpers
 │   ├── imt.rs                    #   Indexed Merkle Tree (data structure)
 │   ├── imt_circuit.rs            #   IMT non-membership proof gadget
-│   ├── README.md                 #   Detailed specification
-│   └── plans/                    #   Design documents (.plan.md)
+│   └── README.md                 #   Detailed specification
 │
 ├── vote_proof/                   # ZKP #2 — Vote Proof circuit (K=14)
 │   ├── circuit.rs                #   12-condition halo2 circuit
