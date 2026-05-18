@@ -3,6 +3,10 @@
 //! K=2 punctured-range model: each leaf stores `[nf_lo, nf_mid, nf_hi]` and
 //! the leaf hash is `Poseidon3(nf_lo, nf_mid, nf_hi)` (ConstantLength<3>).
 //!
+//! Defense-by-rejection: the client witnesses the IMT boundaries and path, but
+//! fabricated or reordered boundaries change the authenticated leaf or fail the
+//! interval/non-equality gates, so the proof rejects.
+//!
 //! Non-membership is proven by:
 //! - Strict interval: `nf_lo < value < nf_hi` (via two offset range checks)
 //! - Non-equality: `value != nf_mid` (via inverse witness)

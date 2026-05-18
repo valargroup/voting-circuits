@@ -1621,11 +1621,13 @@ mod tests {
         (auth_path, 0, current)
     }
 
-    /// Build test (circuit, instance) with given proposal_authority_old and proposal_id.
+    /// Build test (circuit, instance) with given proposal_authority_old,
+    /// proposal_id, and optional spend-authority randomizer.
     /// proposal_authority_old must have the proposal_id-th bit set (spec bitmask).
-    fn make_test_data_with_authority_and_proposal(
+    fn make_test_data_with_authority_proposal_and_alpha(
         proposal_authority_old: pallas::Base,
         proposal_id: u64,
+        alpha_v_override: Option<pallas::Scalar>,
     ) -> (Circuit, Instance) {
         let mut rng = OsRng;
 
@@ -1634,7 +1636,7 @@ mod tests {
         let vsk = pallas::Scalar::random(&mut rng);
         let vsk_nk = pallas::Base::random(&mut rng);
         let rivk_v = pallas::Scalar::random(&mut rng);
-        let alpha_v = pallas::Scalar::random(&mut rng);
+        let alpha_v = alpha_v_override.unwrap_or_else(|| pallas::Scalar::random(&mut rng));
 
         let (vpk_g_d_affine, vpk_pk_d_affine) = derive_voting_address(vsk, vsk_nk, rivk_v);
 
@@ -1732,6 +1734,13 @@ mod tests {
         );
 
         (circuit, instance)
+    }
+
+    fn make_test_data_with_authority_and_proposal(
+        proposal_authority_old: pallas::Base,
+        proposal_id: u64,
+    ) -> (Circuit, Instance) {
+        make_test_data_with_authority_proposal_and_alpha(proposal_authority_old, proposal_id, None)
     }
 
     fn make_test_data_with_authority(proposal_authority_old: pallas::Base) -> (Circuit, Instance) {
@@ -2104,6 +2113,23 @@ mod tests {
             prover.verify().is_err(),
             "condition 4 must reject wrong r_vpk"
         );
+    }
+
+    /// Documents the current upstream-compatible relation: alpha_v = 0 is
+    /// accepted when the public r_vpk is correspondingly equal to ak_P. This is
+    /// a self-linking/coercion surface, not a proof-soundness failure; see
+    /// THREAT_MODEL.md.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn condition_4_alpha_zero_is_accepted_by_relation() {
+        let (circuit, instance) = make_test_data_with_authority_proposal_and_alpha(
+            pallas::Base::from(13u64),
+            TEST_PROPOSAL_ID,
+            Some(pallas::Scalar::zero()),
+        );
+
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert_eq!(prover.verify(), Ok(()));
     }
 
     // ================================================================
@@ -3056,6 +3082,44 @@ mod tests {
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_valid_proof() {
         let (circuit, instance) = make_test_data();
+
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
+    /// Documents the current ElGamal relation: r_i = 0 is accepted when the
+    /// public ciphertext is correspondingly `(C1 = identity, C2 = [v_i]G)`.
+    /// This is a per-share self-leakage/coercion surface, not a
+    /// proof-soundness failure; see THREAT_MODEL.md.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn encryption_integrity_randomness_zero_is_accepted_by_relation() {
+        let (mut circuit, mut instance) = make_test_data();
+        let shares_u64 = [625u64; 16];
+        let (_ea_sk, ea_pk_point, _ea_pk_affine) = generate_ea_keypair();
+        let (mut c1_x, mut c2_x, mut c1_y, mut c2_y, mut randomness, blinds, _) =
+            encrypt_shares(shares_u64, ea_pk_point);
+        let c2 = pallas::Point::from(spend_auth_g_affine()) * pallas::Scalar::from(shares_u64[0]);
+        let c2_coords = c2.to_affine().coordinates().unwrap();
+
+        randomness[0] = pallas::Base::zero();
+        c1_x[0] = pallas::Base::zero();
+        c1_y[0] = pallas::Base::zero();
+        c2_x[0] = *c2_coords.x();
+        c2_y[0] = *c2_coords.y();
+
+        circuit.share_randomness = randomness.map(Value::known);
+        circuit.enc_share_c1_x = c1_x.map(Value::known);
+        circuit.enc_share_c1_y = c1_y.map(Value::known);
+        circuit.enc_share_c2_x = c2_x.map(Value::known);
+        circuit.enc_share_c2_y = c2_y.map(Value::known);
+        let shares_hash_val = shares_hash(blinds, c1_x, c2_x, c1_y, c2_y);
+        instance.vote_commitment = set_condition_11(
+            &mut circuit,
+            shares_hash_val,
+            TEST_PROPOSAL_ID,
+            instance.voting_round_id,
+        );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert_eq!(prover.verify(), Ok(()));

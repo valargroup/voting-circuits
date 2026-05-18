@@ -11,6 +11,11 @@ more than five notes produce multiple delegation proofs.
 
 **Note value asymmetry:** the keystone (signed) note has value `1` zatoshi (a UX concession so Keystone-class hardware wallets render the spend for user approval); the output (change) note has value `0`. See conditions 1 and 6.
 
+**Authoritative hash sources:** this README is explanatory. The in-tree source
+of truth for reusable hash preimages is the owning module:
+`crate::circuit::van_integrity` for `van_comm`, `crate::domain_tags` for
+domain-tag encoding, and the local `rho_binding_hash` / `gov_null_hash` helpers in `circuit.rs` for delegation-only hashes.
+
 ## Inputs
 
 - Public (14 field elements)

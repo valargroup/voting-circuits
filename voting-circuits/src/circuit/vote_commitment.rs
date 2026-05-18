@@ -1,7 +1,7 @@
 //! Vote Commitment integrity gadget.
 //!
-//! Shared 5-input Poseidon hash used by both ZKP #2 (vote proof,
-//! condition 12) and ZKP #3 (share reveal, condition 2):
+//! Authoritative in-tree definition of the 5-input Poseidon hash used by both
+//! ZKP #2 (vote proof, condition 12) and ZKP #3 (share reveal, condition 2).
 //!
 //! ```text
 //! vote_commitment = Poseidon(DOMAIN_VC, voting_round_id,
@@ -31,7 +31,8 @@ pub use crate::domain_tags::DOMAIN_VC;
 
 /// Out-of-circuit vote commitment hash.
 ///
-/// Computes:
+/// This is the authoritative native implementation of the vote commitment
+/// preimage shared by vote proof and share reveal:
 /// ```text
 /// Poseidon(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)
 /// ```
