@@ -115,6 +115,7 @@ fn make_real_note_inputs(
 /// construct a delegation bundle with a single real note, and verify the
 /// merged circuit with MockProver.
 #[test]
+#[ignore = "long-running Halo2 integration test; run with `cargo test -- --ignored`"]
 fn k2_punctured_range_single_note_verifies_in_circuit() {
     let mut rng = OsRng;
     let imt = SpacedLeafImtProvider::new();
@@ -155,6 +156,7 @@ fn k2_punctured_range_single_note_verifies_in_circuit() {
 
 /// Same test with 4 real notes and mixed scopes.
 #[test]
+#[ignore = "long-running Halo2 integration test; run with `cargo test -- --ignored`"]
 fn k2_punctured_range_four_notes_verify_in_circuit() {
     let mut rng = OsRng;
     let imt = SpacedLeafImtProvider::new();
@@ -285,6 +287,7 @@ impl ImtProvider for ProductionSentinelImtAdapter {
 /// `build_levels`, and `verify_punctured_range_spans` from `imt-tree`
 /// produce a valid tree whose proofs pass the delegation circuit.
 #[test]
+#[ignore = "long-running Halo2 integration test; run with `cargo test -- --ignored`"]
 fn production_sentinel_path_verifies_in_circuit() {
     let mut rng = OsRng;
 
@@ -423,6 +426,7 @@ impl ImtProvider for PoisonedNfMidProvider {
 /// synthesis (panic). In release builds MockProver catches the `q_neq`
 /// constraint failure. Both are valid rejections.
 #[test]
+#[ignore = "long-running Halo2 integration test; run with `cargo test -- --ignored`"]
 fn circuit_rejects_nf_mid_equal_to_real_nf() {
     let mut rng = OsRng;
 

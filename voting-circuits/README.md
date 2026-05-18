@@ -25,6 +25,38 @@ This crate now depends on upstream [`zcash/orchard`](https://github.com/zcash/or
 
 While the upstream PRs are landing it is pinned via `[patch.crates-io]` to the `valargroup/orchard` `valar/0.13-spend-auth-g` branch (tracked by [valargroup/orchard PR #19](https://github.com/valargroup/orchard/pull/19)), which carries `orchard 0.13.0` plus cherry-picks of [zcash/orchard #489](https://github.com/zcash/orchard/pull/489) (SpendAuthG fixed-base multiplication) and [zcash/orchard #495](https://github.com/zcash/orchard/pull/495) (`NoteValue::ZERO` public associated constant). Once both upstream PRs land and an `orchard 0.14` ships, the pin will collapse to the published crate.
 
+## Testing
+
+Short-running tests are the default:
+
+```sh
+cargo test
+```
+
+Long-running tests are explicitly ignored and can be run when circuit-level
+coverage is needed. Skip the row-budget diagnostics for a normal regression
+pass:
+
+```sh
+cargo test -- --ignored --skip row_budget --skip cost_breakdown
+```
+
+To inspect circuit size diagnostics, keep `--nocapture` so the row-budget
+output is printed:
+
+```sh
+cargo test row_budget -- --ignored --nocapture
+cargo test cost_breakdown -- --ignored --nocapture
+```
+
+The long tests are slow because they synthesize Halo 2 circuits and run
+`MockProver` verification over the configured `K` domain (`delegation` uses
+K=14, `vote_proof` K=13, and `share_reveal` K=11). Some gadget stress tests are
+also long-running because they repeat many `MockProver` checks, for example one
+K=12 shares-hash test runs 16 separate prover checks. The real proof roundtrip
+also performs proving-key/proof generation and verification, so it is
+intentionally outside the default unit-test path.
+
 ## License
 
 Dual-licensed under MIT or Apache-2.0. See [LICENSE-MIT](../LICENSE-MIT) and [LICENSE-APACHE](../LICENSE-APACHE).

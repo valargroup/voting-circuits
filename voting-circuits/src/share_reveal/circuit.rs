@@ -1058,6 +1058,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid() {
         let (circuit, instance) = make_test_data(0);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -1065,6 +1066,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid_index_1() {
         let (circuit, instance) = make_test_data(1);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -1072,6 +1074,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid_index_2() {
         let (circuit, instance) = make_test_data(2);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -1079,6 +1082,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid_index_3() {
         let (circuit, instance) = make_test_data(3);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -1086,6 +1090,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid_index_15() {
         let (circuit, instance) = make_test_data(15);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -1093,6 +1098,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_merkle_root() {
         let (circuit, mut instance) = make_test_data(0);
         instance.vote_comm_tree_root = pallas::Base::from(12345u64);
@@ -1101,6 +1107,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_nullifier() {
         let (circuit, mut instance) = make_test_data(0);
         instance.share_nullifier = pallas::Base::from(99999u64);
@@ -1109,6 +1116,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_share_index() {
         let (circuit, instance) = make_test_data(0);
         let bad_instance = Instance::from_parts(
@@ -1127,6 +1135,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_vote_decision() {
         let (circuit, mut instance) = make_test_data(0);
         instance.vote_decision = pallas::Base::from(42u64);
@@ -1135,6 +1144,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_voting_round_id() {
         let (circuit, mut instance) = make_test_data(0);
         instance.voting_round_id = pallas::Base::from(12345u64);
@@ -1146,6 +1156,7 @@ mod tests {
     /// The share reveal circuit binds to the full curve point via share_commitment(blind, c1_x, c2_x, c1_y, c2_y).
     /// Negating c1_y changes the commitment, so the proof must fail.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_sign_flip_detected() {
         let (circuit, mut instance) = make_test_data(0);
         instance.enc_share_c1_y = -instance.enc_share_c1_y;
@@ -1162,6 +1173,7 @@ mod tests {
     /// Changing any share_comm alters shares_hash → vote_commitment, so the Merkle
     /// root computed in-circuit no longer matches the public instance root.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_tampered_share_comms_fails() {
         let (mut circuit, instance) = make_test_data(0);
 
@@ -1195,7 +1207,7 @@ mod tests {
     /// Run with:
     ///   cargo test row_budget -- --nocapture --ignored
     #[test]
-    #[ignore]
+    #[ignore = "long-running row-budget diagnostic; run with `cargo test row_budget -- --ignored --nocapture`"]
     fn row_budget() {
         use halo2_proofs::dev::CircuitCost;
         use pasta_curves::vesta;

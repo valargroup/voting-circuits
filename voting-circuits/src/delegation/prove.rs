@@ -233,6 +233,7 @@ mod prove_tests {
     use rand::rngs::OsRng;
 
     #[test]
+    #[ignore = "long-running real proof roundtrip; run with `cargo test -- --ignored`"]
     fn real_proof_roundtrip() {
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);

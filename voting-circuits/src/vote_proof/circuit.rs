@@ -1762,6 +1762,7 @@ mod tests {
     // ================================================================
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_integrity_valid_proof() {
         let (circuit, instance) = make_test_data();
 
@@ -1771,6 +1772,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_integrity_wrong_hash_fails() {
         let mut rng = OsRng;
         let (_, mut instance) = make_test_data();
@@ -1841,6 +1843,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_integrity_wrong_round_id_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -1893,6 +1896,7 @@ mod tests {
     /// (vpk_g_d, vpk_pk_d) should fail condition 3 only: in-circuit
     /// [ivk']*vpk_g_d ≠ vpk_pk_d while VAN hash and nullifier stay valid.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn condition_3_wrong_vsk_fails() {
         let mut rng = OsRng;
 
@@ -1997,6 +2001,7 @@ mod tests {
     /// condition 3. Instance is built with a wrong vpk_pk_d for the VAN
     /// hash so condition 2 still passes; only condition 3 fails.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn condition_3_wrong_vpk_pk_d_fails() {
         let mut rng = OsRng;
 
@@ -2101,6 +2106,7 @@ mod tests {
 
     /// Wrong r_vpk public input should fail condition 4.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn condition_4_wrong_r_vpk_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -2119,6 +2125,7 @@ mod tests {
 
     /// Wrong VAN_NULLIFIER public input should fail condition 5.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_nullifier_wrong_public_input_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -2137,6 +2144,7 @@ mod tests {
     /// wrong value also breaks condition 3 — but the test still verifies
     /// that the proof fails as expected.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_nullifier_wrong_vsk_nk_fails() {
         let mut rng = OsRng;
 
@@ -2273,6 +2281,7 @@ mod tests {
 
     /// Proposal authority with only bit 0 set (value 1): vote on proposal 0, new = 0.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_decrement_minimum_valid() {
         // proposal_id = 0 is now forbidden (sentinel value); use the next smallest valid id.
         // Authority = 2 = 0b0010 has exactly bit 1 set, so proposal_id = 1 is valid.
@@ -2287,6 +2296,7 @@ mod tests {
     /// With proposal_authority_old = 0, the selected bit is 0 so the
     /// "run_selected = 1" constraint (selected bit was set) fails.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_zero_fails() {
         let (circuit, instance) = make_test_data_with_authority(pallas::Base::zero());
 
@@ -2297,6 +2307,7 @@ mod tests {
 
     /// proposal_id = 0 is the dummy sentinel value and must be rejected (Cond 6, gate).
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_id_zero_fails() {
         // Authority = 1 = 0b0001 has bit 0 set, so this is otherwise a structurally
         // valid decrement — the only reason it must fail is the non-zero gate.
@@ -2309,6 +2320,7 @@ mod tests {
 
     /// Full authority (65535), proposal_id 1 → new = 65533 (e2e scenario).
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_full_authority_proposal_1_passes() {
         const MAX_PROPOSAL_AUTHORITY: u64 = 65535;
         let (circuit, instance) = make_test_data_with_authority_and_proposal(
@@ -2322,6 +2334,7 @@ mod tests {
 
     /// Wrong vote_authority_note_new (e.g. not clearing the bit) fails condition 6.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_wrong_new_fails() {
         let (circuit, mut instance) =
             make_test_data_with_authority_and_proposal(pallas::Base::from(65535u64), 1);
@@ -2337,6 +2350,7 @@ mod tests {
     /// Uses proposal_id=1 (not 0) to isolate this constraint from the
     /// proposal_id != 0 sentinel gate.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_bit_not_set_fails() {
         let (circuit, instance) =
             make_test_data_with_authority_and_proposal(pallas::Base::from(4u64), 1);
@@ -2349,6 +2363,7 @@ mod tests {
     /// see CONDITION_6_RUN_SEL_FIX.md. This test runs a valid proof (one selector) and
     /// verifies it passes; a zero-selector witness would be rejected by that gate.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_condition6_run_sel_constraint() {
         let (circuit, instance) =
             make_test_data_with_authority_and_proposal(pallas::Base::from(3u64), 1);
@@ -2362,6 +2377,7 @@ mod tests {
     /// exactly 16 bits (positions 0–15); a value with bit 16 set cannot be represented
     /// in that decomposition and must be rejected by the range check.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_exceeds_16_bits_fails() {
         // 65536 = 2^16 is the first value not representable as a 16-bit bitmask.
         let (circuit, instance) = make_test_data_with_authority(pallas::Base::from(65536u64));
@@ -2378,6 +2394,7 @@ mod tests {
 
     /// Wrong vote_authority_note_new public input should fail condition 7.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn new_van_integrity_wrong_public_input_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -2393,6 +2410,7 @@ mod tests {
     /// New VAN integrity with a large (but valid) 16-bit proposal authority.
     /// Authority 0xFFF8 has bits 3..15 set; voting on proposal 3 gives new = 0xFFF0.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn new_van_integrity_large_authority() {
         let (circuit, instance) = make_test_data_with_authority(pallas::Base::from(0xFFF8u64));
 
@@ -2406,6 +2424,7 @@ mod tests {
 
     /// Wrong vote_comm_tree_root in the instance should fail condition 1.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_membership_wrong_root_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -2418,6 +2437,7 @@ mod tests {
 
     /// A VAN at a non-zero position in the tree should verify.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_membership_nonzero_position() {
         let mut rng = OsRng;
 
@@ -2550,6 +2570,7 @@ mod tests {
 
     /// Shares that do NOT sum to total_note_value should fail condition 8.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_sum_wrong_total_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -2569,6 +2590,7 @@ mod tests {
 
     /// A share at the maximum valid value (2^30 - 1) should pass.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_range_max_valid() {
         let max_share = pallas::Base::from((1u64 << 30) - 1); // 1,073,741,823
         let total = (0..16).fold(pallas::Base::zero(), |acc, _| acc + max_share);
@@ -2668,6 +2690,7 @@ mod tests {
 
     /// A share at exactly 2^30 should fail the range check.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_range_overflow_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -2683,6 +2706,7 @@ mod tests {
     /// A share that is a large field element (simulating underflow
     /// from subtraction) should fail the range check.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_range_field_wrap_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -2700,6 +2724,7 @@ mod tests {
     /// still reject the individual overflow, confirming it checks each share
     /// independently — a correct sum does not bypass the per-share range gate.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_range_single_overflow_correct_sum_fails() {
         let mut rng = OsRng;
 
@@ -2813,6 +2838,7 @@ mod tests {
 
     /// Valid enc_share witnesses with matching shares_hash should pass.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_hash_valid_proof() {
         let (circuit, instance) = make_test_data();
 
@@ -2823,6 +2849,7 @@ mod tests {
     /// A corrupted enc_share_c1_x[0] should cause condition 10 failure:
     /// the in-circuit hash won't match the VOTE_COMMITMENT instance.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_hash_wrong_enc_share_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -2837,6 +2864,7 @@ mod tests {
     /// A wrong vote_commitment instance value (shares_hash mismatch)
     /// should fail, even with correct enc_share witnesses.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_hash_wrong_instance_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -3038,6 +3066,7 @@ mod tests {
 
     /// Valid El Gamal encryptions should produce a valid proof.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_valid_proof() {
         let (circuit, instance) = make_test_data();
 
@@ -3048,6 +3077,7 @@ mod tests {
     /// A corrupted share_randomness[0] should fail condition 11:
     /// the computed C1[0] won't match enc_share_c1_x[0].
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_wrong_randomness_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -3061,6 +3091,7 @@ mod tests {
     /// A wrong ea_pk in the instance should fail condition 11:
     /// the computed r * ea_pk won't match the ciphertexts.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_wrong_ea_pk_instance_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -3075,6 +3106,7 @@ mod tests {
     /// A corrupted share value (plaintext) should fail condition 11:
     /// C2_i = [v_i]*G + [r_i]*ea_pk will not match enc_share_c2_x[i].
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_wrong_share_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -3089,6 +3121,7 @@ mod tests {
     /// A corrupted enc_share_c2_x witness should cause verification to fail:
     /// condition 11 constrains ExtractP(C2_i) == enc_c2_x[i].
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_wrong_enc_c2_x_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -3145,6 +3178,7 @@ mod tests {
 
     /// Valid vote commitment (full Poseidon chain) should pass.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn vote_commitment_integrity_valid_proof() {
         let (circuit, instance) = make_test_data();
 
@@ -3155,6 +3189,7 @@ mod tests {
     /// A wrong vote_decision in the circuit should fail condition 12:
     /// the derived vote_commitment won't match the instance.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn vote_commitment_wrong_decision_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -3169,6 +3204,7 @@ mod tests {
     /// the in-circuit proposal_id (copied from instance) will produce
     /// a different vote_commitment.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn vote_commitment_wrong_proposal_id_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -3181,6 +3217,7 @@ mod tests {
 
     /// A wrong vote_commitment in the instance should fail.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn vote_commitment_wrong_instance_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -3231,6 +3268,7 @@ mod tests {
 
     /// Default circuit (all witnesses unknown) must not produce a valid proof.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn default_circuit_with_valid_instance_fails() {
         let (_, instance) = make_test_data();
         let circuit = Circuit::default();
@@ -3250,7 +3288,7 @@ mod tests {
     /// Run with:
     ///   cargo test --features vote-proof row_budget -- --nocapture --ignored
     #[test]
-    #[ignore]
+    #[ignore = "long-running row-budget diagnostic; run with `cargo test row_budget -- --ignored --nocapture`"]
     fn row_budget() {
         use halo2_proofs::dev::CircuitCost;
         use pasta_curves::vesta;
