@@ -5,7 +5,18 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: '0 9 * * 0'
   workflow_dispatch:
+    inputs:
+      run:
+        description: Manual test target
+        type: choice
+        required: true
+        default: full-suite
+        options:
+          - full-suite
+          - diagnostics
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -42,7 +53,7 @@ jobs:
 
   full-suite:
     name: Full suite
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run == 'full-suite')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -69,4 +80,32 @@ jobs:
         run: cargo test --locked
 
       - name: Run long tests
-        run: cargo test --locked -- --ignored
+        run: cargo test --locked -- --ignored --skip row_budget --skip cost_breakdown
+
+  diagnostics:
+    name: Diagnostics
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run == 'diagnostics')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: voting-circuits
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: voting-circuits
+
+      - name: Run row-budget diagnostics
+        run: cargo test --locked row_budget -- --ignored --nocapture
+
+      - name: Run cost-breakdown diagnostics
+        run: cargo test --locked cost_breakdown -- --ignored --nocapture
