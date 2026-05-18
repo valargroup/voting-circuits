@@ -63,8 +63,8 @@ use crate::circuit::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
 use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
 use crate::circuit::van_integrity;
 use crate::circuit::vote_commitment;
-pub use crate::protocol_hash::poseidon_hash_2;
 use crate::domain_tags;
+pub use crate::protocol_hash::poseidon_hash_2;
 use crate::shares_hash::compute_shares_hash_in_circuit;
 #[cfg(test)]
 use crate::shares_hash::hash_share_commitment_in_circuit;
