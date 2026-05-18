@@ -12,7 +12,6 @@ use halo2_proofs::{
     poly::commitment::Params,
     transcript::{Blake2bRead, Blake2bWrite, Challenge255},
 };
-use pasta_curves::{pallas, vesta};
 use rand::rngs::OsRng;
 
 use super::circuit::{Circuit, Instance, K};
@@ -163,84 +162,11 @@ pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String
         .map_err(|e| format!("vote proof verification failed: {:?}", e))
 }
 
-/// Verify a vote proof circuit proof from raw field-element bytes.
-///
-/// This is the lower-level entry point used by the FFI layer. It takes
-/// the proof bytes and a flat array of [`Instance::NUM_PUBLIC_INPUTS`] × 32
-/// bytes of LE-encoded Pallas base field elements (the public inputs in
-/// canonical order).
-///
-/// Returns `Ok(())` if verification succeeds, or an error message.
-///
-/// # Per-slot layout and caller authentication
-///
-/// The per-slot meaning of `public_inputs_bytes` matches the offsets
-/// defined at the top of `vote_proof/circuit.rs`. Each entry is annotated
-/// with whether it is *proof-attested* (the proof itself authenticates
-/// the value) or *caller-authenticated* (the caller MUST source it from
-/// a trusted channel — see `verify_vote_proof` for the same contract on
-/// the typed entry point, including why wiring `ea_pk_x/y` from the
-/// proof bundle is a custody-attack surface).
-///
-/// ```text
-/// bytes[  0.. 32] = van_nullifier              [proof-attested]
-/// bytes[ 32.. 64] = r_vpk_x                    [proof-attested]
-/// bytes[ 64.. 96] = r_vpk_y                    [proof-attested]
-/// bytes[ 96..128] = vote_authority_note_new    [proof-attested]
-/// bytes[128..160] = vote_commitment            [proof-attested]
-/// bytes[160..192] = vote_comm_tree_root        [caller-authenticated]
-/// bytes[192..224] = vote_comm_tree_anchor_h    [caller-authenticated]
-/// bytes[224..256] = proposal_id                [caller-authenticated]
-/// bytes[256..288] = voting_round_id            [caller-authenticated]
-/// bytes[288..320] = ea_pk_x                    [caller-authenticated]
-/// bytes[320..352] = ea_pk_y                    [caller-authenticated]
-/// ```
-pub fn verify_vote_proof_raw(proof: &[u8], public_inputs_bytes: &[u8]) -> Result<(), String> {
-    use pasta_curves::group::ff::PrimeField;
-
-    let expected_len = Instance::NUM_PUBLIC_INPUTS * 32;
-    if public_inputs_bytes.len() != expected_len {
-        return Err(format!(
-            "expected {} bytes ({} × 32) for public inputs, got {}",
-            expected_len,
-            Instance::NUM_PUBLIC_INPUTS,
-            public_inputs_bytes.len()
-        ));
-    }
-
-    // Deserialize each 32-byte chunk as a Pallas Fp element.
-    // The vote proof circuit's public inputs live on the Vesta
-    // scalar field, which is the same as the Pallas base field.
-    let mut public_inputs: Vec<vesta::Scalar> = Vec::with_capacity(Instance::NUM_PUBLIC_INPUTS);
-    for i in 0..Instance::NUM_PUBLIC_INPUTS {
-        let start = i * 32;
-        let mut repr = [0u8; 32];
-        repr.copy_from_slice(&public_inputs_bytes[start..start + 32]);
-        let fp_opt: Option<pallas::Base> = pallas::Base::from_repr(repr).into();
-        match fp_opt {
-            Some(f) => public_inputs.push(f),
-            None => {
-                return Err(format!(
-                    "public input {} is not a canonical Pallas Fp encoding",
-                    i
-                ))
-            }
-        }
-    }
-
-    let (params, _pk, vk) = get_vote_proof_keys();
-
-    let strategy = SingleVerifier::new(params);
-    let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);
-
-    verify_proof(params, vk, strategy, &[&[&public_inputs]], &mut transcript)
-        .map_err(|e| format!("vote proof verification failed: {:?}", e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use pasta_curves::group::ff::PrimeField;
+    use pasta_curves::pallas;
 
     fn serialize_instance(instance: &Instance) -> Vec<u8> {
         instance
@@ -277,17 +203,8 @@ mod tests {
     }
 
     #[test]
-    fn raw_verify_rejects_legacy_nine_input_encoding_before_proof_verification() {
-        let err = verify_vote_proof_raw(&[], &[0u8; 9 * 32]).unwrap_err();
-        assert_eq!(
-            err,
-            "expected 352 bytes (11 × 32) for public inputs, got 288"
-        );
-    }
-
-    #[test]
-    #[ignore = "expensive end-to-end proof generation; run with --ignored when touching FFI verification"]
-    fn raw_verify_accepts_proof_created_by_typed_builder() {
+    #[ignore = "expensive end-to-end proof generation; run with --ignored when touching verification"]
+    fn typed_verify_accepts_proof_created_by_typed_builder() {
         use crate::circuit::elgamal::spend_auth_g_affine;
         use crate::vote_proof::build_vote_proof_from_delegation;
         use group::Curve;
@@ -314,7 +231,7 @@ mod tests {
         )
         .expect("vote proof builder should produce a valid proof");
 
-        verify_vote_proof_raw(&bundle.proof, &serialize_instance(&bundle.instance))
-            .expect("raw verifier should accept the builder's public input layout");
+        verify_vote_proof(&bundle.proof, &bundle.instance)
+            .expect("typed verifier should accept the builder's proof and public inputs");
     }
 }

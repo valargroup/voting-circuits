@@ -31,6 +31,6 @@ pub use circuit::{
     VOTE_COMM_TREE_DEPTH,
 };
 pub use prove::{
-    create_vote_proof, verify_vote_proof, verify_vote_proof_raw, vote_proof_params,
-    vote_proof_proving_key, warm_vote_proof_keys,
+    create_vote_proof, verify_vote_proof, vote_proof_params, vote_proof_proving_key,
+    warm_vote_proof_keys,
 };
