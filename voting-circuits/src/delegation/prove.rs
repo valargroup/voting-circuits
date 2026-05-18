@@ -159,7 +159,7 @@ pub fn verify_delegation_proof(proof: &[u8], instance: &Instance) -> Result<(), 
 /// bytes[32..64]  = rk_x              [proof-attested]
 /// bytes[64..96]  = rk_y              [proof-attested]
 /// bytes[96..128] = cmx_new           [proof-attested]
-/// bytes[128..160] = van_comm         [caller-authenticated]
+/// bytes[128..160] = van_comm         [proof-attested]
 /// bytes[160..192] = vote_round_id    [caller-authenticated]
 /// bytes[192..224] = nc_root          [caller-authenticated]
 /// bytes[224..256] = nf_imt_root      [caller-authenticated]
@@ -168,7 +168,7 @@ pub fn verify_delegation_proof(proof: &[u8], instance: &Instance) -> Result<(), 
 /// bytes[320..352] = gov_null[2]      [proof-attested]
 /// bytes[352..384] = gov_null[3]      [proof-attested]
 /// bytes[384..416] = gov_null[4]      [proof-attested]
-/// bytes[416..448] = dom              [caller-authenticated]
+/// bytes[416..448] = dom              [proof-attested]
 /// ```
 pub fn verify_delegation_proof_raw(proof: &[u8], public_inputs_bytes: &[u8]) -> Result<(), String> {
     use pasta_curves::group::ff::PrimeField;
