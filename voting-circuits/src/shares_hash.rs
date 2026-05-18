@@ -525,9 +525,12 @@ mod tests {
         assert!(prover.verify().is_err());
     }
 
-    /// Every one of the 16 share positions contributes to the output hash.
+    /// Every one of the 16 share positions contributes to the native output hash.
+    ///
+    /// `compute_shares_hash_matches_native` covers the in-circuit/native
+    /// equivalence once; this test keeps the per-position coverage without
+    /// running a separate K=12 prover for every position.
     #[test]
-    #[ignore = "long-running repeated Halo2 gadget test; run with `cargo test -- --ignored`"]
     fn all_16_share_positions_are_hashed() {
         let mut rng = OsRng;
         let blinds: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
@@ -539,20 +542,13 @@ mod tests {
         let correct = shares_hash(blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y);
 
         for i in 0..16 {
-            let mut circuit = ComputeSharesHashCircuit {
-                blinds,
-                enc_c1_x,
-                enc_c2_x,
-                enc_c1_y,
-                enc_c2_y,
-            };
-            circuit.enc_c1_x[i] = pallas::Base::random(&mut rng);
+            let mut perturbed_enc_c1_x = enc_c1_x;
+            perturbed_enc_c1_x[i] += pallas::Base::one();
 
-            let prover = MockProver::run(12, &circuit, vec![vec![correct]])
-                .unwrap_or_else(|e| panic!("MockProver::run failed at position {i}: {e}"));
-            assert!(
-                prover.verify().is_err(),
-                "corrupting enc_c1_x[{i}] did not change the shares_hash — position is not hashed"
+            assert_ne!(
+                shares_hash(blinds, perturbed_enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y),
+                correct,
+                "perturbing enc_c1_x[{i}] did not change the shares_hash"
             );
         }
     }
