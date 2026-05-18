@@ -26,9 +26,9 @@
 //!   ciphertext coordinate) ensures the nullifier is not publicly
 //!   derivable from on-chain data, since ciphertext coordinates are
 //!   posted as public inputs alongside the proof. Round, proposal, decision,
-//!   `shares_hash`, and `share_comms` binding is transitive through
-//!   `vote_commitment`, which is already checked against the vote commitment
-//!   tree.
+//!   and `shares_hash` bind through the `vote_commitment` preimage;
+//!   `share_comms` bind one hop earlier through `shares_hash`. The resulting
+//!   `vote_commitment` is checked against the vote commitment tree.
 //!
 //! ## Privacy
 //!
@@ -154,9 +154,10 @@ pub use crate::domain_tags::share_spend as domain_tag_share_spend;
 /// Because blinds are never posted on-chain, the nullifier cannot be
 /// derived by an observer — even one who knows the vote commitment tree
 /// contents and the public ciphertext coordinates. Round, proposal, decision,
-/// `shares_hash`, and `share_comms` binding comes transitively through
-/// `vote_commitment`. The nullifier deliberately consumes the parent vote
-/// commitment instead of re-hashing its full preimage.
+/// and `shares_hash` bind through the `vote_commitment` preimage;
+/// `share_comms` bind one hop earlier through `shares_hash`. The nullifier
+/// deliberately consumes the parent vote commitment instead of re-hashing its
+/// full preimage.
 pub fn share_nullifier_hash(
     vote_commitment: pallas::Base,
     share_index: pallas::Base,
@@ -797,10 +798,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Unlike ciphertext coordinates (c1_x, c2_x), the blind is never
         // posted on-chain, so an observer cannot enumerate vote commitments
         // to link nullifiers to their source.
-        // Round, proposal, decision, shares_hash, and share_comms binding is
-        // transitive through vote_commitment. A wrong public `vote_decision` or
-        // a wrong private share-commitment set changes the condition-2
-        // commitment and is rejected by the Merkle path binding in condition 1.
+        // Round, proposal, decision, and shares_hash binding is transitive
+        // through vote_commitment; share_comms bind one hop earlier through
+        // shares_hash. A wrong public `vote_decision` or a wrong private
+        // share-commitment set changes the condition-2 commitment and is
+        // rejected by the Merkle path binding in condition 1.
         // ---------------------------------------------------------------
         {
             // "share spend" domain tag — constant-constrained so the
