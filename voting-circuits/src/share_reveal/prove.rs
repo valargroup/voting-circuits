@@ -8,11 +8,13 @@ use std::vec::Vec;
 
 use halo2_proofs::{
     pasta::EqAffine,
-    plonk::{self, create_proof, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
+    plonk::{self, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
     poly::commitment::Params,
-    transcript::{Blake2bRead, Blake2bWrite, Challenge255},
+    transcript::{Blake2bRead, Challenge255},
 };
-use rand::rngs::OsRng;
+
+use crate::prove_error::create_proof_bytes;
+use crate::ProveError;
 
 use super::circuit::{Circuit, Instance, K};
 
@@ -83,27 +85,21 @@ pub fn warm_share_reveal_keys() {
 
 /// Create a real Halo2 proof for the share reveal circuit.
 ///
-/// Returns the serialized proof bytes. The caller must have constructed
-/// a valid `Circuit` (with all witnesses populated) and a matching
-/// `Instance` (9 public inputs).
+/// Returns the serialized proof bytes. Returns an error if the caller
+/// provides a circuit without all witnesses populated or an instance
+/// that Halo2 cannot prove against.
 ///
 /// **Expensive**: K=11 proof generation takes ~5-15 seconds in release mode.
-pub fn create_share_reveal_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
+/// Params and keys are cached so only the first call pays keygen.
+pub fn create_share_reveal_proof(
+    circuit: Circuit,
+    instance: &Instance,
+) -> Result<Vec<u8>, ProveError> {
     let (params, pk, _vk) = share_reveal_cached_keys();
 
     let public_inputs = instance.to_halo2_instance();
 
-    let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<_>>::init(vec![]);
-    create_proof(
-        params,
-        pk,
-        &[circuit],
-        &[&[&public_inputs]],
-        OsRng,
-        &mut transcript,
-    )
-    .expect("share_reveal proof generation should not fail");
-    transcript.finalize()
+    create_proof_bytes(params, pk, circuit, &public_inputs)
 }
 
 // ================================================================
@@ -158,4 +154,39 @@ pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<()
 
     verify_proof(params, vk, strategy, &[&[&public_inputs]], &mut transcript)
         .map_err(|e| format!("share_reveal verification failed: {:?}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ProveError;
+    use halo2_proofs::plonk;
+    use pasta_curves::pallas;
+
+    fn minimal_instance() -> Instance {
+        Instance::from_parts(
+            pallas::Base::from(1),
+            pallas::Base::from(2),
+            pallas::Base::from(3),
+            pallas::Base::from(4),
+            pallas::Base::from(5),
+            pallas::Base::from(6),
+            pallas::Base::from(7),
+            pallas::Base::from(8),
+            pallas::Base::from(9),
+        )
+    }
+
+    #[test]
+    fn create_share_reveal_proof_signature_returns_result() {
+        let _: fn(Circuit, &Instance) -> Result<Vec<u8>, ProveError> = create_share_reveal_proof;
+    }
+
+    #[test]
+    fn create_share_reveal_proof_returns_err_for_missing_witnesses() {
+        let instance = minimal_instance();
+        let err = create_share_reveal_proof(Circuit::default(), &instance).unwrap_err();
+
+        assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
+    }
 }
