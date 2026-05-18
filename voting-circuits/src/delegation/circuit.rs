@@ -37,7 +37,7 @@ use halo2_proofs::{
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
 use std::vec::Vec;
 
-use super::imt::{gov_auth_domain_tag, IMT_DEPTH};
+use super::imt::{gov_auth_domain_tag, gov_null_domain_tag, IMT_DEPTH};
 use super::imt_circuit::{synthesize_imt_non_membership, ImtNonMembershipConfig};
 use crate::circuit::address_ownership::prove_address_ownership;
 use crate::circuit::gadget::assign_constant;
@@ -1670,26 +1670,38 @@ fn synthesize_note_slot(
 
     // ---------------------------------------------------------------
     // Condition 14: Alternate nullifier integrity.
-    // nf_dom = Poseidon(nk, dom, real_nf)
+    // nf_dom = Poseidon(governance_nullifier_domain_tag, nk, dom, real_nf)
     // ---------------------------------------------------------------
 
     // Derives an alternate nullifier published on the vote chain to prevent
     // double-delegation (ZIP §Alternate Nullifier Derivation). Single
-    // ConstantLength<3> Poseidon hash (2 permutations at rate=2) that:
+    // ConstantLength<4> Poseidon hash (2 permutations at rate=2) that:
     //   - Is keyed by nk, so it can't be linked to real_nf even when real_nf is
     //     later revealed on mainchain
+    //   - Is separated from the IMT leaf hash by a constant-constrained domain tag
     //   - Is scoped to this application instance via dom (a public input derived
     //     out-of-circuit from the protocol identifier and vote_round_id)
     //
     // The result is constrained to the public instance so the vote chain can
     // track which notes have already been delegated this round.
 
-    // Poseidon(nk, dom, real_nf)
+    let gov_null_tag_cell = assign_constant(
+        layouter.namespace(|| format!("note {s} governance nullifier domain tag")),
+        config.advices[0],
+        gov_null_domain_tag(),
+    )?;
+
+    // Poseidon(governance_nullifier_domain_tag, nk, dom, real_nf)
     let gov_null = poseidon_hash_in_circuit(
         config.poseidon_chip(),
         layouter.namespace(|| format!("note {s} gov_null")),
-        "Poseidon(nk, dom, real_nf)",
-        [nk_cell.clone(), dom_cell.clone(), real_nf.inner().clone()],
+        "Poseidon(gov_null_domain, nk, dom, real_nf)",
+        [
+            gov_null_tag_cell,
+            nk_cell.clone(),
+            dom_cell.clone(),
+            real_nf.inner().clone(),
+        ],
     )?;
 
     // Constrain gov_null to the public instance column so the vote chain sees it.

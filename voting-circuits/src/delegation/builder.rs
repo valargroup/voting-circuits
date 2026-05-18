@@ -552,7 +552,7 @@ pub fn build_delegation_bundle(
 
         // Condition 12: real nullifier for IMT non-membership.
         let real_nf = note.nullifier(fvk);
-        // Condition 14: alternate nullifier = Poseidon(nk, dom, real_nf).
+        // Condition 14: alternate nullifier = Poseidon(domain tag, nk, dom, real_nf).
         let gov_null = gov_null_hash(nk_val, dom, real_nf.inner());
 
         let slot = NoteSlotWitness {

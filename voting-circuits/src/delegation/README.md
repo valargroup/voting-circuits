@@ -14,7 +14,8 @@ more than five notes produce multiple delegation proofs.
 **Authoritative hash sources:** this README is explanatory. The in-tree source
 of truth for reusable hash preimages is the owning module:
 `crate::circuit::van_integrity` for `van_comm`, `crate::domain_tags` for
-domain-tag encoding, and the local `rho_binding_hash` / `gov_null_hash` helpers in `circuit.rs` for delegation-only hashes.
+domain-tag encoding, `rho_binding_hash` in `circuit.rs`, and `gov_null_hash`
+in `imt.rs` for delegation-only hashes.
 
 ## Inputs
 
@@ -411,11 +412,12 @@ Purpose: prove the note's nullifier has NOT been spent, using a Poseidon-based I
 Purpose: derive an alternate nullifier (ZIP §Alternate Nullifier Derivation) that is published as a public input. This prevents double-delegation without revealing the note's true Orchard nullifier.
 
 ```
-nf_dom = Poseidon(nk, dom, real_nf)
+nf_dom = Poseidon(DOMAIN_GOV_NULL, nk, dom, real_nf)
 ```
 
-Single Poseidon hash (`ConstantLength<3>`, 2 permutations at rate 2):
+Single Poseidon hash (`ConstantLength<4>`, 2 permutations at rate 2):
 - **nk** — the nullifier deriving key, making the result unforgeable.
+- **DOMAIN_GOV_NULL** — the `"governance nullifier"` domain tag, assigned as a circuit constant so governance nullifiers do not share the raw `Poseidon3` preimage shape used by IMT leaves.
 - **dom** — the nullifier domain (public input at offset 13), constrained in-circuit to `Poseidon("governance authorization", vote_round_id)`. Scopes the alternate nullifier to this application instance and voting round.
 - **real_nf** — the note's true nullifier from condition 12.
 

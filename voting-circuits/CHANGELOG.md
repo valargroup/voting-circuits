@@ -18,6 +18,8 @@
 ### Security
 
 - Add a protocol domain tag to the delegation rho binding hash.
+- Domain-separate delegation governance nullifiers from IMT leaf hashes by adding
+  a dedicated governance nullifier tag to the Poseidon preimage.
 - Bind the delegation nullifier domain to `vote_round_id` in-circuit, preventing `dom` from being used as a free public input.
 - Reject identity delegation `rk` values during public input construction instead of panicking while preparing Halo2 inputs.
 - Return typed vote-proof builder errors for identity election authority keys,
@@ -32,6 +34,9 @@
 
 ### Migration
 
+- Regenerate delegation proving and verifying keys, and update downstream code
+  that recomputes `gov_null_1..5`. The governance nullifier values change, but
+  the IMT leaf and root format does not.
 - Replace `delegation::builder::*` and `delegation::imt::*` imports with named `delegation::*` root exports.
 - Replace `vote_proof::builder::*` and `vote_proof::circuit::*` imports with named `vote_proof::*` root exports.
 - Replace `share_reveal::builder::*` imports with named `share_reveal::*` root exports.

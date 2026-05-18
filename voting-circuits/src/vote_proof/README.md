@@ -186,10 +186,10 @@ Purpose: derive a nullifier that prevents double-voting without revealing the VA
 van_nullifier = Poseidon(vsk_nk, domain_van_nullifier, voting_round_id, vote_authority_note_old)
 ```
 
-Single `ConstantLength<4>` call matching ZKP 1 condition 14's governance nullifier pattern (`gov_null = Poseidon(nk, domain_tag, vote_round_id, real_nf)`):
+Single `ConstantLength<4>` call matching ZKP 1 condition 14's governance nullifier pattern (`gov_null = Poseidon(domain_tag, nk, dom, real_nf)`, where `dom = Poseidon("governance authorization", vote_round_id)`):
 
 - **`vsk_nk`**: nullifier deriving key (private witness, base field element). Concretely `fvk.nk().inner()` — structurally the same value as the `nk` used in ZKP 1. The same cell is shared with condition 3 (CommitIvk), binding the nullifier to the authenticated key hierarchy.
-- **`domain_van_nullifier`**: `"vote authority spend"` (20 bytes) zero-padded to 32 and interpreted as a little-endian Pallas field element per `crate::domain_tags`. Assigned via `assign_advice_from_constant` so the value is **baked into the verification key** — a prover cannot substitute a different value. This tag is the sole cross-circuit separator between this nullifier and ZKP 1's governance nullifier, which uses `"governance authorization"` under the same key. The registry test asserts the tags are distinct field elements.
+- **`domain_van_nullifier`**: `"vote authority spend"` (20 bytes) zero-padded to 32 and interpreted as a little-endian Pallas field element per `crate::domain_tags`. Assigned via `assign_advice_from_constant` so the value is **baked into the verification key** — a prover cannot substitute a different value. This tag is the cross-circuit separator between this nullifier and ZKP 1's governance nullifier, which uses `"governance nullifier"` in its preimage and `"governance authorization"` when deriving `dom`. The registry test asserts the tags are distinct field elements.
 - **`voting_round_id`**: cell-equality-linked to condition 2's instance copy, scoping the nullifier to this round.
 - **`vote_authority_note_old`**: cell-equality-linked to condition 2's derived VAN hash, binding conditions 2 and 5 together.
 
