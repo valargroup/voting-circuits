@@ -43,6 +43,7 @@ use crate::circuit::address_ownership::prove_address_ownership;
 use crate::circuit::gadget::assign_constant;
 use crate::circuit::mul_chip::{MulChip, MulConfig, MulInstruction};
 use crate::circuit::van_integrity;
+use crate::protocol_hash::poseidon_hash_in_circuit;
 use halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
@@ -995,23 +996,12 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             config.advices[0],
             gov_auth_domain_tag(),
         )?;
-        let derived_dom = {
-            let poseidon_hasher = PoseidonHash::<
-                pallas::Base,
-                _,
-                poseidon::P128Pow5T3,
-                ConstantLength<2>,
-                3,
-                2,
-            >::init(
-                config.poseidon_chip(),
-                layouter.namespace(|| "derive dom init"),
-            )?;
-            poseidon_hasher.hash(
-                layouter.namespace(|| "Poseidon(gov_auth_domain_tag, vote_round_id)"),
-                [gov_auth_tag_cell, vote_round_id_cell.clone()],
-            )?
-        };
+        let derived_dom = poseidon_hash_in_circuit(
+            config.poseidon_chip(),
+            layouter.namespace(|| "derive dom"),
+            "Poseidon(gov_auth_domain_tag, vote_round_id)",
+            [gov_auth_tag_cell, vote_round_id_cell.clone()],
+        )?;
         layouter.assign_region(
             || "dom binding",
             |mut region| region.constrain_equal(derived_dom.cell(), dom_cell.cell()),
@@ -1665,17 +1655,12 @@ fn synthesize_note_slot(
     // track which notes have already been delegated this round.
 
     // Poseidon(nk, dom, real_nf)
-    let gov_null = {
-        let poseidon_hasher =
-            PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init(
-                config.poseidon_chip(),
-                layouter.namespace(|| format!("note {s} gov_null init")),
-            )?;
-        poseidon_hasher.hash(
-            layouter.namespace(|| format!("note {s} Poseidon(nk, dom, real_nf)")),
-            [nk_cell.clone(), dom_cell.clone(), real_nf.inner().clone()],
-        )?
-    };
+    let gov_null = poseidon_hash_in_circuit(
+        config.poseidon_chip(),
+        layouter.namespace(|| format!("note {s} gov_null")),
+        "Poseidon(nk, dom, real_nf)",
+        [nk_cell.clone(), dom_cell.clone(), real_nf.inner().clone()],
+    )?;
 
     // Constrain gov_null to the public instance column so the vote chain sees it.
     let gov_null_cell = gov_null.clone();

@@ -25,6 +25,8 @@ use halo2_proofs::{
     plonk,
 };
 
+use crate::protocol_hash::{poseidon_hash_2, poseidon_hash_in_circuit};
+
 // ================================================================
 // Constants
 // ================================================================
@@ -68,8 +70,7 @@ pub(crate) fn van_integrity_hash(
             voting_round_id,
             proposal_authority,
         ]);
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>::init()
-        .hash([van_comm_core, van_comm_rand])
+    poseidon_hash_2(van_comm_core, van_comm_rand)
 }
 
 // ================================================================
@@ -121,13 +122,10 @@ pub(crate) fn van_integrity_poseidon(
         layouter.namespace(|| format!("{label} Poseidon(core)")),
         core_message,
     )?;
-    let poseidon_hasher_2 =
-        PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>::init(
-            PoseidonChip::construct(poseidon_config.clone()),
-            layouter.namespace(|| format!("{label} final Poseidon init")),
-        )?;
-    poseidon_hasher_2.hash(
-        layouter.namespace(|| format!("{label} Poseidon(core, rand)")),
+    poseidon_hash_in_circuit(
+        PoseidonChip::construct(poseidon_config.clone()),
+        layouter.namespace(|| format!("{label} final Poseidon")),
+        "Poseidon(core, rand)",
         [van_comm_core, van_comm_rand],
     )
 }

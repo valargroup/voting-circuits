@@ -9,6 +9,7 @@
 #![deny(unsafe_code)]
 
 pub(crate) mod circuit;
+mod protocol_hash;
 pub(crate) mod shares_hash;
 
 pub use shares_hash::shares_hash_from_comms;

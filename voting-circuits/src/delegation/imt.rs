@@ -10,9 +10,10 @@
 //! Used by the delegation circuit and builder.
 
 use ff::PrimeField;
-use halo2_gadgets::poseidon::primitives::{self as poseidon, ConstantLength};
 use pasta_curves::pallas;
 use std::string::String;
+
+use crate::protocol_hash::{poseidon_hash_2, poseidon_hash_3};
 
 /// Depth of the nullifier Indexed Merkle Tree Merkle path (Poseidon-based).
 /// Total Poseidon calls per proof = 2 (leaf hash, ConstantLength<3>) + 29 (path) = 31.
@@ -24,17 +25,6 @@ pub(crate) fn gov_auth_domain_tag() -> pallas::Base {
     let mut bytes = [0u8; 32];
     bytes[..24].copy_from_slice(b"governance authorization");
     pallas::Base::from_repr(bytes).unwrap()
-}
-
-/// Compute Poseidon hash of two field elements (out of circuit).
-pub(crate) fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([a, b])
-}
-
-/// Compute Poseidon hash of three field elements (out of circuit).
-/// Uses `ConstantLength<3>` (width-3 sponge, 2 absorption blocks).
-pub(crate) fn poseidon_hash_3(a: pallas::Base, b: pallas::Base, c: pallas::Base) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([a, b, c])
 }
 
 /// Derive the nullifier domain for a voting round (out of circuit).
