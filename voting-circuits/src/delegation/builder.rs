@@ -77,8 +77,16 @@ pub struct DelegationBundle {
 pub enum DelegationBuildError {
     /// Must have 1–5 real notes.
     InvalidNoteCount(usize),
+    /// Public input construction failed.
+    Instance(circuit::InstanceError),
     /// IMT proof fetch failed for a padded note nullifier.
     ImtFetchFailed(super::imt::ImtError),
+}
+
+impl From<circuit::InstanceError> for DelegationBuildError {
+    fn from(e: circuit::InstanceError) -> Self {
+        DelegationBuildError::Instance(e)
+    }
 }
 
 impl From<super::imt::ImtError> for DelegationBuildError {
@@ -92,6 +100,9 @@ impl std::fmt::Display for DelegationBuildError {
         match self {
             DelegationBuildError::InvalidNoteCount(n) => {
                 write!(f, "invalid note count: {} (expected 1–5)", n)
+            }
+            DelegationBuildError::Instance(e) => {
+                write!(f, "instance construction failed: {e}")
             }
             DelegationBuildError::ImtFetchFailed(e) => {
                 write!(f, "IMT proof fetch failed: {e}")
@@ -380,7 +391,7 @@ pub fn build_delegation_bundle(
             gov_nulls[4],
         ],
         dom,
-    );
+    )?;
 
     Ok(DelegationBundle { circuit, instance })
 }

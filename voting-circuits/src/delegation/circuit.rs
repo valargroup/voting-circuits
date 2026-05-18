@@ -1777,8 +1777,10 @@ fn synthesize_note_slot(
 pub struct Instance {
     /// The derived nullifier of the keystone note.
     pub nf_signed: Nullifier,
-    /// The randomized spend validating key.
-    pub rk: VerificationKey<SpendAuth>,
+    /// The x-coordinate of the randomized spend validating key.
+    pub rk_x: pallas::Base,
+    /// The y-coordinate of the randomized spend validating key.
+    pub rk_y: pallas::Base,
     /// The extracted commitment of the output note.
     pub cmx_new: pallas::Base,
     /// The governance commitment hash.
@@ -1795,6 +1797,23 @@ pub struct Instance {
     pub dom: pallas::Base,
 }
 
+/// Errors returned while constructing delegation public inputs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstanceError {
+    /// `rk` decoded to the identity point, which has no affine coordinates.
+    RkIsIdentity,
+}
+
+impl std::fmt::Display for InstanceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InstanceError::RkIsIdentity => write!(f, "rk must not be the identity point"),
+        }
+    }
+}
+
+impl std::error::Error for InstanceError {}
+
 impl Instance {
     /// Constructs an [`Instance`] from its constituent parts.
     ///
@@ -1803,6 +1822,9 @@ impl Instance {
     /// [`crate::delegation::prove::verify_delegation_proof`] for the trust
     /// contract. The remaining fields, including `van_comm` and `dom`, are
     /// proof-attested outputs.
+    ///
+    /// Rejects an identity `rk` because the public input stores affine
+    /// coordinates, and the identity has no affine coordinate representation.
     pub fn from_parts(
         nf_signed: Nullifier,
         rk: VerificationKey<SpendAuth>,
@@ -1813,10 +1835,23 @@ impl Instance {
         nf_imt_root: pallas::Base,
         gov_null: [pallas::Base; 5],
         dom: pallas::Base,
-    ) -> Self {
-        Instance {
+    ) -> Result<Self, InstanceError> {
+        if rk.is_identity() {
+            return Err(InstanceError::RkIsIdentity);
+        }
+
+        let rk_bytes: [u8; 32] = (&rk).into();
+        let rk_point = pallas::Point::from_bytes(&rk_bytes)
+            .expect("VerificationKey constructor accepted on-curve bytes");
+        let rk_affine = rk_point.to_affine();
+        let rk_coords = rk_affine
+            .coordinates()
+            .expect("identity rk rejected before coordinate extraction");
+
+        Ok(Instance {
             nf_signed,
-            rk,
+            rk_x: *rk_coords.x(),
+            rk_y: *rk_coords.y(),
             cmx_new,
             van_comm,
             vote_round_id,
@@ -1824,7 +1859,7 @@ impl Instance {
             nf_imt_root,
             gov_null,
             dom,
-        }
+        })
     }
 
     /// Serializes the public inputs into the flat field-element vector that
@@ -1833,20 +1868,10 @@ impl Instance {
     /// The order must match the instance column offsets defined at the top of
     /// this file (`NF_SIGNED`, `RK_X`, `RK_Y`, `CMX_NEW`, etc.).
     pub fn to_halo2_instance(&self) -> Vec<vesta::Scalar> {
-        // rk is stored as compressed bytes but the circuit constrains it as
-        // two field elements (x, y coordinates of the curve point).
-        // Safety: VerificationKey<SpendAuth> guarantees a valid, non-identity
-        // curve point, so both conversions are infallible.
-        let rk = pallas::Point::from_bytes(&self.rk.clone().into())
-            .expect("rk is a valid curve point (guaranteed by VerificationKey)")
-            .to_affine()
-            .coordinates()
-            .expect("rk is not the identity point (guaranteed by VerificationKey)");
-
         vec![
             self.nf_signed.inner(),
-            *rk.x(),
-            *rk.y(),
+            self.rk_x,
+            self.rk_y,
             self.cmx_new,
             self.van_comm,
             self.vote_round_id,
@@ -2124,7 +2149,8 @@ mod tests {
                 gov_nulls[4],
             ],
             dom,
-        );
+        )
+        .expect("test rk must be non-identity");
 
         TestData {
             circuit,
@@ -2168,7 +2194,14 @@ mod tests {
         let wrong_rk = ak2.randomize(&pallas::Scalar::random(&mut rng));
 
         let mut instance = t.instance.clone();
-        instance.rk = wrong_rk;
+        let rk_bytes: [u8; 32] = (&wrong_rk).into();
+        let wrong_rk_point = pallas::Point::from_bytes(&rk_bytes)
+            .unwrap()
+            .to_affine()
+            .coordinates()
+            .unwrap();
+        instance.rk_x = *wrong_rk_point.x();
+        instance.rk_y = *wrong_rk_point.y();
 
         let pi = instance.to_halo2_instance();
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
@@ -2263,12 +2296,36 @@ mod tests {
         let pi = t.instance.to_halo2_instance();
         assert_eq!(pi.len(), 14, "Expected exactly 14 public inputs");
         assert_eq!(pi[NF_SIGNED], t.instance.nf_signed.inner());
+        assert_eq!(pi[RK_X], t.instance.rk_x);
+        assert_eq!(pi[RK_Y], t.instance.rk_y);
         assert_eq!(pi[CMX_NEW], t.instance.cmx_new);
         assert_eq!(pi[VAN_COMM], t.instance.van_comm);
         assert_eq!(pi[NC_ROOT], t.instance.nc_root);
         assert_eq!(pi[NF_IMT_ROOT], t.instance.nf_imt_root);
         assert_eq!(pi[GOV_NULL_1], t.instance.gov_null[0]);
         assert_eq!(pi[DOM], t.instance.dom);
+    }
+
+    #[test]
+    fn instance_from_parts_rejects_identity_rk() {
+        let t = make_test_data();
+        let identity_rk = VerificationKey::<SpendAuth>::try_from([0u8; 32])
+            .expect("RedPallas accepts identity verification keys");
+
+        let err = Instance::from_parts(
+            t.instance.nf_signed,
+            identity_rk,
+            t.instance.cmx_new,
+            t.instance.van_comm,
+            t.instance.vote_round_id,
+            t.instance.nc_root,
+            t.instance.nf_imt_root,
+            t.instance.gov_null,
+            t.instance.dom,
+        )
+        .unwrap_err();
+
+        assert_eq!(err, InstanceError::RkIsIdentity);
     }
 
     #[test]
