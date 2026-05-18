@@ -21,5 +21,6 @@ pub use imt::{
     SpacedLeafImtProvider, IMT_DEPTH,
 };
 pub use prove::{
-    create_delegation_proof, delegation_params, delegation_proving_key, verify_delegation_proof,
+    create_delegation_proof, delegation_cached_keys, delegation_params, delegation_proving_key,
+    verify_delegation_proof, warm_delegation_keys,
 };
