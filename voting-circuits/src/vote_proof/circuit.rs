@@ -150,35 +150,34 @@ pub(super) const MAX_PROPOSAL_ID: usize = 16;
 // ================================================================
 
 /// Public input offset for the VAN nullifier (prevents double-vote).
-const VAN_NULLIFIER: usize = 0;
+pub const VAN_NULLIFIER_PUBLIC_OFFSET: usize = 0;
 /// Public input offset for the randomized voting public key (condition 4: Spend Authority).
 /// x-coordinate of r_vpk = vsk.ak + [alpha_v] * G.
-const R_VPK_X: usize = 1;
+pub const R_VPK_X_PUBLIC_OFFSET: usize = 1;
 /// Public input offset for r_vpk y-coordinate.
-const R_VPK_Y: usize = 2;
+pub const R_VPK_Y_PUBLIC_OFFSET: usize = 2;
 /// Public input offset for the new VAN commitment (with decremented authority).
-const VOTE_AUTHORITY_NOTE_NEW: usize = 3;
+pub const VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET: usize = 3;
 /// Public input offset for the vote commitment hash.
-const VOTE_COMMITMENT: usize = 4;
+pub const VOTE_COMMITMENT_PUBLIC_OFFSET: usize = 4;
 /// Public input offset for the vote commitment tree root.
-const VOTE_COMM_TREE_ROOT: usize = 5;
+pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 5;
 /// Public input offset for the tree anchor height.
 // The circuit does not constrain this slot to a witness cell. It is
 // transcript-bound metadata whose meaning is authenticated by the verifier's
 // caller. In the chain path, the ante handler looks up the commitment root at
-// msg.VoteCommTreeAnchorHeight and passes that root as VOTE_COMM_TREE_ROOT,
+// msg.VoteCommTreeAnchorHeight and passes that root as VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET,
 // which the circuit does constrain. This keeps the binding between height and
 // root in the chain state lookup rather than in this proof.
-#[allow(dead_code)]
-const VOTE_COMM_TREE_ANCHOR_HEIGHT: usize = 6;
+pub const VOTE_COMM_TREE_ANCHOR_HEIGHT_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the proposal identifier.
-const PROPOSAL_ID: usize = 7;
+pub const PROPOSAL_ID_PUBLIC_OFFSET: usize = 7;
 /// Public input offset for the voting round identifier.
-const VOTING_ROUND_ID: usize = 8;
+pub const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
 /// Public input offset for the election authority public key x-coordinate.
-const EA_PK_X: usize = 9;
+pub const EA_PK_X_PUBLIC_OFFSET: usize = 9;
 /// Public input offset for the election authority public key y-coordinate.
-const EA_PK_Y: usize = 10;
+pub const EA_PK_Y_PUBLIC_OFFSET: usize = 10;
 
 // ================================================================
 // Out-of-circuit helpers
@@ -491,7 +490,7 @@ pub struct Circuit {
     pub(crate) share_randomness: [Value<pallas::Base>; 16],
     /// Election authority public key (Pallas curve point).
     /// The El Gamal encryption key — published as a round parameter.
-    /// Both coordinates are public inputs (EA_PK_X, EA_PK_Y).
+    /// Both coordinates are public inputs (EA_PK_X_PUBLIC_OFFSET, EA_PK_Y_PUBLIC_OFFSET).
     pub(crate) ea_pk: Value<pallas::Affine>,
 
     // Condition 12 (Vote Commitment Integrity): vote decision.
@@ -707,7 +706,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // Copy voting_round_id from the instance column into an advice cell.
         // This creates an equality constraint between the advice cell and the
-        // instance at offset VOTING_ROUND_ID, ensuring the in-circuit value
+        // instance at offset VOTING_ROUND_ID_PUBLIC_OFFSET, ensuring the in-circuit value
         // matches the public input.
         let voting_round_id = layouter.assign_region(
             || "copy voting_round_id from instance",
@@ -715,7 +714,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "voting_round_id",
                     config.primary,
-                    VOTING_ROUND_ID,
+                    VOTING_ROUND_ID_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -894,8 +893,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             self.alpha_v,
             &vsk_ak_point,
             config.primary,
-            R_VPK_X,
-            R_VPK_Y,
+            R_VPK_X_PUBLIC_OFFSET,
+            R_VPK_Y_PUBLIC_OFFSET,
         )?;
 
         // ---------------------------------------------------------------
@@ -927,10 +926,14 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 "cond1: merkle",
             )?;
 
-            // Bind the computed Merkle root to the VOTE_COMM_TREE_ROOT
+            // Bind the computed Merkle root to the VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET
             // public input. The verifier checks that the voter's VAN is
             // a leaf in the published vote commitment tree.
-            layouter.constrain_instance(root.cell(), config.primary, VOTE_COMM_TREE_ROOT)?;
+            layouter.constrain_instance(
+                root.cell(),
+                config.primary,
+                VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET,
+            )?;
         }
 
         // ---------------------------------------------------------------
@@ -988,10 +991,14 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             )?
         };
 
-        // Bind the derived nullifier to the VAN_NULLIFIER public input.
+        // Bind the derived nullifier to the VAN_NULLIFIER_PUBLIC_OFFSET public input.
         // The verifier checks that the prover's computed nullifier matches
         // the publicly posted value, preventing double-voting.
-        layouter.constrain_instance(van_nullifier.cell(), config.primary, VAN_NULLIFIER)?;
+        layouter.constrain_instance(
+            van_nullifier.cell(),
+            config.primary,
+            VAN_NULLIFIER_PUBLIC_OFFSET,
+        )?;
 
         // ---------------------------------------------------------------
         // Condition 6: Proposal Authority Decrement (bit decomposition).
@@ -1010,7 +1017,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "proposal_id",
                     config.primary,
-                    PROPOSAL_ID,
+                    PROPOSAL_ID_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -1046,13 +1053,13 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             van_comm_rand_cond6,
         )?;
 
-        // Bind the derived new VAN to the VOTE_AUTHORITY_NOTE_NEW public input.
+        // Bind the derived new VAN to the VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET public input.
         // The verifier checks that the new VAN commitment posted on-chain is
         // correctly formed with decremented proposal authority.
         layouter.constrain_instance(
             derived_van_new.cell(),
             config.primary,
-            VOTE_AUTHORITY_NOTE_NEW,
+            VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET,
         )?;
 
         // ---------------------------------------------------------------
@@ -1162,7 +1169,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // (c1_i_x, c2_i_x, c1_i_y, c2_i_y) is a valid El Gamal encryption
         // of shares_i. Condition 12 computes the full vote commitment
         // H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)
-        // and binds that value to the VOTE_COMMITMENT public input.
+        // and binds that value to the VOTE_COMMITMENT_PUBLIC_OFFSET public input.
         // ---------------------------------------------------------------
 
         let blinds: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
@@ -1273,8 +1280,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 self.ea_pk,
                 EaPkInstanceLoc {
                     instance: config.primary,
-                    x_row: EA_PK_X,
-                    y_row: EA_PK_Y,
+                    x_row: EA_PK_X_PUBLIC_OFFSET,
+                    y_row: EA_PK_Y_PUBLIC_OFFSET,
                 },
                 config.advices[0],
                 share_cells,
@@ -1337,8 +1344,12 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             vote_decision,
         )?;
 
-        // Bind the derived vote commitment to the VOTE_COMMITMENT public input.
-        layouter.constrain_instance(vote_commitment.cell(), config.primary, VOTE_COMMITMENT)?;
+        // Bind the derived vote commitment to the VOTE_COMMITMENT_PUBLIC_OFFSET public input.
+        layouter.constrain_instance(
+            vote_commitment.cell(),
+            config.primary,
+            VOTE_COMMITMENT_PUBLIC_OFFSET,
+        )?;
 
         Ok(())
     }
@@ -1434,7 +1445,8 @@ impl Instance {
     /// Serializes public inputs for halo2 proof creation/verification.
     ///
     /// The order must match the instance column offsets defined at the
-    /// top of this file (`VAN_NULLIFIER`, `R_VPK_X`, `R_VPK_Y`, etc.).
+    /// top of this file (`VAN_NULLIFIER_PUBLIC_OFFSET`, `R_VPK_X_PUBLIC_OFFSET`,
+    /// `R_VPK_Y_PUBLIC_OFFSET`, etc.).
     pub fn to_halo2_instance(&self) -> Vec<vesta::Scalar> {
         vec![
             self.van_nullifier,
@@ -2134,7 +2146,7 @@ mod tests {
     // Condition 5 (VAN Nullifier Integrity) tests
     // ================================================================
 
-    /// Wrong VAN_NULLIFIER public input should fail condition 5.
+    /// Wrong VAN_NULLIFIER_PUBLIC_OFFSET public input should fail condition 5.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_nullifier_wrong_public_input_fails() {
@@ -2858,7 +2870,7 @@ mod tests {
     }
 
     /// A corrupted enc_share_c1_x[0] should cause condition 10 failure:
-    /// the in-circuit hash won't match the VOTE_COMMITMENT instance.
+    /// the in-circuit hash won't match the VOTE_COMMITMENT_PUBLIC_OFFSET instance.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_hash_wrong_enc_share_fails() {

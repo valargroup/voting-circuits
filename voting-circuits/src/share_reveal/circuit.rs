@@ -104,25 +104,25 @@ pub const K: u32 = 11;
 // ================================================================
 
 /// Public input offset for the share nullifier (prevents double-counting).
-const SHARE_NULLIFIER: usize = 0;
+pub const SHARE_NULLIFIER_PUBLIC_OFFSET: usize = 0;
 /// Public input offset for the revealed share's C1 x-coordinate.
-const ENC_SHARE_C1_X: usize = 1;
+pub const ENC_SHARE_C1_X_PUBLIC_OFFSET: usize = 1;
 /// Public input offset for the revealed share's C1 y-coordinate.
 ///
 /// Binds the proof to the exact curve point (not just x-coordinate),
 /// preventing ciphertext sign-malleability attacks where an adversary
 /// negates ElGamal ciphertext points without invalidating the ZKP.
-const ENC_SHARE_C1_Y: usize = 2;
+pub const ENC_SHARE_C1_Y_PUBLIC_OFFSET: usize = 2;
 /// Public input offset for the revealed share's C2 x-coordinate.
-const ENC_SHARE_C2_X: usize = 3;
+pub const ENC_SHARE_C2_X_PUBLIC_OFFSET: usize = 3;
 /// Public input offset for the revealed share's C2 y-coordinate.
-const ENC_SHARE_C2_Y: usize = 4;
+pub const ENC_SHARE_C2_Y_PUBLIC_OFFSET: usize = 4;
 /// Public input offset for the proposal identifier.
-const PROPOSAL_ID: usize = 5;
+pub const PROPOSAL_ID_PUBLIC_OFFSET: usize = 5;
 /// Public input offset for the vote decision.
-const VOTE_DECISION: usize = 6;
+pub const VOTE_DECISION_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the vote commitment tree root.
-const VOTE_COMM_TREE_ROOT: usize = 7;
+pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 7;
 /// Public input offset for the voting round identifier.
 ///
 /// Constrained in-circuit: `voting_round_id` is hashed into `vote_commitment`
@@ -132,7 +132,7 @@ const VOTE_COMM_TREE_ROOT: usize = 7;
 /// `vote_comm_tree_root` alone does not provide round scoping. The chain also
 /// validates that `voting_round_id` matches an active session (Gov Steps V1
 /// §5.4 "Out-of-circuit checks").
-const VOTING_ROUND_ID: usize = 8;
+pub const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
 
 // ================================================================
 // Out-of-circuit helpers
@@ -487,7 +487,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "proposal_id",
                     config.primary,
-                    PROPOSAL_ID,
+                    PROPOSAL_ID_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -500,7 +500,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "vote_decision",
                     config.primary,
-                    VOTE_DECISION,
+                    VOTE_DECISION_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -515,7 +515,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "voting_round_id",
                     config.primary,
-                    VOTING_ROUND_ID,
+                    VOTING_ROUND_ID_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -585,7 +585,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "enc_c1_x",
                     config.primary,
-                    ENC_SHARE_C1_X,
+                    ENC_SHARE_C1_X_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -598,7 +598,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "enc_c2_x",
                     config.primary,
-                    ENC_SHARE_C2_X,
+                    ENC_SHARE_C2_X_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -611,7 +611,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "enc_c1_y",
                     config.primary,
-                    ENC_SHARE_C1_Y,
+                    ENC_SHARE_C1_Y_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -624,7 +624,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "enc_c2_y",
                     config.primary,
-                    ENC_SHARE_C2_Y,
+                    ENC_SHARE_C2_Y_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -783,7 +783,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             )?;
 
             // Bind the computed Merkle root to the public input.
-            layouter.constrain_instance(root.cell(), config.primary, VOTE_COMM_TREE_ROOT)?;
+            layouter.constrain_instance(
+                root.cell(),
+                config.primary,
+                VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET,
+            )?;
         }
 
         // ---------------------------------------------------------------
@@ -834,7 +838,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 ],
             )?;
 
-            layouter.constrain_instance(share_nullifier.cell(), config.primary, SHARE_NULLIFIER)?;
+            layouter.constrain_instance(
+                share_nullifier.cell(),
+                config.primary,
+                SHARE_NULLIFIER_PUBLIC_OFFSET,
+            )?;
         }
 
         Ok(())
