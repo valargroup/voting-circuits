@@ -9,10 +9,8 @@
 //! ```
 //!
 //! The domain tag bakes into the verification key, preventing a
-//! malicious client driving the honest circuit from substituting VAN
-//! commitments for vote commitments in the shared tree. (A tampered
-//! circuit binary could of course ignore the domain tag; the VK
-//! binding defends against client misuse, not adversarial circuits.)
+//! client miuses driving the honest circuit from substituting VAN
+//! commitments for vote commitments in the shared tree.
 
 use pasta_curves::pallas;
 
