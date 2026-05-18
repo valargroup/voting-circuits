@@ -16,7 +16,7 @@ A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384
    * **nc_root** (offset 6): the note commitment tree root (shared anchor for Merkle path verification).
    * **nf_imt_root** (offset 7): the nullifier Indexed Merkle Tree root (for non-membership proofs).
    * **gov_null_1..5** (offsets 8–12): per-note alternate nullifiers, one per note slot.
-   * **dom** (offset 13): the nullifier domain — derived out-of-circuit as Poseidon("governance authorization", vote_round_id).
+   * **dom** (offset 13): the nullifier domain — Poseidon("governance authorization", vote_round_id). Exposed as a public input for API compatibility; the circuit constrains it against vote_round_id rather than trusting an arbitrary value.
 
 - Private (keystone note)
    * **rho_signed** ("rho"): the nullifier of the note that was spent to create the signed note.
@@ -354,7 +354,7 @@ nf_dom = Poseidon(nk, dom, real_nf)
 
 Single Poseidon hash (`ConstantLength<3>`, 2 permutations at rate 2):
 - **nk** — the nullifier deriving key, making the result unforgeable.
-- **dom** — the nullifier domain (public input at offset 13), derived out-of-circuit as `Poseidon("governance authorization", vote_round_id)`. Scopes the alternate nullifier to this application instance and voting round.
+- **dom** — the nullifier domain (public input at offset 13), constrained in-circuit to `Poseidon("governance authorization", vote_round_id)`. Scopes the alternate nullifier to this application instance and voting round.
 - **real_nf** — the note's true nullifier from condition 12.
 
 The result is constrained to the public input at offset `GOV_NULL_1..5`.
