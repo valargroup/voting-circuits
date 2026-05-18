@@ -21,6 +21,8 @@
 - Reject identity delegation `rk` values during public input construction instead of panicking while preparing Halo2 inputs.
 - Return typed vote-proof builder errors for identity election authority keys,
   identity randomized voting public keys, and identity encrypted share points.
+- Return a typed vote-proof builder error for proposal IDs outside the supported
+  `[1, 15]` range instead of shifting by an unchecked caller value.
 
 ### Changed
 
