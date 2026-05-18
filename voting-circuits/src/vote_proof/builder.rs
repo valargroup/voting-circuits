@@ -510,8 +510,12 @@ pub fn build_vote_proof_from_delegation(
     let vpk_g_d_affine = address.g_d().to_affine();
     let vpk_pk_d_affine = address.pk_d().inner().to_affine();
 
-    let vpk_g_d_x = *vpk_g_d_affine.coordinates().unwrap().x();
-    let vpk_pk_d_x = *vpk_pk_d_affine.coordinates().unwrap().x();
+    let vpk_g_d_coords = pallas_coordinates(vpk_g_d_affine)
+        .expect("orchard address g_d is non-identity by construction");
+    let vpk_pk_d_coords = pallas_coordinates(vpk_pk_d_affine)
+        .expect("orchard address pk_d is non-identity by construction");
+    let vpk_g_d_x = *vpk_g_d_coords.x();
+    let vpk_pk_d_x = *vpk_pk_d_coords.x();
 
     // ---- Fast key-chain consistency checks (instant, no circuit) ----
     {
@@ -534,7 +538,9 @@ pub fn build_vote_proof_from_delegation(
         );
 
         // Check 2: CommitIvk(ak_x, nk, rivk) must produce an ivk where [ivk]*g_d == pk_d.
-        let ak_x = *ak_from_vsk.coordinates().unwrap().x();
+        let ak_from_vsk_coords = pallas_coordinates(ak_from_vsk)
+            .expect("valid Orchard spending keys have nonzero spend authorizing keys");
+        let ak_x = *ak_from_vsk_coords.x();
         let domain = CommitDomain::new(COMMIT_IVK_PERSONALIZATION);
         let ivk = domain
             .short_commit(
