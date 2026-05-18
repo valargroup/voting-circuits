@@ -24,7 +24,7 @@ use orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
 
 use super::circuit::{
     share_commitment, shares_hash, van_integrity_hash, van_nullifier_hash, vote_commitment_hash,
-    Circuit, Instance, VOTE_COMM_TREE_DEPTH,
+    Circuit, Instance, MAX_PROPOSAL_ID, VOTE_COMM_TREE_DEPTH,
 };
 use super::prove::create_vote_proof;
 use crate::circuit::elgamal::{base_to_scalar, spend_auth_g_affine};
@@ -257,6 +257,8 @@ pub enum VoteProofBuildError {
     InvalidRandomizedVotingPublicKey,
     /// A derived El Gamal ciphertext point was the identity point.
     InvalidEncryptedShare(String),
+    /// The proposal identifier is outside the supported 1-indexed range.
+    InvalidProposalId(u64),
 }
 
 impl core::fmt::Display for VoteProofBuildError {
@@ -276,6 +278,14 @@ impl core::fmt::Display for VoteProofBuildError {
             }
             VoteProofBuildError::InvalidEncryptedShare(msg) => {
                 write!(f, "invalid encrypted share: {}", msg)
+            }
+            VoteProofBuildError::InvalidProposalId(proposal_id) => {
+                write!(
+                    f,
+                    "proposal_id must be in [1, {}], got {}",
+                    MAX_PROPOSAL_ID - 1,
+                    proposal_id
+                )
             }
         }
     }
@@ -493,6 +503,10 @@ pub fn build_vote_proof_from_delegation(
     proposal_authority_old_u64: u64,
     single_share: bool,
 ) -> Result<VoteProofBundle, VoteProofBuildError> {
+    if proposal_id == 0 || proposal_id >= MAX_PROPOSAL_ID as u64 {
+        return Err(VoteProofBuildError::InvalidProposalId(proposal_id));
+    }
+
     let ea_pk_coords =
         pallas_coordinates(ea_pk).ok_or(VoteProofBuildError::InvalidElectionPublicKey)?;
     let ea_pk_x = *ea_pk_coords.x();
@@ -811,6 +825,36 @@ mod tests {
 
     fn test_van() -> pallas::Base {
         pallas::Base::from(0xDEAD_u64)
+    }
+
+    #[test]
+    fn build_vote_proof_rejects_invalid_proposal_id() {
+        let sk = test_sk();
+
+        for proposal_id in [0, MAX_PROPOSAL_ID as u64, 64] {
+            let err = build_vote_proof_from_delegation(
+                &sk,
+                1,
+                BALLOT_DIVISOR,
+                test_van(),
+                test_round_id(),
+                [pallas::Base::from(0u64); VOTE_COMM_TREE_DEPTH],
+                0,
+                123,
+                proposal_id,
+                1,
+                pallas::Point::identity().to_affine(),
+                pallas::Scalar::from(7u64),
+                65535,
+                true,
+            )
+            .expect_err("invalid proposal_id should be rejected before proof generation");
+
+            assert!(matches!(
+                err,
+                VoteProofBuildError::InvalidProposalId(rejected) if rejected == proposal_id
+            ));
+        }
     }
 
     #[test]
