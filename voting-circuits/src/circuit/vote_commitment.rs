@@ -23,15 +23,7 @@ use halo2_proofs::{
     plonk,
 };
 
-// ================================================================
-// Constants
-// ================================================================
-
-/// Domain tag for Vote Commitments.
-///
-/// Prepended as the first Poseidon input for domain separation from
-/// VANs (`DOMAIN_VAN = 0`) in the shared vote commitment tree.
-pub(crate) const DOMAIN_VC: u64 = 1;
+pub use crate::domain_tags::DOMAIN_VC;
 
 // ================================================================
 // Out-of-circuit helper

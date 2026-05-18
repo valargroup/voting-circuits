@@ -41,7 +41,10 @@ use orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
 ///
 /// * `ecc_chip`     – The ECC chip used for curve arithmetic.
 /// * `layouter`     – Circuit layouter.
-/// * `alpha`        – The randomizer scalar witness value.
+/// * `alpha`        – The randomizer scalar witness value. This relation
+///   accepts zero, matching upstream Orchard; callers that require
+///   coercion-resistance must enforce the non-zero/randomness discipline
+///   outside this gadget or add a VK-moving constraint.
 /// * `ak_P`         – The spend validating key as a curve point.
 /// * `primary`      – The instance column for public inputs.
 /// * `rk_x_row`     – Row index in `primary` for the rk x-coordinate.

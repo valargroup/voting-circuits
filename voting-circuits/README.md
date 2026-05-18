@@ -21,6 +21,11 @@ use voting_circuits::vote_proof::Circuit as VoteProofCircuit;
 
 Minimum supported Rust version: 1.86, as declared by the crate manifest.
 
+Protocol domain-separation tags are registered in
+[`src/domain_tags.rs`](src/domain_tags.rs). Hash-owning modules document their
+own preimage layout, but new tags should be added to the registry first so the
+encoding rule and distinctness test stay centralized.
+
 ## Dependency on `orchard`
 
 This crate now depends on upstream [`zcash/orchard`](https://github.com/zcash/orchard) `0.13`, with the `unstable-voting-circuits` feature enabled to expose the governance-visibility APIs the voting circuits rely on (the `valar-orchard` fork has been retired).

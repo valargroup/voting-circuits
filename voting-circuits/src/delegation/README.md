@@ -3,7 +3,11 @@
 A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384 rows). The circuit handles the keystone note (conditions 1–8) and five per-note slots (conditions 9–15 ×5) in one proof.
 
 **Public inputs:** 14 field elements.
-**Per-note slots:** 5 (unused slots are padded with zero-value notes).
+**Per-note slots:** 5 (`MAX_REAL_NOTES`; unused slots are padded with
+zero-value notes). The fixed width is a protocol parameter: it gives every
+delegation the same published `gov_null_1..5` shape, supports wallets with up
+to five real notes per proof, and keeps the circuit within K=14. Wallets with
+more than five notes produce multiple delegation proofs.
 
 **Note value asymmetry:** the keystone (signed) note has value `1` zatoshi (a UX concession so Keystone-class hardware wallets render the spend for user approval); the output (change) note has value `0`. See conditions 1 and 6.
 

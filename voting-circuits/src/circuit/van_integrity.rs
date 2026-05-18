@@ -27,16 +27,7 @@ use halo2_proofs::{
 
 use crate::protocol_hash::{poseidon_hash_2, poseidon_hash_in_circuit};
 
-// ================================================================
-// Constants
-// ================================================================
-
-/// Domain tag for Vote Authority Notes.
-///
-/// Prepended as the first Poseidon input for domain separation from
-/// Vote Commitments in the shared vote commitment tree.
-/// `DOMAIN_VAN = 0` for VANs, `DOMAIN_VC = 1` for Vote Commitments.
-pub(crate) const DOMAIN_VAN: u64 = 0;
+pub use crate::domain_tags::DOMAIN_VAN;
 
 // ================================================================
 // Out-of-circuit helper

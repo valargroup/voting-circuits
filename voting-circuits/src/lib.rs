@@ -9,6 +9,7 @@
 #![deny(unsafe_code)]
 
 pub(crate) mod circuit;
+pub(crate) mod domain_tags;
 mod protocol_hash;
 pub(crate) mod shares_hash;
 

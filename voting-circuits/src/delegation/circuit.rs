@@ -147,6 +147,14 @@ const DOM: usize = 13;
 /// cannot substitute a different authority value.
 pub(crate) const MAX_PROPOSAL_AUTHORITY: u64 = 65535; // 2^16 - 1
 
+/// Maximum number of real Orchard notes consumed by one delegation proof.
+///
+/// The proof always exposes five `gov_null` slots, padding unused positions
+/// with zero-value notes. Keeping the count fixed hides the real-note count
+/// within the 1..=5 bucket and keeps the delegation circuit within K=14 while
+/// leaving row-budget headroom for the IMT and NoteCommit paths.
+pub(crate) const MAX_REAL_NOTES: usize = 5;
+
 /// Out-of-circuit rho binding hash used by the builder and tests.
 pub(crate) fn rho_binding_hash(
     cmx_1: pallas::Base,

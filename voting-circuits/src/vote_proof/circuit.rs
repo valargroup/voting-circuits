@@ -63,6 +63,7 @@ use crate::circuit::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
 use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
 use crate::circuit::van_integrity;
 use crate::circuit::vote_commitment;
+use crate::domain_tags;
 pub use crate::protocol_hash::poseidon_hash_2;
 use crate::shares_hash::compute_shares_hash_in_circuit;
 #[cfg(test)]
@@ -195,18 +196,10 @@ pub(crate) use vote_commitment::vote_commitment_hash;
 
 /// Returns the domain separator for the VAN nullifier inner hash.
 ///
-/// Encodes `"vote authority spend"` as a Pallas base field element
-/// by interpreting the UTF-8 bytes as a little-endian 256-bit integer.
-/// This domain tag differentiates VAN nullifier derivation from other
-/// Poseidon uses in the protocol.
-pub(super) fn domain_van_nullifier() -> pallas::Base {
-    // "vote authority spend" (20 bytes) zero-padded to 32, as LE u64 words.
-    pallas::Base::from_raw([
-        0x7475_6120_6574_6f76, // b"vote aut" LE
-        0x7320_7974_6972_6f68, // b"hority s" LE
-        0x0000_0000_646e_6570, // b"pend\0\0\0\0" LE
-        0,
-    ])
+/// The tag is defined in [`crate::domain_tags`], the central registry for
+/// domain-separation constants and encoding rules.
+pub fn domain_van_nullifier() -> pallas::Base {
+    domain_tags::vote_authority_spend()
 }
 
 /// Out-of-circuit VAN nullifier hash (condition 5).
