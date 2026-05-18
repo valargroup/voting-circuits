@@ -5,6 +5,8 @@
 ### Added
 
 - Declared Rust 1.86 as the minimum supported Rust version.
+- Added `vote_proof_cached_keys()` so callers can warm and reuse the vote proof
+  params, proving key, and verifying key together.
 - Added `ProveError` for typed Halo2 proof creation failures.
 
 ### Changed

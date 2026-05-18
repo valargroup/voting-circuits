@@ -24,23 +24,25 @@ use super::circuit::{Circuit, Instance, K};
 
 // Keygen is deterministic and expensive (~30s on device). Compute once
 // per process and reuse for all subsequent proofs and verifications.
-static VOTE_PROOF_PK_CACHE: std::sync::OnceLock<(
+static VOTE_PROOF_KEYS_CACHE: std::sync::OnceLock<(
     Params<EqAffine>,
     plonk::ProvingKey<EqAffine>,
     plonk::VerifyingKey<EqAffine>,
 )> = std::sync::OnceLock::new();
 
-fn get_vote_proof_keys() -> &'static (
+/// Return cached params and proving/verifying keys for the vote proof circuit.
+///
+/// Params generation and key generation are deterministic and expensive enough
+/// to dominate the first proof or verification call. Compute the full tuple
+/// once per process so warm-up covers both the SRS params and the keys.
+pub fn vote_proof_cached_keys() -> &'static (
     Params<EqAffine>,
     plonk::ProvingKey<EqAffine>,
     plonk::VerifyingKey<EqAffine>,
 ) {
-    VOTE_PROOF_PK_CACHE.get_or_init(|| {
-        let params = Params::new(K);
-        let empty_circuit = Circuit::default();
-        let vk = keygen_vk(&params, &empty_circuit).expect("vote_proof keygen_vk should not fail");
-        let pk = keygen_pk(&params, vk.clone(), &empty_circuit)
-            .expect("vote_proof keygen_pk should not fail");
+    VOTE_PROOF_KEYS_CACHE.get_or_init(|| {
+        let params = vote_proof_params();
+        let (pk, vk) = vote_proof_proving_key(&params);
         (params, pk, vk)
     })
 }
@@ -48,9 +50,9 @@ fn get_vote_proof_keys() -> &'static (
 /// Warm the process-lifetime vote proof params/proving-key cache.
 ///
 /// This lets callers pay deterministic keygen before the first user-visible
-/// proof generation path needs the key.
+/// proof generation or verification path needs the params and keys.
 pub fn warm_vote_proof_keys() {
-    let _ = get_vote_proof_keys();
+    let _ = vote_proof_cached_keys();
 }
 
 // ================================================================
@@ -90,7 +92,7 @@ pub fn vote_proof_proving_key(
 /// **Expensive**: K=13 proof generation takes ~30-60 seconds in release mode.
 /// Params and keys are cached so only the first call pays keygen.
 pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8>, ProveError> {
-    let (params, pk, _vk) = get_vote_proof_keys();
+    let (params, pk, _vk) = vote_proof_cached_keys();
 
     let public_inputs = instance.to_halo2_instance();
 
@@ -145,7 +147,7 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8
 /// - `instance.vote_authority_note_new`
 /// - `instance.vote_commitment`
 pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
-    let (params, _pk, vk) = get_vote_proof_keys();
+    let (params, _pk, vk) = vote_proof_cached_keys();
 
     let public_inputs = instance.to_halo2_instance();
 
