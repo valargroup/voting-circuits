@@ -494,8 +494,8 @@ mod tests {
         (inputs, nc_root)
     }
 
-    /// Helper: build a bundle with explicit scopes and verify with MockProver.
-    fn build_and_verify(values: &[u64], scopes: &[Scope]) -> DelegationBundle {
+    /// Helper: build a bundle with explicit scopes.
+    fn build_bundle(values: &[u64], scopes: &[Scope]) -> DelegationBundle {
         assert_eq!(values.len(), scopes.len());
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
@@ -522,25 +522,42 @@ mod tests {
         )
         .unwrap();
 
+        assert_delegation_output_shape(&bundle);
+        bundle
+    }
+
+    fn assert_delegation_output_shape(bundle: &DelegationBundle) {
+        let pi = bundle.instance.to_halo2_instance();
+        assert_eq!(pi.len(), 14, "delegation public input shape changed");
+        assert_eq!(bundle.instance.gov_null.len(), 5);
+        assert_eq!(pi[0], bundle.instance.nf_signed.inner());
+        assert_eq!(pi[3], bundle.instance.cmx_new);
+        assert_eq!(pi[4], bundle.instance.van_comm);
+        assert_eq!(pi[5], bundle.instance.vote_round_id);
+        assert_eq!(pi[6], bundle.instance.nc_root);
+        assert_eq!(pi[7], bundle.instance.nf_imt_root);
+        assert_eq!(&pi[8..13], &bundle.instance.gov_null);
+        assert_eq!(pi[13], bundle.instance.dom);
+    }
+
+    fn verify_bundle(bundle: &DelegationBundle) {
         // Verify merged circuit.
         let pi = bundle.instance.to_halo2_instance();
         let prover = MockProver::run(K, &bundle.circuit, vec![pi]).unwrap();
         assert_eq!(prover.verify(), Ok(()), "merged circuit failed");
-
-        bundle
     }
 
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_single_real_note() {
-        build_and_verify(&[13_000_000], &[Scope::External]);
+        let bundle = build_bundle(&[13_000_000], &[Scope::External]);
+        verify_bundle(&bundle);
     }
 
     #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn test_four_real_notes() {
+    fn test_four_real_notes_builds_expected_output_shape() {
         // 3,200,000 x 4 = 12,800,000 → num_ballots = 1, remainder = 300,000.
-        build_and_verify(
+        build_bundle(
             &[3_200_000, 3_200_000, 3_200_000, 3_200_000],
             &[
                 Scope::External,
@@ -552,16 +569,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn test_two_real_notes() {
-        build_and_verify(&[7_000_000, 7_000_000], &[Scope::External, Scope::External]);
+    fn test_two_real_notes_builds_expected_output_shape() {
+        build_bundle(&[7_000_000, 7_000_000], &[Scope::External, Scope::External]);
     }
 
     #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn test_min_weight_boundary() {
+    fn test_min_weight_boundary_builds_expected_output_shape() {
         // v_total = 12,500,000 exactly → num_ballots = 1, remainder = 0. Should pass.
-        build_and_verify(&[12_500_000], &[Scope::External]);
+        build_bundle(&[12_500_000], &[Scope::External]);
     }
 
     #[test]
@@ -601,10 +616,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn test_three_ballots() {
+    fn test_three_ballots_builds_expected_output_shape() {
         // 3 notes × 12,500,000 = 37,500,000 → num_ballots = 3, remainder = 0.
-        build_and_verify(
+        build_bundle(
             &[12_500_000, 12_500_000, 12_500_000],
             &[Scope::External, Scope::External, Scope::External],
         );
@@ -638,10 +652,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn test_five_real_notes() {
+    fn test_five_real_notes_builds_expected_output_shape() {
         // 2,500,000 x 5 = 12,500,000 → num_ballots = 1, remainder = 0.
-        build_and_verify(
+        build_bundle(
             &[2_500_000, 2_500_000, 2_500_000, 2_500_000, 2_500_000],
             &[
                 Scope::External,
@@ -700,15 +713,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn test_single_internal_note() {
-        build_and_verify(&[13_000_000], &[Scope::Internal]);
+    fn test_single_internal_note_builds_expected_output_shape() {
+        build_bundle(&[13_000_000], &[Scope::Internal]);
     }
 
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_mixed_scope_notes() {
-        build_and_verify(
+        let bundle = build_bundle(
             &[4_000_000, 4_000_000, 3_000_000, 2_000_000],
             &[
                 Scope::External,
@@ -717,12 +729,12 @@ mod tests {
                 Scope::Internal,
             ],
         );
+        verify_bundle(&bundle);
     }
 
     #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn test_all_internal_notes() {
-        build_and_verify(
+    fn test_all_internal_notes_builds_expected_output_shape() {
+        build_bundle(
             &[4_000_000, 4_000_000, 3_000_000, 2_000_000],
             &[
                 Scope::Internal,
