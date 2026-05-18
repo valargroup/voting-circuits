@@ -22,6 +22,7 @@ pub(crate) mod builder;
 pub(crate) mod circuit;
 pub(crate) mod prove;
 
+pub use crate::circuit::elgamal::spend_auth_g_affine;
 pub use builder::{
     build_vote_proof_from_delegation, EncryptedShareOutput, VoteProofBuildError, VoteProofBundle,
 };

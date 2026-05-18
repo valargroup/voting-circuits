@@ -11,8 +11,8 @@
 //! and handles G for C1 via `FixedPointBaseField` and for C2's [v_i]*G term
 //! via `FixedPointShort` (22-window short scalar multiplication).
 //!
-//! Also provides out-of-circuit helpers: `spend_auth_g_affine`, `base_to_scalar`,
-//! and `elgamal_encrypt` for the builder and tests.
+//! Also provides the public `spend_auth_g_affine` helper for downstream
+//! consumers and internal scalar/encryption helpers for the builder and tests.
 
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter},
@@ -57,7 +57,7 @@ pub(crate) struct EaPkInstanceLoc {
 /// — a nothing-up-my-sleeve point. Using it for El Gamal (Condition 11) avoids
 /// introducing a second generator point; the 22-window `SpendAuthGShort` tables
 /// share the same generator as the full-scalar SpendAuthG.
-pub(crate) fn spend_auth_g_affine() -> pallas::Affine {
+pub fn spend_auth_g_affine() -> pallas::Affine {
     use group::Curve;
     let g = orchard::constants::fixed_bases::spend_auth_g::generator();
     pallas::Point::from(g).to_affine()
@@ -65,17 +65,18 @@ pub(crate) fn spend_auth_g_affine() -> pallas::Affine {
 
 /// Converts a `pallas::Base` field element to a `pallas::Scalar`.
 ///
-/// For small values (< 2^30) the integer representation is identical in both
-/// fields. Returns `None` if the byte representation exceeds the scalar modulus.
+/// Pallas's base field modulus is smaller than its scalar field modulus, so
+/// every canonical `pallas::Base` element is representable as a scalar. The
+/// `Option` return keeps that invariant explicit at the call sites.
 pub(crate) fn base_to_scalar(b: pallas::Base) -> Option<pallas::Scalar> {
     use ff::PrimeField;
     pallas::Scalar::from_repr(b.to_repr()).into()
 }
 
-/// Out-of-circuit El Gamal encryption under SpendAuthG.
+/// Test-only out-of-circuit El Gamal encryption under SpendAuthG.
 ///
 /// Computes C1 = [r]*SpendAuthG, C2 = [v]*SpendAuthG + [r]*ea_pk.
-/// Returns (c1_x, c2_x, c1_y, c2_y). Used by tests.
+/// Returns (c1_x, c2_x, c1_y, c2_y). Used by tests as a circuit oracle.
 ///
 /// Both coordinates are returned so that share commitments can bind to the
 /// full curve point, preventing ciphertext sign-malleability attacks.
