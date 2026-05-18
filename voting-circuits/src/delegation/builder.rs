@@ -40,12 +40,23 @@ pub struct PaddedNoteData {
 /// that the signer committed to via the ZIP-244 sighash.
 #[derive(Clone, Debug)]
 pub struct PrecomputedRandomness {
-    /// Rho + rseed for each padded note (0–3 entries).
+    /// Rho + rseed for each padded note (0–4 entries).
     pub padded_notes: Vec<PaddedNoteData>,
     /// Rseed for the signed (keystone) note.
     pub rseed_signed: [u8; 32],
     /// Rseed for the output note.
     pub rseed_output: [u8; 32],
+}
+
+/// Which precomputed note input failed validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrecomputedRandomnessLocation {
+    /// A padded note entry by index in `PrecomputedRandomness::padded_notes`.
+    PaddedNote(usize),
+    /// The synthetic signed note.
+    SignedNote,
+    /// The output note.
+    OutputNote,
 }
 
 /// Input for a single real note in the delegation.
@@ -79,6 +90,18 @@ pub enum DelegationBuildError {
     InvalidNoteCount(usize),
     /// Public input construction failed.
     Instance(circuit::InstanceError),
+    /// A required precomputed padded note entry is missing.
+    MissingPrecomputedPaddedNote { index: usize, actual: usize },
+    /// A precomputed padded note rho is not a canonical field encoding.
+    InvalidPrecomputedRho { index: usize },
+    /// A precomputed rseed is not valid for the note rho.
+    InvalidPrecomputedRseed {
+        location: PrecomputedRandomnessLocation,
+    },
+    /// Precomputed note components do not produce a valid Orchard note.
+    InvalidPrecomputedNote {
+        location: PrecomputedRandomnessLocation,
+    },
     /// IMT proof fetch failed for a padded note nullifier.
     ImtFetchFailed(super::imt::ImtError),
 }
@@ -104,9 +127,36 @@ impl std::fmt::Display for DelegationBuildError {
             DelegationBuildError::Instance(e) => {
                 write!(f, "instance construction failed: {e}")
             }
+            DelegationBuildError::MissingPrecomputedPaddedNote { index, actual } => {
+                write!(
+                    f,
+                    "missing precomputed padded note at index {index} (got {actual} entries)"
+                )
+            }
+            DelegationBuildError::InvalidPrecomputedRho { index } => {
+                write!(f, "invalid precomputed padded note rho at index {index}")
+            }
+            DelegationBuildError::InvalidPrecomputedRseed { location } => {
+                write!(f, "invalid precomputed rseed for {location}")
+            }
+            DelegationBuildError::InvalidPrecomputedNote { location } => {
+                write!(f, "invalid precomputed note components for {location}")
+            }
             DelegationBuildError::ImtFetchFailed(e) => {
                 write!(f, "IMT proof fetch failed: {e}")
             }
+        }
+    }
+}
+
+impl std::fmt::Display for PrecomputedRandomnessLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PrecomputedRandomnessLocation::PaddedNote(index) => {
+                write!(f, "padded note {index}")
+            }
+            PrecomputedRandomnessLocation::SignedNote => write!(f, "signed note"),
+            PrecomputedRandomnessLocation::OutputNote => write!(f, "output note"),
         }
     }
 }
@@ -213,19 +263,23 @@ pub fn build_delegation_bundle(
         let pad_idx = i - n_real; // index into precomputed.padded_notes
 
         let pad_note = if let Some(pre) = precomputed {
-            // ZCA-74: reuse Phase 1 randomness so the prover commits to the same values.
-            assert!(
-                pad_idx < pre.padded_notes.len(),
-                "precomputed.padded_notes has {} entries but need index {}",
-                pre.padded_notes.len(),
-                pad_idx
-            );
-            let pd = &pre.padded_notes[pad_idx];
-            let rho = Rho::from_bytes(&pd.rho).expect("precomputed rho must be valid");
-            let rseed =
-                RandomSeed::from_bytes(pd.rseed, &rho).expect("precomputed rseed must be valid");
+            // Reuse precomputed padded note randomness so the prover commits to the same values.
+            let pd = pre.padded_notes.get(pad_idx).ok_or(
+                DelegationBuildError::MissingPrecomputedPaddedNote {
+                    index: pad_idx,
+                    actual: pre.padded_notes.len(),
+                },
+            )?;
+            let rho = Rho::from_bytes(&pd.rho)
+                .into_option()
+                .ok_or(DelegationBuildError::InvalidPrecomputedRho { index: pad_idx })?;
+            let location = PrecomputedRandomnessLocation::PaddedNote(pad_idx);
+            let rseed = RandomSeed::from_bytes(pd.rseed, &rho)
+                .into_option()
+                .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
             Note::from_parts(pad_addr, NoteValue::ZERO, rho, rseed)
-                .expect("precomputed note must be valid")
+                .into_option()
+                .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
         } else {
             let (_, _, dummy) = Note::dummy(&mut *rng, None);
             Note::new(
@@ -330,10 +384,13 @@ pub fn build_delegation_bundle(
     let sender_address = fvk.address_at(0u32, Scope::External);
     let signed_rho = Rho::from_nf_old(Nullifier::from_inner(rho));
     let signed_note = if let Some(pre) = precomputed {
+        let location = PrecomputedRandomnessLocation::SignedNote;
         let rseed = RandomSeed::from_bytes(pre.rseed_signed, &signed_rho)
-            .expect("precomputed rseed_signed must be valid");
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
         Note::from_parts(sender_address, NoteValue::from_raw(1), signed_rho, rseed)
-            .expect("precomputed signed note must be valid")
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
     } else {
         Note::new(
             sender_address,
@@ -350,10 +407,13 @@ pub fn build_delegation_bundle(
     // The output note is sent to the voting hotkey address with rho = nf_signed.
     let output_rho = Rho::from_nf_old(nf_signed);
     let output_note = if let Some(pre) = precomputed {
+        let location = PrecomputedRandomnessLocation::OutputNote;
         let rseed = RandomSeed::from_bytes(pre.rseed_output, &output_rho)
-            .expect("precomputed rseed_output must be valid");
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
         Note::from_parts(output_recipient, NoteValue::ZERO, output_rho, rseed)
-            .expect("precomputed output note must be valid")
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
     } else {
         Note::new(output_recipient, NoteValue::ZERO, output_rho, &mut *rng)
     };
@@ -535,6 +595,68 @@ mod tests {
 
         assert_delegation_output_shape(&bundle);
         bundle
+    }
+
+    fn build_single_note_bundle_with_precomputed(
+        precomputed: &PrecomputedRandomness,
+    ) -> Result<DelegationBundle, DelegationBuildError> {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+
+        build_single_note_bundle_with_fvk_and_precomputed(&fvk, precomputed, &mut rng)
+    }
+
+    fn build_single_note_bundle_with_fvk_and_precomputed(
+        fvk: &FullViewingKey,
+        precomputed: &PrecomputedRandomness,
+        rng: &mut impl RngCore,
+    ) -> Result<DelegationBundle, DelegationBuildError> {
+        let output_recipient = fvk.address_at(1u32, Scope::External);
+        let vote_round_id = pallas::Base::random(&mut *rng);
+        let van_comm_rand = pallas::Base::random(&mut *rng);
+        let alpha = pallas::Scalar::random(&mut *rng);
+
+        let imt = SpacedLeafImtProvider::new();
+        let (inputs, nc_root) =
+            make_real_note_inputs(fvk, &[13_000_000], &[Scope::External], &imt, &mut *rng);
+
+        build_delegation_bundle(
+            inputs,
+            fvk,
+            alpha,
+            output_recipient,
+            vote_round_id,
+            nc_root,
+            van_comm_rand,
+            &imt,
+            rng,
+            Some(precomputed),
+        )
+    }
+
+    fn make_valid_padded_note_data(
+        fvk: &FullViewingKey,
+        n_real: usize,
+        pad_idx: usize,
+        rng: &mut impl RngCore,
+    ) -> PaddedNoteData {
+        let pad_addr = fvk.address_at(
+            PADDING_DIVERSIFIER_BASE + (n_real + pad_idx) as u32,
+            Scope::External,
+        );
+        let (_, _, dummy) = Note::dummy(&mut *rng, None);
+        let pad_note = Note::new(
+            pad_addr,
+            NoteValue::ZERO,
+            Rho::from_nf_old(dummy.nullifier(fvk)),
+            &mut *rng,
+        );
+
+        PaddedNoteData {
+            rho: pad_note.rho().to_bytes(),
+            rseed: *pad_note.rseed().as_bytes(),
+        }
     }
 
     fn assert_delegation_output_shape(bundle: &DelegationBundle) {
@@ -720,6 +842,70 @@ mod tests {
         assert!(matches!(
             result,
             Err(DelegationBuildError::InvalidNoteCount(6))
+        ));
+    }
+
+    #[test]
+    fn test_missing_precomputed_padded_note_returns_error() {
+        let precomputed = PrecomputedRandomness {
+            padded_notes: vec![],
+            rseed_signed: [0u8; 32],
+            rseed_output: [0u8; 32],
+        };
+
+        let result = build_single_note_bundle_with_precomputed(&precomputed);
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::MissingPrecomputedPaddedNote {
+                index: 0,
+                actual: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn test_partial_precomputed_padded_notes_returns_later_missing_error() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let precomputed = PrecomputedRandomness {
+            padded_notes: vec![
+                make_valid_padded_note_data(&fvk, 1, 0, &mut rng),
+                make_valid_padded_note_data(&fvk, 1, 1, &mut rng),
+            ],
+            rseed_signed: [0u8; 32],
+            rseed_output: [0u8; 32],
+        };
+
+        let result =
+            build_single_note_bundle_with_fvk_and_precomputed(&fvk, &precomputed, &mut rng);
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::MissingPrecomputedPaddedNote {
+                index: 2,
+                actual: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn test_invalid_precomputed_padded_rho_returns_error() {
+        let precomputed = PrecomputedRandomness {
+            padded_notes: vec![PaddedNoteData {
+                rho: [0xffu8; 32],
+                rseed: [0u8; 32],
+            }],
+            rseed_signed: [0u8; 32],
+            rseed_output: [0u8; 32],
+        };
+
+        let result = build_single_note_bundle_with_precomputed(&precomputed);
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::InvalidPrecomputedRho { index: 0 })
         ));
     }
 
