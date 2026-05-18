@@ -8,10 +8,9 @@
 use halo2_proofs::circuit::Value;
 use pasta_curves::pallas;
 
+use crate::circuit::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
 use crate::shares_hash::shares_hash_from_comms;
-use crate::vote_proof::{
-    poseidon_hash_2, vote_commitment_hash as compute_vote_commitment_hash, VOTE_COMM_TREE_DEPTH,
-};
+use crate::vote_proof::{poseidon_hash_2, VOTE_COMM_TREE_DEPTH};
 
 use super::circuit::{share_nullifier_hash, Circuit, Instance};
 
@@ -112,7 +111,8 @@ mod tests {
     use halo2_proofs::dev::MockProver;
     use pasta_curves::pallas;
 
-    use crate::vote_proof::{elgamal_encrypt, share_commitment, spend_auth_g_affine};
+    use crate::circuit::elgamal::{elgamal_encrypt, spend_auth_g_affine};
+    use crate::vote_proof::share_commitment;
 
     use super::super::circuit::K;
 

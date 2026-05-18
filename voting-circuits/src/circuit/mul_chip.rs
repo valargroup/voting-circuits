@@ -7,7 +7,7 @@ use halo2_proofs::{
 use pasta_curves::pallas;
 
 /// An instruction set for multiplying two circuit words (field elements).
-pub trait MulInstruction<F: Field>: Chip<F> {
+pub(crate) trait MulInstruction<F: Field>: Chip<F> {
     /// Constraints `a * b` and returns the product.
     fn mul(
         &self,
@@ -19,7 +19,7 @@ pub trait MulInstruction<F: Field>: Chip<F> {
 
 /// Configuration for the multiplication chip.
 #[derive(Clone, Debug)]
-pub struct MulConfig {
+pub(crate) struct MulConfig {
     a: Column<Advice>,
     b: Column<Advice>,
     c: Column<Advice>,
@@ -28,7 +28,7 @@ pub struct MulConfig {
 
 /// A chip implementing a single multiplication constraint `c = a * b` on a single row.
 #[derive(Debug)]
-pub struct MulChip {
+pub(crate) struct MulChip {
     config: MulConfig,
 }
 
@@ -47,7 +47,7 @@ impl Chip<pallas::Base> for MulChip {
 
 impl MulChip {
     /// Configures the multiplication chip with the given advice columns.
-    pub fn configure(
+    pub(crate) fn configure(
         meta: &mut ConstraintSystem<pallas::Base>,
         a: Column<Advice>,
         b: Column<Advice>,
@@ -67,7 +67,7 @@ impl MulChip {
     }
 
     /// Constructs a multiplication chip from the given config.
-    pub fn construct(config: MulConfig) -> Self {
+    pub(crate) fn construct(config: MulConfig) -> Self {
         Self { config }
     }
 }

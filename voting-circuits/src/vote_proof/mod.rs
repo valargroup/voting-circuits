@@ -18,18 +18,15 @@
 //! - **Condition 12**: Vote Commitment Integrity (Poseidon `ConstantLength<5>`, `constrain_instance`).
 
 pub(crate) mod authority_decrement;
-pub mod builder;
-pub mod circuit;
-pub mod prove;
+pub(crate) mod builder;
+pub(crate) mod circuit;
+pub(crate) mod prove;
 
-pub use crate::circuit::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
 pub use builder::{
-    build_vote_proof_from_delegation, derive_share_blind, derive_share_randomness,
-    EncryptedShareOutput, VoteProofBuildError, VoteProofBundle,
+    build_vote_proof_from_delegation, EncryptedShareOutput, VoteProofBuildError, VoteProofBundle,
 };
 pub use circuit::{
-    domain_van_nullifier, poseidon_hash_2, share_commitment, shares_hash, van_integrity_hash,
-    van_nullifier_hash, vote_commitment_hash, Circuit, Config, Instance, DOMAIN_VAN, DOMAIN_VC, K,
+    poseidon_hash_2, share_commitment, shares_hash, Circuit, Config, Instance, K,
     VOTE_COMM_TREE_DEPTH,
 };
 pub use prove::{

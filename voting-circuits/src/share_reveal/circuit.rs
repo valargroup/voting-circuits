@@ -732,8 +732,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // vote_commitment = Poseidon(DOMAIN_VC, voting_round_id,
         //                            shares_hash, proposal_id, vote_decision)
         //
-        // Same hash as vote_proof::vote_commitment_hash and
-        // vote_commitment_tree::vote_commitment_hash.
+        // Same hash as the shared vote-commitment helper and the vote
+        // commitment tree.
         // ---------------------------------------------------------------
 
         // DOMAIN_VC constant (baked into the VK).
@@ -940,9 +940,10 @@ mod tests {
     use halo2_proofs::dev::MockProver;
     use pasta_curves::pallas;
 
+    use crate::circuit::elgamal::{elgamal_encrypt, spend_auth_g_affine};
+    use crate::circuit::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
     use crate::vote_proof::{
-        elgamal_encrypt, poseidon_hash_2, share_commitment, shares_hash as compute_shares_hash,
-        spend_auth_g_affine, vote_commitment_hash as compute_vote_commitment_hash,
+        poseidon_hash_2, share_commitment, shares_hash as compute_shares_hash,
     };
 
     fn generate_ea_keypair() -> (pallas::Scalar, pallas::Point, pallas::Affine) {

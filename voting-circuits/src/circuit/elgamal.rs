@@ -18,6 +18,7 @@ use halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk::{Advice, Column, Error, Instance as InstanceColumn},
 };
+#[cfg(test)]
 use pasta_curves::arithmetic::CurveAffine;
 use pasta_curves::pallas;
 
@@ -56,7 +57,7 @@ pub(crate) struct EaPkInstanceLoc {
 /// — a nothing-up-my-sleeve point. Using it for El Gamal (Condition 11) avoids
 /// introducing a second generator point; the 22-window `SpendAuthGShort` tables
 /// share the same generator as the full-scalar SpendAuthG.
-pub fn spend_auth_g_affine() -> pallas::Affine {
+pub(crate) fn spend_auth_g_affine() -> pallas::Affine {
     use group::Curve;
     let g = orchard::constants::fixed_bases::spend_auth_g::generator();
     pallas::Point::from(g).to_affine()
@@ -66,7 +67,7 @@ pub fn spend_auth_g_affine() -> pallas::Affine {
 ///
 /// For small values (< 2^30) the integer representation is identical in both
 /// fields. Returns `None` if the byte representation exceeds the scalar modulus.
-pub fn base_to_scalar(b: pallas::Base) -> Option<pallas::Scalar> {
+pub(crate) fn base_to_scalar(b: pallas::Base) -> Option<pallas::Scalar> {
     use ff::PrimeField;
     pallas::Scalar::from_repr(b.to_repr()).into()
 }
@@ -74,11 +75,12 @@ pub fn base_to_scalar(b: pallas::Base) -> Option<pallas::Scalar> {
 /// Out-of-circuit El Gamal encryption under SpendAuthG.
 ///
 /// Computes C1 = [r]*SpendAuthG, C2 = [v]*SpendAuthG + [r]*ea_pk.
-/// Returns (c1_x, c2_x, c1_y, c2_y). Used by the builder and tests.
+/// Returns (c1_x, c2_x, c1_y, c2_y). Used by tests.
 ///
 /// Both coordinates are returned so that share commitments can bind to the
 /// full curve point, preventing ciphertext sign-malleability attacks.
-pub fn elgamal_encrypt(
+#[cfg(test)]
+pub(crate) fn elgamal_encrypt(
     share_value: pallas::Base,
     randomness: pallas::Base,
     ea_pk: pallas::Point,

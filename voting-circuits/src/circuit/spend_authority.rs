@@ -76,7 +76,7 @@ use orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
 /// }
 /// ```
 #[allow(non_snake_case)]
-pub fn prove_spend_authority(
+pub(crate) fn prove_spend_authority(
     ecc_chip: EccChip<OrchardFixedBases>,
     mut layouter: impl Layouter<pallas::Base>,
     alpha: Value<pallas::Scalar>,

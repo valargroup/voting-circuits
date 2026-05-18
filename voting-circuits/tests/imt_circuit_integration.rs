@@ -20,8 +20,8 @@ use orchard::{
     NOTE_COMMITMENT_TREE_DEPTH,
 };
 use voting_circuits::delegation::{
-    builder::{build_delegation_bundle, RealNoteInput},
-    imt::{ImtError, ImtProofData, ImtProvider, SpacedLeafImtProvider},
+    build_delegation_bundle, ImtError, ImtProofData, ImtProvider, RealNoteInput,
+    SpacedLeafImtProvider,
 };
 
 use imt_tree::tree::{

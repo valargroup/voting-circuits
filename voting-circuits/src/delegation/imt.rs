@@ -115,7 +115,7 @@ use std::vec::Vec;
 ///
 /// `empty[0] = Poseidon3(0, 0, 0)` (hash of an all-zero punctured-range leaf),
 /// `empty[i] = Poseidon(empty[i-1], empty[i-1])` for i >= 1.
-pub fn empty_imt_hashes() -> Vec<pallas::Base> {
+fn empty_imt_hashes() -> Vec<pallas::Base> {
     let empty_leaf = poseidon_hash_3(
         pallas::Base::zero(),
         pallas::Base::zero(),

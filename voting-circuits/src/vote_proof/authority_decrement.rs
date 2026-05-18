@@ -134,7 +134,7 @@ use pasta_curves::pallas;
 
 use halo2_gadgets::utilities::bool_check;
 
-use crate::vote_proof::circuit::MAX_PROPOSAL_ID;
+use super::circuit::MAX_PROPOSAL_ID;
 
 // ================================================================
 // Config
@@ -142,7 +142,7 @@ use crate::vote_proof::circuit::MAX_PROPOSAL_ID;
 
 /// Configuration for the [`AuthorityDecrementChip`].
 #[derive(Clone, Debug)]
-pub struct AuthorityDecrementConfig {
+pub(super) struct AuthorityDecrementConfig {
     /// Complex selector for the lookup row (row 0 of the chip region).
     /// When 1 the `(proposal_id, one_shifted)` lookup is enforced;
     /// when 0 the lookup input is `(0, 1)` which always passes.
@@ -265,14 +265,14 @@ fn cond6_shared_constraints(r: &Cond6Row) -> Vec<(&'static str, Expression<palla
 /// - `proposal_authority_new = proposal_authority_old - (1 << proposal_id)`.
 /// - `proposal_id != 0` (rejects the sentinel value).
 /// - `proposal_id` is in range `[1, 16)` via the `(proposal_id, 2^proposal_id)` lookup.
-pub struct AuthorityDecrementChip;
+pub(super) struct AuthorityDecrementChip;
 
 impl AuthorityDecrementChip {
     /// Creates gates and lookup for the chip.
     ///
     /// `advices` must be the same 10-column slice used by the outer circuit
     /// (equality must already be enabled on each column by the caller).
-    pub fn configure(
+    pub(super) fn configure(
         meta: &mut ConstraintSystem<pallas::Base>,
         advices: [Column<Advice>; 10],
     ) -> AuthorityDecrementConfig {
@@ -376,7 +376,7 @@ impl AuthorityDecrementChip {
     ///
     /// Must be called from `synthesize` before [`Self::assign`], alongside
     /// `SinsemillaChip::load`.
-    pub fn load_table(
+    pub(super) fn load_table(
         config: &AuthorityDecrementConfig,
         layouter: &mut impl Layouter<pallas::Base>,
     ) -> Result<(), plonk::Error> {
@@ -418,7 +418,7 @@ impl AuthorityDecrementChip {
     ///
     /// The `proposal_authority_new` cell (`= proposal_authority_old` with the
     /// selected bit cleared).
-    pub fn assign(
+    pub(super) fn assign(
         config: &AuthorityDecrementConfig,
         layouter: &mut impl Layouter<pallas::Base>,
         proposal_id: AssignedCell<pallas::Base, pallas::Base>,

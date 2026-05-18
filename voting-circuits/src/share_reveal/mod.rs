@@ -12,10 +12,11 @@
 //! - **Condition 5**: Share Nullifier Integrity (4-layer Poseidon chain with
 //!   `voting_round_id` binding).
 
-pub mod builder;
-pub mod circuit;
-pub mod prove;
+pub(crate) mod builder;
+pub(crate) mod circuit;
+pub(crate) mod prove;
 
+pub use builder::{build_share_reveal, ShareRevealBundle};
 pub use circuit::{domain_tag_share_spend, share_nullifier_hash, Circuit, Config, Instance, K};
 pub use prove::share_reveal_cached_keys;
 pub use prove::{

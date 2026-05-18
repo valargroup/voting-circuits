@@ -8,8 +8,10 @@
 #![deny(missing_debug_implementations)]
 #![deny(unsafe_code)]
 
-pub mod circuit;
-pub mod shares_hash;
+pub(crate) mod circuit;
+pub(crate) mod shares_hash;
+
+pub use shares_hash::shares_hash_from_comms;
 
 pub mod delegation;
 

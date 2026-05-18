@@ -121,8 +121,8 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 ///   `cargo test --features vote-proof row_budget -- --nocapture --ignored`
 pub const K: u32 = 13;
 
-pub use van_integrity::DOMAIN_VAN;
-pub use vote_commitment::DOMAIN_VC;
+pub(crate) use van_integrity::DOMAIN_VAN;
+pub(crate) use vote_commitment::DOMAIN_VC;
 
 /// Maximum proposal_id bit index (exclusive upper bound). `proposal_id` is in `[1, MAX_PROPOSAL_ID)`,
 /// i.e. valid values are 1–15. Bit 0 is permanently reserved as the sentinel/unset value and is
@@ -144,7 +144,7 @@ pub use vote_commitment::DOMAIN_VC;
 ///
 /// Bit 0 of `proposal_authority` is always set (initial value `0xFFFF`) and
 /// never decremented, acting as a structural invariant rather than a usable slot.
-pub const MAX_PROPOSAL_ID: usize = 16;
+pub(super) const MAX_PROPOSAL_ID: usize = 16;
 
 // ================================================================
 // Public input offsets (11 field elements).
@@ -189,8 +189,8 @@ const _: usize = VOTE_COMM_TREE_ANCHOR_HEIGHT;
 // Out-of-circuit helpers
 // ================================================================
 
-pub use van_integrity::van_integrity_hash;
-pub use vote_commitment::vote_commitment_hash;
+pub(crate) use van_integrity::van_integrity_hash;
+pub(crate) use vote_commitment::vote_commitment_hash;
 
 /// Returns the domain separator for the VAN nullifier inner hash.
 ///
@@ -198,7 +198,7 @@ pub use vote_commitment::vote_commitment_hash;
 /// by interpreting the UTF-8 bytes as a little-endian 256-bit integer.
 /// This domain tag differentiates VAN nullifier derivation from other
 /// Poseidon uses in the protocol.
-pub fn domain_van_nullifier() -> pallas::Base {
+pub(super) fn domain_van_nullifier() -> pallas::Base {
     // "vote authority spend" (20 bytes) zero-padded to 32, as LE u64 words.
     pallas::Base::from_raw([
         0x7475_6120_6574_6f76, // b"vote aut" LE
@@ -216,7 +216,7 @@ pub fn domain_van_nullifier() -> pallas::Base {
 ///
 /// Single `ConstantLength<4>` call (2 permutations at rate=2).
 /// Used by the builder and tests to compute the expected VAN nullifier.
-pub fn van_nullifier_hash(
+pub(super) fn van_nullifier_hash(
     vsk_nk: pallas::Base,
     voting_round_id: pallas::Base,
     vote_authority_note_old: pallas::Base,

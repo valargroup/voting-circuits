@@ -6,6 +6,17 @@
 
 - Bind the delegation nullifier domain to `vote_round_id` in-circuit, preventing `dom` from being used as a free public input.
 
+### Changed
+
+- Narrowed internal module, gadget, and helper visibility so only curated circuit/prover APIs remain public.
+
+### Migration
+
+- Replace `delegation::builder::*` and `delegation::imt::*` imports with named `delegation::*` root exports.
+- Replace `vote_proof::builder::*` and `vote_proof::circuit::*` imports with named `vote_proof::*` root exports.
+- Replace `share_reveal::builder::*` imports with named `share_reveal::*` root exports.
+- Shared gadget helpers such as `vote_proof::spend_auth_g_affine` and `vote_proof::elgamal_encrypt` are no longer public API.
+
 ## 0.4.2 - 2026-05-11
 
 - Added an explicit `mock-prover-checks` feature for vote-proof builder diagnostics.

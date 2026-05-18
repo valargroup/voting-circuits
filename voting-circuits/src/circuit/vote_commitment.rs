@@ -31,7 +31,7 @@ use halo2_proofs::{
 ///
 /// Prepended as the first Poseidon input for domain separation from
 /// VANs (`DOMAIN_VAN = 0`) in the shared vote commitment tree.
-pub const DOMAIN_VC: u64 = 1;
+pub(crate) const DOMAIN_VC: u64 = 1;
 
 // ================================================================
 // Out-of-circuit helper
@@ -46,7 +46,7 @@ pub const DOMAIN_VC: u64 = 1;
 ///
 /// Used by builders and tests to compute the expected vote commitment.
 /// Must produce identical output to the in-circuit gadget.
-pub fn vote_commitment_hash(
+pub(crate) fn vote_commitment_hash(
     voting_round_id: pallas::Base,
     shares_hash: pallas::Base,
     proposal_id: pallas::Base,
@@ -77,7 +77,7 @@ pub fn vote_commitment_hash(
 ///
 /// Used by ZKP #2 (vote proof, condition 12) and ZKP #3 (share reveal,
 /// condition 2).
-pub fn vote_commitment_poseidon(
+pub(crate) fn vote_commitment_poseidon(
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
     layouter: &mut impl Layouter<pallas::Base>,
     label: &str,

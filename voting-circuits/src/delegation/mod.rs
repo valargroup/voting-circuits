@@ -5,13 +5,20 @@
 //! The builder layer creates padded notes for unused slots and
 //! produces a single proof.
 
-pub mod builder;
-pub mod circuit;
-pub mod imt;
-pub mod imt_circuit;
-pub mod prove;
+pub(crate) mod builder;
+pub(crate) mod circuit;
+pub(crate) mod imt;
+pub(crate) mod imt_circuit;
+pub(crate) mod prove;
 
+pub use builder::{
+    build_delegation_bundle, DelegationBuildError, DelegationBundle, PaddedNoteData,
+    PrecomputedRandomness, RealNoteInput,
+};
 pub use circuit::{Circuit, Instance, K};
+pub use imt::{
+    derive_nullifier_domain, ImtError, ImtProofData, ImtProvider, SpacedLeafImtProvider, IMT_DEPTH,
+};
 pub use prove::{
     create_delegation_proof, delegation_params, delegation_proving_key, verify_delegation_proof,
     verify_delegation_proof_raw,
