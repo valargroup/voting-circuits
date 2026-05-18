@@ -23,7 +23,7 @@
 ### Changed
 
 - Narrowed internal module, gadget, and helper visibility so only curated circuit/prover APIs remain public.
-- Update delegation padding notes to use synthetic, IVK-bound padding points with custom derivation, avoiding overlap with the universe of Zcash mainnet diversified addresses.
+- Update delegation padding notes to use synthetic, IVK-bound padding points with custom derivation, avoiding reuse of ordinary Zcash mainnet diversified-address indices.
 
 ### Migration
 
