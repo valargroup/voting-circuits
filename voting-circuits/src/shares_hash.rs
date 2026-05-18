@@ -35,7 +35,7 @@ use pasta_curves::pallas;
 /// The y-coordinates bind the commitment to the exact curve point, preventing
 /// ciphertext sign-malleability. The `index` is used only for namespace labels
 /// and has no effect on the constraint system.
-pub fn hash_share_commitment_in_circuit(
+pub(crate) fn hash_share_commitment_in_circuit(
     chip: PoseidonChip<pallas::Base, 3, 2>,
     mut layouter: impl Layouter<pallas::Base>,
     blind: AssignedCell<pallas::Base, pallas::Base>,
@@ -78,7 +78,7 @@ pub fn hash_share_commitment_in_circuit(
 /// * `enc_c2_y` — The 16 El Gamal `C2` y-coordinates.
 ///
 /// Returns the `shares_hash` cell.
-pub fn compute_shares_hash_in_circuit(
+pub(crate) fn compute_shares_hash_in_circuit(
     poseidon_chip: impl Fn() -> PoseidonChip<pallas::Base, 3, 2>,
     mut layouter: impl Layouter<pallas::Base>,
     blinds: [AssignedCell<pallas::Base, pallas::Base>; 16],

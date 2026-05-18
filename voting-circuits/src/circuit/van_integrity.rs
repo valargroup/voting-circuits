@@ -34,7 +34,7 @@ use halo2_proofs::{
 /// Prepended as the first Poseidon input for domain separation from
 /// Vote Commitments in the shared vote commitment tree.
 /// `DOMAIN_VAN = 0` for VANs, `DOMAIN_VC = 1` for Vote Commitments.
-pub const DOMAIN_VAN: u64 = 0;
+pub(crate) const DOMAIN_VAN: u64 = 0;
 
 // ================================================================
 // Out-of-circuit helper
@@ -51,7 +51,7 @@ pub const DOMAIN_VAN: u64 = 0;
 /// ```
 ///
 /// Used by builders and tests to compute the expected VAN commitment.
-pub fn van_integrity_hash(
+pub(crate) fn van_integrity_hash(
     g_d_x: pallas::Base,
     pk_d_x: pallas::Base,
     value: pallas::Base,
@@ -92,7 +92,7 @@ pub fn van_integrity_hash(
 /// `MAX_PROPOSAL_AUTHORITY` (fresh delegation). In ZKP #2 (vote
 /// proof) condition 2 passes `_old`, condition 6 passes `_new`
 /// (from condition 5's decrement).
-pub fn van_integrity_poseidon(
+pub(crate) fn van_integrity_poseidon(
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
     layouter: &mut impl Layouter<pallas::Base>,
     label: &str,

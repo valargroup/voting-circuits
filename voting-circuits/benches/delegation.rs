@@ -20,8 +20,7 @@ use orchard::{
     value::NoteValue,
 };
 use voting_circuits::delegation::{
-    builder::{build_delegation_bundle, DelegationBundle, RealNoteInput},
-    imt::{ImtProvider, SpacedLeafImtProvider},
+    build_delegation_bundle, DelegationBundle, ImtProvider, RealNoteInput, SpacedLeafImtProvider,
 };
 
 const K: u32 = 14;

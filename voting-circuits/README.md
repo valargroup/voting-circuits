@@ -15,7 +15,7 @@ This crate is the circuit-only side. Wallets typically don't call it directly; t
 If you do want the raw gadgets for a custom prover:
 
 ```rust
-use voting_circuits::vote_proof::circuit::VoteProofCircuit;
+use voting_circuits::vote_proof::Circuit as VoteProofCircuit;
 // ... assemble public/private inputs and run halo2_proofs
 ```
 

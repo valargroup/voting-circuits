@@ -18,7 +18,7 @@ use halo2_proofs::{
 /// in that fixed column and copy-constrains the returned advice cell to it, so
 /// a malicious client driving the honest circuit cannot substitute another
 /// value.
-pub fn assign_constant<F: Field>(
+pub(crate) fn assign_constant<F: Field>(
     mut layouter: impl Layouter<F>,
     column: Column<Advice>,
     constant: F,

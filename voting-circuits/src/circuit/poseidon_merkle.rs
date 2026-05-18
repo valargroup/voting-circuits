@@ -45,14 +45,14 @@ use orchard::circuit::gadget::assign_free_advice;
 /// - `left + right = current + sibling` (conservation)
 /// - `bool_check(pos_bit)`
 #[derive(Clone, Debug)]
-pub struct MerkleSwapGate {
-    pub selector: Selector,
+pub(crate) struct MerkleSwapGate {
+    selector: Selector,
     advices: [Column<Advice>; 5],
 }
 
 impl MerkleSwapGate {
     /// Configures the gate on `advices[0..5]`.
-    pub fn configure(
+    pub(crate) fn configure(
         meta: &mut plonk::ConstraintSystem<pallas::Base>,
         advices: [Column<Advice>; 5],
     ) -> Self {
@@ -88,7 +88,7 @@ impl MerkleSwapGate {
     }
 
     /// Assigns a single swap row. Returns `(left, right)`.
-    pub fn assign(
+    pub(crate) fn assign(
         &self,
         region: &mut halo2_proofs::circuit::Region<'_, pallas::Base>,
         offset: usize,
@@ -143,7 +143,7 @@ impl MerkleSwapGate {
 /// 3. Hashes `Poseidon(left, right)` with P128Pow5T3.
 ///
 /// Returns the computed root cell.
-pub fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
+pub(crate) fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
     swap_gate: &MerkleSwapGate,
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
     layouter: &mut impl Layouter<pallas::Base>,

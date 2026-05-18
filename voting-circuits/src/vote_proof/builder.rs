@@ -27,7 +27,7 @@ use super::circuit::{
     Circuit, Instance, VOTE_COMM_TREE_DEPTH,
 };
 use super::prove::create_vote_proof;
-use super::{base_to_scalar, spend_auth_g_affine};
+use crate::circuit::elgamal::{base_to_scalar, spend_auth_g_affine};
 
 /// Ballot divisor — must match `delegation::circuit::BALLOT_DIVISOR`.
 const BALLOT_DIVISOR: u64 = 12_500_000;
@@ -78,7 +78,7 @@ const _: () = assert!(
 ///
 /// The randomized remainder prevents a single non-standard value from
 /// fingerprinting the voter's exact balance.
-pub fn denomination_split(
+fn denomination_split(
     num_ballots: u64,
     sk: &SpendingKey,
     round_id: pallas::Base,
@@ -363,7 +363,7 @@ fn vote_share_prf(
 /// Returns a `pallas::Base` element that is also a valid `pallas::Scalar`.
 /// We reduce mod p_base first; since p_base < q_scalar on the Pallas curve,
 /// every Base element is representable as a Scalar.
-pub fn derive_share_randomness(
+fn derive_share_randomness(
     sk: &SpendingKey,
     round_id: pallas::Base,
     proposal_id: u64,
@@ -384,7 +384,7 @@ pub fn derive_share_randomness(
 }
 
 /// Derive deterministic blind factor `blind_i` for a share commitment.
-pub fn derive_share_blind(
+fn derive_share_blind(
     sk: &SpendingKey,
     round_id: pallas::Base,
     proposal_id: u64,
