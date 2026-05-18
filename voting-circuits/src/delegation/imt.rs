@@ -54,6 +54,18 @@ pub(crate) fn gov_null_hash(
 /// 29-level Merkle path to the root. Non-membership is proven by showing:
 ///   1. `nf_lo < value < nf_hi` (strict interval)
 ///   2. `value != nf_mid` (non-equality with interior nullifier)
+///
+/// # Tree contract
+///
+/// Proof soundness depends on the authenticated leaves forming the canonical
+/// K=2 punctured-range tree for the nullifier set. The nullifier list must be
+/// sorted, deduplicated, padded to an odd count, and include sentinels so that
+/// adjacent leaves share only boundary nullifiers and cover every value the
+/// circuit may rule out.
+///
+/// Every returned leaf must also have outer span `nf_hi - nf_lo <= 2^250` in
+/// canonical Pallas base-field ordering. This keeps each canonical bracket
+/// within the 250-bit offset checks used by the circuit.
 #[derive(Clone, Debug)]
 pub struct ImtProofData {
     /// The Merkle root of the IMT.
@@ -80,8 +92,20 @@ impl std::error::Error for ImtError {}
 
 /// Trait for providing IMT non-membership proofs.
 ///
-/// Implementations must return proofs against a consistent root — all proofs
-/// from the same provider must share the same `root()` value.
+/// # Invariants
+///
+/// Implementations must return proofs against a consistent root. Every proof
+/// returned by [`ImtProvider::non_membership_proof`] must authenticate to the
+/// same root returned by [`ImtProvider::root`].
+///
+/// Implementations must also satisfy the [`ImtProofData`] tree contract. The
+/// leaves committed under the root must be a non-overlapping partition of the
+/// nullifier domain covered by the circuit. A provider must not return a proof
+/// against one leaf for a value that appears as `nf_mid` in another leaf, since
+/// the circuit cannot detect overlap between authenticated leaves.
+///
+/// [`SpacedLeafImtProvider`] is the in-crate implementation for proof
+/// generation and tests.
 pub trait ImtProvider {
     /// The current IMT root.
     fn root(&self) -> pallas::Base;
@@ -121,7 +145,8 @@ fn empty_imt_hashes() -> Vec<pallas::Base> {
 pub const SENTINEL_EXPONENT: u64 = 249;
 
 /// Number of sentinel multiples: `0, 1*step, 2*step, ..., 32*step`.
-/// `32 * 2^249 = 2^254` covers the Pallas field (p ≈ 2^254.9).
+/// `32 * 2^249 = 2^254` reaches the main high bit of the Pallas base field,
+/// and the final `p - 1` sentinel closes the remaining tail.
 pub const SENTINEL_COUNT: u64 = 32;
 
 /// Build the sorted, deduplicated, odd-count sentinel list used by both
@@ -193,8 +218,8 @@ fn find_range_for_value(ranges: &[[pallas::Base; 3]], value: pallas::Base) -> Op
 /// Mirrors the production sentinel injection path: sentinels at `k * 2^249`
 /// for `k = 0..=32`, plus `p - 1`, sorted, deduplicated, and padded to odd
 /// count with `Fp::from(2)`. Each interior leaf spans exactly `2^250`,
-/// satisfying the circuit's 250-bit range check. The tail leaf covers
-/// `[32*step, p-1]` with span `≈ 2^126`, well under the bound.
+/// satisfying the circuit's 250-bit range check. The final leaf is
+/// `[31*step, 32*step, p-1]`, also within the bound.
 ///
 /// Used for proof generation (fixture generators) and testing.
 #[derive(Debug)]
