@@ -162,7 +162,10 @@ constrain_instance(r_vpk_derived, R_VPK_X), constrain_instance(r_vpk_derived.y()
 
 Where:
 - **vsk_ak_point**: same point as in condition 3 (`[vsk]*SpendAuthG`), reused via the existing fixed-base mul.
-- **alpha_v**: spend auth randomizer (private witness, `pallas::Scalar`).
+- **alpha_v**: spend auth randomizer (private witness, `pallas::Scalar`). The
+  circuit matches upstream Orchard and does not constrain this value non-zero;
+  an honest wallet samples it freshly, while a zero witness is a documented
+  self-linking/coercion surface rather than a soundness break.
 - **r_vpk_derived**: in-circuit result constrained to the instance column at offsets 1 (x) and 2 (y).
 
 **Constraint:** The circuit computes `r_vpk = vsk.ak + [alpha_v]*G` and constrains it to the public inputs `r_vpk_x`, `r_vpk_y`. The vote signature is verified out-of-circuit under `r_vpk` over the transaction sighash.
@@ -180,7 +183,7 @@ van_nullifier = Poseidon(vsk_nk, domain_van_nullifier, voting_round_id, vote_aut
 Single `ConstantLength<4>` call matching ZKP 1 condition 14's governance nullifier pattern (`gov_null = Poseidon(nk, domain_tag, vote_round_id, real_nf)`):
 
 - **`vsk_nk`**: nullifier deriving key (private witness, base field element). Concretely `fvk.nk().inner()` — structurally the same value as the `nk` used in ZKP 1. The same cell is shared with condition 3 (CommitIvk), binding the nullifier to the authenticated key hierarchy.
-- **`domain_van_nullifier`**: `"vote authority spend"` (20 bytes) zero-padded to 32 and interpreted as a little-endian Pallas field element. Assigned via `assign_advice_from_constant` so the value is **baked into the verification key** — a prover cannot substitute a different value. This tag is the sole cross-circuit separator between this nullifier and ZKP 1's governance nullifier, which uses `"governance authorization"` under the same key. The two tags produce distinct field elements, so a collision would require breaking Poseidon.
+- **`domain_van_nullifier`**: `"vote authority spend"` (20 bytes) zero-padded to 32 and interpreted as a little-endian Pallas field element per `crate::domain_tags`. Assigned via `assign_advice_from_constant` so the value is **baked into the verification key** — a prover cannot substitute a different value. This tag is the sole cross-circuit separator between this nullifier and ZKP 1's governance nullifier, which uses `"governance authorization"` under the same key. The registry test asserts the tags are distinct field elements.
 - **`voting_round_id`**: cell-equality-linked to condition 2's instance copy, scoping the nullifier to this round.
 - **`vote_authority_note_old`**: cell-equality-linked to condition 2's derived VAN hash, binding conditions 2 and 5 together.
 
@@ -335,16 +338,16 @@ Purpose: each ciphertext is a valid El Gamal encryption of the corresponding pla
 For each share i (0..15):
     C1_i = [r_i] * G                        (randomness point)
     C2_i = [v_i] * G + [r_i] * ea_pk        (ciphertext point)
-    ExtractP(C1_i) == enc_share_c1_x[i]      (link to condition 10)
-    ExtractP(C2_i) == enc_share_c2_x[i]      (link to condition 10)
+    C1_i.x/y == enc_share_c1_x/y[i]          (link to condition 10)
+    C2_i.x/y == enc_share_c2_x/y[i]          (link to condition 10)
 ```
 
 Where:
 - **G**: SpendAuthG, the El Gamal generator. Handled via `FixedPointBaseField::from_inner(ecc_chip, SpendAuthGBase)`, which routes scalar multiplication through the precomputed fixed-base lookup tables already loaded by the circuit. No `NonIdentityPoint` witness or advice-from-constant assignment is needed — the generator is structurally baked into the proving key via the lookup tables, preventing a malicious prover from substituting a different base point.
-- **r_i**: El Gamal randomness for share `i` (private witness, `pallas::Base`). Used as the input to `spend_auth_g_base.clone().mul(r_cells[i])` for C1 and as `ScalarVar::from_base(r_cells[i])` for the variable-base `ea_pk` multiplication in C2. The same advice cell is cloned for both calls, ensuring the same randomness binds both ciphertext components.
+- **r_i**: El Gamal randomness for share `i` (private witness, `pallas::Base`). Used as the input to `spend_auth_g_base.clone().mul(r_cells[i])` for C1 and as `ScalarVar::from_base(r_cells[i])` for the variable-base `ea_pk` multiplication in C2. The same advice cell is cloned for both calls, ensuring the same randomness binds both ciphertext components. The circuit does not constrain `r_i != 0`; honest builders derive it by PRF, while an intentional zero witness is a documented per-share self-leak surface.
 - **v_i**: plaintext share value from conditions 8/9. Cell-equality-linked to the same cells used in `AddChip` (condition 8) and range check (condition 9). Used as the input to `spend_auth_g_base.clone().mul(share_cells[i])` for the `[v_i]*G` component of C2.
 - **ea_pk**: election authority public key (Pallas curve point, public input at offsets 9–10). Witnessed once as a `NonIdentityPoint` (on-curve constraint included). Its x and y advice cells are immediately pinned to the instance column via `layouter.constrain_instance`, preventing a prover from using a different or negated key. The same `NonIdentityPoint` is reused (cloned) across all 16 iterations — no re-witnessing.
-- **enc_share_c1_x[i]**, **enc_share_c2_x[i]**: the x-coordinate cells from condition 10's witness region. These are the same cells that were hashed into `shares_hash` by condition 10's Poseidon hash. Condition 11 constrains the ECC computation output to match them via `constrain_equal`, creating a binding between the Poseidon hash (condition 10) and the actual El Gamal encryption.
+- **enc_share_c1_x/y[i]**, **enc_share_c2_x/y[i]**: the coordinate cells from condition 10's witness region. These are the same cells that were hashed into `shares_hash` by condition 10's Poseidon hash. Condition 11 constrains the ECC computation output to match them via `constrain_equal`, creating a binding between the Poseidon hash (condition 10) and the actual El Gamal encryption.
 
 **Structure:**
 1. Witness ea_pk once as `NonIdentityPoint`; `constrain_instance` x and y to public inputs (rows `EA_PK_X`, `EA_PK_Y`)

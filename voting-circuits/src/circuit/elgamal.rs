@@ -115,7 +115,9 @@ pub(crate) fn elgamal_encrypt(
 /// ## Generator handling
 ///
 /// - **C1 = [r_i]*G**: uses `FixedPointBaseField::mul` (85-window, full-field scalar).
-///   `r_i` is a 255-bit scalar, so the full decomposition is required.
+///   `r_i` is a 255-bit scalar, so the full decomposition is required. The
+///   relation accepts `r_i = 0`; callers that need coercion resistance must
+///   add a non-zero constraint or audit the trusted randomness path.
 /// - **C2's [v_i]*G**: uses `FixedPointShort::mul` (22-window, 64-bit signed scalar).
 ///   `v_i` is range-checked to [0, 2^30) by condition 9; the short-scalar path
 ///   saves 63 windows per share (×16 = 1008 rows) vs the full 85-window path.

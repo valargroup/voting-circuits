@@ -10,6 +10,7 @@
 //! Used by the delegation circuit and builder.
 
 use ff::PrimeField;
+use halo2_gadgets::poseidon::primitives::{self as poseidon, ConstantLength};
 use pasta_curves::pallas;
 use std::string::String;
 
@@ -21,11 +22,7 @@ pub const IMT_DEPTH: usize = 29;
 
 /// Protocol identifier for governance authorization, encoded as a little-endian
 /// Pallas field element. Used to derive the nullifier domain for this application.
-pub(crate) fn gov_auth_domain_tag() -> pallas::Base {
-    let mut bytes = [0u8; 32];
-    bytes[..24].copy_from_slice(b"governance authorization");
-    pallas::Base::from_repr(bytes).unwrap()
-}
+pub(crate) use crate::domain_tags::governance_authorization as gov_auth_domain_tag;
 
 /// Derive the nullifier domain for a voting round (out of circuit).
 ///

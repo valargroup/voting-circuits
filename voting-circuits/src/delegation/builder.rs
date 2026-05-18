@@ -1,7 +1,8 @@
 //! Multi-note delegation bundle builder.
 //!
 //! Orchestrates the creation of a complete delegation proof:
-//! a single merged circuit proving all 15 conditions for up to 5 notes.
+//! a single merged circuit proving all 15 conditions for up to
+//! `circuit::MAX_REAL_NOTES` notes.
 //! Handles padding unused note slots with zero-value notes that still carry
 //! valid IMT non-membership proofs against the real tree root.
 
@@ -86,7 +87,7 @@ pub struct DelegationBundle {
 /// Errors from delegation bundle construction.
 #[derive(Clone, Debug)]
 pub enum DelegationBuildError {
-    /// Must have 1–5 real notes.
+    /// Must have 1 to `circuit::MAX_REAL_NOTES` real notes.
     InvalidNoteCount(usize),
     /// Public input construction failed.
     Instance(circuit::InstanceError),
@@ -122,7 +123,12 @@ impl std::fmt::Display for DelegationBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DelegationBuildError::InvalidNoteCount(n) => {
-                write!(f, "invalid note count: {} (expected 1–5)", n)
+                write!(
+                    f,
+                    "invalid note count: {} (expected 1–{})",
+                    n,
+                    circuit::MAX_REAL_NOTES
+                )
             }
             DelegationBuildError::Instance(e) => {
                 write!(f, "instance construction failed: {e}")
@@ -161,11 +167,13 @@ impl std::fmt::Display for PrecomputedRandomnessLocation {
     }
 }
 
-/// Build a complete delegation bundle with 1–5 real notes and padding.
+/// Build a complete delegation bundle with 1 to `circuit::MAX_REAL_NOTES`
+/// real notes and padding.
 ///
 /// # Arguments
 ///
-/// - `real_notes`: 1–5 real notes with their keys, Merkle paths, and IMT proofs.
+/// - `real_notes`: 1 to `circuit::MAX_REAL_NOTES` real notes with their keys,
+///   Merkle paths, and IMT proofs.
 /// - `fvk`: The delegator's full viewing key (shared across all real notes).
 /// - `alpha`: Spend auth randomizer for the keystone signature.
 /// - `output_recipient`: Address of the voting hotkey (output note recipient).
@@ -189,9 +197,10 @@ pub fn build_delegation_bundle(
     rng: &mut impl RngCore,
     precomputed: Option<&PrecomputedRandomness>,
 ) -> Result<DelegationBundle, DelegationBuildError> {
-    // The circuit supports 1–5 real notes; reject empty or oversized bundles.
+    // The circuit exposes a fixed five-slot shape; callers split larger
+    // wallets into multiple delegation proofs rather than changing the VK.
     let n_real = real_notes.len();
-    if n_real == 0 || n_real > 5 {
+    if n_real == 0 || n_real > circuit::MAX_REAL_NOTES {
         return Err(DelegationBuildError::InvalidNoteCount(n_real));
     }
 
@@ -206,10 +215,10 @@ pub fn build_delegation_bundle(
     let dom = derive_nullifier_domain(vote_round_id);
 
     // Collect per-note data.
-    let mut note_slots = Vec::with_capacity(5);
-    let mut cmx_values = Vec::with_capacity(5);
-    let mut v_values = Vec::with_capacity(5);
-    let mut gov_nulls = Vec::with_capacity(5);
+    let mut note_slots = Vec::with_capacity(circuit::MAX_REAL_NOTES);
+    let mut cmx_values = Vec::with_capacity(circuit::MAX_REAL_NOTES);
+    let mut v_values = Vec::with_capacity(circuit::MAX_REAL_NOTES);
+    let mut gov_nulls = Vec::with_capacity(circuit::MAX_REAL_NOTES);
 
     // Process real notes: derive psi/rcm from rseed, compute the note commitment,
     // real nullifier, and gov nullifier, then pack everything into a NoteSlotWitness.
@@ -252,10 +261,10 @@ pub fn build_delegation_bundle(
         gov_nulls.push(gov_null);
     }
 
-    // Pad remaining slots to 5 with zero-value dummy notes (ZIP §Note Padding).
+    // Pad remaining slots with zero-value dummy notes (ZIP §Note Padding).
     // Dummy notes use v=0, which gates condition 10 (Merkle path) via
     // v * (root - anchor) = 0. All other conditions run unconditionally.
-    for i in n_real..5 {
+    for i in n_real..circuit::MAX_REAL_NOTES {
         // Padding-address derivation: see PADDING_DIVERSIFIER_BASE's docstring
         // for the convention (base + offset, Scope::External, bound to the
         // real ivk via condition 11's mux with is_internal = false).
@@ -329,7 +338,8 @@ pub fn build_delegation_bundle(
         gov_nulls.push(gov_null);
     }
 
-    let notes: [NoteSlotWitness; 5] = note_slots.try_into().unwrap_or_else(|_| unreachable!());
+    let notes: [NoteSlotWitness; circuit::MAX_REAL_NOTES] =
+        note_slots.try_into().unwrap_or_else(|_| unreachable!());
 
     // Condition 8: ballot scaling.
     // num_ballots = floor(v_total / BALLOT_DIVISOR)
@@ -480,7 +490,8 @@ mod tests {
     /// Merged circuit K value.
     const K: u32 = 14;
 
-    /// Helper: create 1–5 real note inputs with a shared Merkle tree and anchor.
+    /// Helper: create 1 to `circuit::MAX_REAL_NOTES` real note inputs with a
+    /// shared Merkle tree and anchor.
     ///
     /// Notes are placed at positions 0..n in the commitment tree. Returns
     /// `(inputs, nc_root)` where `nc_root` is the shared anchor.
@@ -493,7 +504,7 @@ mod tests {
         rng: &mut impl RngCore,
     ) -> (Vec<RealNoteInput>, pallas::Base) {
         let n = values.len();
-        assert!(n >= 1 && n <= 5);
+        assert!(n >= 1 && n <= circuit::MAX_REAL_NOTES);
         assert_eq!(n, scopes.len());
 
         // Create notes.

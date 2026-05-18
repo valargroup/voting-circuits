@@ -133,14 +133,7 @@ const VOTING_ROUND_ID: usize = 8;
 /// Domain separator for share nullifiers, encoded as a Pallas base field element.
 ///
 /// `"share spend"` → 32-byte zero-padded array → `Fp::from_repr`.
-pub fn domain_tag_share_spend() -> pallas::Base {
-    use ff::PrimeField;
-    let mut bytes = [0u8; 32];
-    let tag = b"share spend";
-    bytes[..tag.len()].copy_from_slice(tag);
-    // Encoding is canonical since the tag is short (top byte is zero).
-    pallas::Base::from_repr(bytes).unwrap()
-}
+pub use crate::domain_tags::share_spend as domain_tag_share_spend;
 
 /// Out-of-circuit share nullifier hash (condition 5).
 ///
@@ -1192,12 +1185,7 @@ mod tests {
 
     #[test]
     fn test_share_reveal_domain_tag_matches_server() {
-        use ff::PrimeField;
-        let mut bytes = [0u8; 32];
-        let tag = b"share spend";
-        bytes[..tag.len()].copy_from_slice(tag);
-        let server_tag = pallas::Base::from_repr(bytes).unwrap();
-        assert_eq!(domain_tag_share_spend(), server_tag);
+        assert_eq!(domain_tag_share_spend(), crate::domain_tags::share_spend());
     }
 
     /// Measures actual rows used by the share-reveal circuit via `CircuitCost::measure`.

@@ -226,16 +226,19 @@ pub struct VoteProofBundle {
     /// These are the exact ciphertexts committed in the vote commitment hash
     /// and must be used for reveal-share payloads.
     pub encrypted_shares: [EncryptedShareOutput; 16],
-    /// Poseidon hash of all encrypted share x-coordinates.
+    /// Poseidon hash of all blinded encrypted-share commitments.
     /// Intermediate value: vote_commitment = H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision).
     /// Needed by the helper server to verify share payloads.
     pub shares_hash: pallas::Base,
     /// Per-share blind factors for blinded commitments.
-    /// share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x).
+    /// See `crate::shares_hash` for the authoritative five-coordinate
+    /// commitment shape.
     /// Deterministically derived from (sk, round_id, proposal_id, van_commitment, share_index).
     pub share_blinds: [pallas::Base; 16],
     /// Pre-computed per-share Poseidon commitments.
-    /// share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x).
+    /// Each commitment binds the blind and both coordinates of both El Gamal
+    /// ciphertext points; `crate::shares_hash` is the source of truth for the
+    /// preimage order.
     /// Provided as public inputs to ZKP #3 (share reveal) so the helper
     /// server only needs the primary share's blind, not all 16.
     pub share_comms: [pallas::Base; 16],
