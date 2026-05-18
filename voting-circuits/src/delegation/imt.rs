@@ -12,7 +12,7 @@
 use pasta_curves::pallas;
 use std::string::String;
 
-use crate::protocol_hash::{poseidon_hash_2, poseidon_hash_3};
+use crate::protocol_hash::{poseidon_hash, poseidon_hash_2, poseidon_hash_3};
 
 /// Depth of the nullifier Indexed Merkle Tree Merkle path (Poseidon-based).
 /// Total Poseidon calls per proof = 2 (leaf hash, ConstantLength<3>) + 29 (path) = 31.
@@ -21,6 +21,9 @@ pub const IMT_DEPTH: usize = 29;
 /// Protocol identifier for governance authorization, encoded as a little-endian
 /// Pallas field element. Used to derive the nullifier domain for this application.
 pub(crate) use crate::domain_tags::governance_authorization as gov_auth_domain_tag;
+
+/// Domain tag for governance alternate nullifiers.
+pub(crate) use crate::domain_tags::governance_nullifier as gov_null_domain_tag;
 
 /// Derive the nullifier domain for a voting round (out of circuit).
 ///
@@ -35,16 +38,16 @@ pub fn derive_nullifier_domain(vote_round_id: pallas::Base) -> pallas::Base {
 
 /// Compute alternate nullifier out-of-circuit (ZIP §Alternate Nullifier Derivation).
 ///
-/// `nf_dom = Poseidon(nk, dom, nf^old)`
+/// `nf_dom = Poseidon("governance nullifier", nk, dom, nf^old)`
 ///
 /// where `dom` is the nullifier domain (see [`derive_nullifier_domain`]).
-/// Single ConstantLength<3> call (2 permutations at rate=2).
+/// Single ConstantLength<4> call (2 permutations at rate=2).
 pub(crate) fn gov_null_hash(
     nk: pallas::Base,
     dom: pallas::Base,
     real_nf: pallas::Base,
 ) -> pallas::Base {
-    poseidon_hash_3(nk, dom, real_nf)
+    poseidon_hash([gov_null_domain_tag(), nk, dom, real_nf])
 }
 
 /// IMT non-membership proof data (K=2 punctured-range leaf model).
@@ -310,5 +313,23 @@ impl ImtProvider for SpacedLeafImtProvider {
             leaf_pos,
             path,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gov_null_hash_is_domain_separated_from_imt_leaf_hash() {
+        let a = pallas::Base::from(0u64);
+        let b = pallas::Base::from(1u64);
+        let c = pallas::Base::from(2u64);
+
+        assert_ne!(
+            gov_null_hash(a, b, c),
+            poseidon_hash_3(a, b, c),
+            "governance nullifiers must not share the raw Poseidon3 preimage with IMT leaves"
+        );
     }
 }

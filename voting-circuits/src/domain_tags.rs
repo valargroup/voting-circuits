@@ -53,6 +53,11 @@ pub(crate) fn delegation_rho_binding() -> pallas::Base {
     string_domain_tag(b"delegation rho binding")
 }
 
+/// Domain tag for ZKP #1 governance alternate nullifiers.
+pub(crate) fn governance_nullifier() -> pallas::Base {
+    string_domain_tag(b"governance nullifier")
+}
+
 /// Domain tag for ZKP #3 share nullifiers.
 pub fn share_spend() -> pallas::Base {
     string_domain_tag(b"share spend")
@@ -70,6 +75,7 @@ mod tests {
             ("vote authority spend", vote_authority_spend()),
             ("governance authorization", governance_authorization()),
             ("delegation rho binding", delegation_rho_binding()),
+            ("governance nullifier", governance_nullifier()),
             ("share spend", share_spend()),
         ];
 
