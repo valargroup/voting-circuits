@@ -123,11 +123,11 @@ fn empty_imt_hashes() -> Vec<pallas::Base> {
 /// With K=2 punctured ranges each leaf spans two consecutive intervals,
 /// giving outer span `2 * 2^249 = 2^250` — matching the circuit's 250-bit
 /// range check.
-const SENTINEL_EXPONENT: u64 = 249;
+pub const SENTINEL_EXPONENT: u64 = 249;
 
 /// Number of sentinel multiples: `0, 1*step, 2*step, ..., 32*step`.
 /// `32 * 2^249 = 2^254` covers the Pallas field (p ≈ 2^254.9).
-const SENTINEL_COUNT: u64 = 32;
+pub const SENTINEL_COUNT: u64 = 32;
 
 /// Build the sorted, deduplicated, odd-count sentinel list used by both
 /// [`SpacedLeafImtProvider`] and the production `prepare_nullifiers` path.
@@ -135,7 +135,7 @@ const SENTINEL_COUNT: u64 = 32;
 /// Sentinels: `k * 2^249` for `k = 0..=32`, plus `p - 1` to close the tail.
 /// If the count is even after dedup, `Fp::from(2)` is inserted after sentinel 0
 /// to make it odd (collision probability ≈ 2^{-254}).
-fn build_sentinel_list() -> Vec<pallas::Base> {
+pub fn build_sentinel_list() -> Vec<pallas::Base> {
     let step = pallas::Base::from(2u64).pow([SENTINEL_EXPONENT, 0, 0, 0]);
     let mut nfs: Vec<pallas::Base> = (0u64..=SENTINEL_COUNT)
         .map(|k| step * pallas::Base::from(k))

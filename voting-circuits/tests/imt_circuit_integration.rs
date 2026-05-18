@@ -20,17 +20,14 @@ use orchard::{
     NOTE_COMMITMENT_TREE_DEPTH,
 };
 use voting_circuits::delegation::{
-    build_delegation_bundle, ImtError, ImtProofData, ImtProvider, RealNoteInput,
-    SpacedLeafImtProvider,
+    build_delegation_bundle, build_sentinel_list, ImtError, ImtProofData, ImtProvider,
+    RealNoteInput, SpacedLeafImtProvider, K,
 };
 
 use imt_tree::tree::{
     build_levels, build_punctured_ranges, commit_punctured_ranges, find_punctured_range_for_value,
     precompute_empty_hashes, verify_punctured_range_spans, PuncturedRange, TREE_DEPTH,
 };
-
-/// Merged circuit K value (must match the delegation circuit).
-const K: u32 = 14;
 
 /// Build a note commitment tree with up to 4 notes, returning
 /// `(inputs, nc_root)` suitable for `build_delegation_bundle`.
@@ -221,20 +218,12 @@ struct ProductionSentinelImtAdapter {
 }
 
 impl ProductionSentinelImtAdapter {
-    /// Replicates the production sentinel injection from `pir-export::prepare_nullifiers`:
-    /// sentinels at `k * 2^249` for k in 0..=32, plus `p-1`, padded to odd count.
+    /// Uses the production sentinel injection shared with the crate IMT provider.
     fn new(extra_nfs: &[pallas::Base]) -> Self {
-        let step = pallas::Base::from(2u64).pow([249, 0, 0, 0]);
-        let mut all_nfs: Vec<pallas::Base> =
-            (0u64..=32).map(|k| step * pallas::Base::from(k)).collect();
-        all_nfs.push(-pallas::Base::one()); // p - 1
+        let mut all_nfs = build_sentinel_list();
         all_nfs.extend_from_slice(extra_nfs);
         all_nfs.sort();
         all_nfs.dedup();
-        if all_nfs.len() % 2 == 0 {
-            debug_assert_eq!(all_nfs[0], pallas::Base::zero());
-            all_nfs.insert(1, pallas::Base::from(2u64));
-        }
 
         let ranges = build_punctured_ranges(&all_nfs);
         verify_punctured_range_spans(&ranges).expect("all spans must be ≤ 2^250");
@@ -343,16 +332,7 @@ struct PoisonedNfMidProvider {
 
 impl PoisonedNfMidProvider {
     fn new(target_nf: pallas::Base) -> Self {
-        let step = pallas::Base::from(2u64).pow([249, 0, 0, 0]);
-        let mut all_nfs: Vec<pallas::Base> =
-            (0u64..=32).map(|k| step * pallas::Base::from(k)).collect();
-        all_nfs.push(-pallas::Base::one());
-        all_nfs.sort();
-        all_nfs.dedup();
-        if all_nfs.len() % 2 == 0 {
-            debug_assert_eq!(all_nfs[0], pallas::Base::zero());
-            all_nfs.insert(1, pallas::Base::from(2u64));
-        }
+        let all_nfs = build_sentinel_list();
 
         let mut ranges = build_punctured_ranges(&all_nfs);
 

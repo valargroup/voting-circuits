@@ -24,6 +24,7 @@ use halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk,
 };
+use itertools::Itertools;
 use pasta_curves::pallas;
 
 /// Computes a single blinded per-share commitment in-circuit:
@@ -88,10 +89,10 @@ pub(crate) fn compute_shares_hash_in_circuit(
     enc_c2_y: [AssignedCell<pallas::Base, pallas::Base>; 16],
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
     let share_comms: [_; 16] = IntoIterator::into_iter(blinds)
-        .zip(enc_c1_x)
-        .zip(enc_c2_x)
-        .zip(enc_c1_y)
-        .zip(enc_c2_y)
+        .zip_eq(enc_c1_x)
+        .zip_eq(enc_c2_x)
+        .zip_eq(enc_c1_y)
+        .zip_eq(enc_c2_y)
         .enumerate()
         .map(|(i, ((((blind, c1x), c2x), c1y), c2y))| {
             hash_share_commitment_in_circuit(

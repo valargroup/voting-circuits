@@ -19,6 +19,8 @@ use voting_circuits::vote_proof::Circuit as VoteProofCircuit;
 // ... assemble public/private inputs and run halo2_proofs
 ```
 
+Minimum supported Rust version: 1.86, as declared by the crate manifest.
+
 ## Dependency on `orchard`
 
 This crate now depends on upstream [`zcash/orchard`](https://github.com/zcash/orchard) `0.13`, with the `unstable-voting-circuits` feature enabled to expose the governance-visibility APIs the voting circuits rely on (the `valar-orchard` fork has been retired).

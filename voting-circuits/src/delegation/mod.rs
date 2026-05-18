@@ -17,7 +17,8 @@ pub use builder::{
 };
 pub use circuit::{Circuit, Instance, K};
 pub use imt::{
-    derive_nullifier_domain, ImtError, ImtProofData, ImtProvider, SpacedLeafImtProvider, IMT_DEPTH,
+    build_sentinel_list, derive_nullifier_domain, ImtError, ImtProofData, ImtProvider,
+    SpacedLeafImtProvider, IMT_DEPTH,
 };
 pub use prove::{
     create_delegation_proof, delegation_params, delegation_proving_key, verify_delegation_proof,
