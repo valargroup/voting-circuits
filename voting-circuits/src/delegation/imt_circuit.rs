@@ -57,10 +57,13 @@ use crate::protocol_hash::poseidon_hash_in_circuit;
 /// Range checks on `x_lo` and `x_hi` to `[0, 2^250)` are applied by
 /// [`synthesize_imt_non_membership`] via `lookup_config.copy_check` after this gate assigns them.
 ///
-/// NOTE: The 250-bit range checks are only sound when every IMT bracket
-/// has span `nf_hi - nf_lo < 2^250`. The IMT MUST be initialized with
-/// sentinel nullifiers at multiples of 2^249 (so each K=2 leaf spans
-/// at most `2 × 2^249 = 2^250`) before any real nullifiers are inserted.
+/// NOTE: The circuit is sized for IMT brackets with span
+/// `nf_hi - nf_lo <= 2^250`. The IMT MUST be initialized with sentinel
+/// nullifiers at multiples of 2^249 (so each K=2 leaf spans at most
+/// `2 × 2^249 = 2^250`) before any real nullifiers are inserted.
+/// The authenticated leaves must also come from a non-overlapping partition of
+/// the nullifier domain. This gate checks only the selected leaf, not the global
+/// tree layout.
 #[derive(Clone, Debug)]
 pub(crate) struct PuncturedIntervalGate {
     pub(crate) q_interval: Selector,

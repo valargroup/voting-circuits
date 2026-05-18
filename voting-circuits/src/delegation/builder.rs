@@ -87,6 +87,9 @@ pub struct RealNoteInput {
     /// Merkle authentication path for the note commitment.
     pub merkle_path: MerklePath,
     /// IMT non-membership proof for this note's nullifier.
+    ///
+    /// This must satisfy [`ImtProofData`]'s tree contract and authenticate to
+    /// the same nullifier IMT root used for the bundle.
     pub imt_proof: ImtProofData,
     /// Whether this note uses the internal (change) or external scope.
     pub scope: Scope,
@@ -492,7 +495,9 @@ impl std::fmt::Display for PrecomputedRandomnessLocation {
 /// - `vote_round_id`: Voting round identifier.
 /// - `nc_root`: Note commitment tree root (shared anchor).
 /// - `van_comm_rand`: Blinding factor for the governance commitment.
-/// - `imt_provider`: Provider for padded-note IMT non-membership proofs.
+/// - `imt_provider`: Provider for the bundle-wide nullifier IMT root and
+///   padded-note IMT non-membership proofs. Every real-note proof in
+///   `real_notes` must authenticate to this provider's root.
 /// - `rng`: Random number generator.
 /// - `precomputed`: If `Some`, reuse Phase 1 randomness for padded/signed/output notes
 ///   (ZCA-74 fix). If `None`, sample fresh randomness (backward compat for tests).
