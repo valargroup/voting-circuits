@@ -1,11 +1,12 @@
 //! El Gamal encryption integrity gadget for vote proof (ZKP #2).
 //!
-//! Proves that sixteen ciphertext pairs (enc_share_c1_x[i], enc_share_c2_x[i]) are
-//! valid El Gamal encryptions of the corresponding plaintext shares under the
-//! election authority public key: C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk.
+//! Proves that sixteen ciphertext pairs
+//! (enc_share_c1_x/y[i], enc_share_c2_x/y[i]) are valid El Gamal encryptions of
+//! the corresponding plaintext shares under the election authority public key:
+//! C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk.
 //!
 //! Used by the vote proof circuit (Condition 11: Encryption Integrity). The
-//! caller passes share cells, randomness cells, and enc_share x-coordinate cells;
+//! caller passes share cells, randomness cells, and enc_share coordinate cells;
 //! this gadget owns all ea_pk scaffolding (witnesses ea_pk once as a
 //! `NonIdentityPoint` and pins it to the instance column via `constrain_instance`)
 //! and handles G for C1 via `FixedPointBaseField` and for C2's [v_i]*G term
@@ -109,9 +110,9 @@ pub(crate) fn elgamal_encrypt(
 // In-circuit gadget
 // ================================================================
 
-/// Proves that for each share i, (enc_c1_x[i], enc_c2_x[i]) is a valid
-/// El Gamal encryption of share_cells[i] under randomness r_cells[i] and
-/// public key ea_pk: C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk.
+/// Proves that for each share i, (enc_c1_x/y[i], enc_c2_x/y[i]) is a
+/// valid El Gamal encryption of share_cells[i] under randomness r_cells[i]
+/// and public key ea_pk: C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk.
 ///
 /// ## Generator handling
 ///
@@ -136,7 +137,7 @@ pub(crate) fn elgamal_encrypt(
 ///
 /// The gadget witnesses ea_pk internally as a `NonIdentityPoint` and pins both
 /// coordinates to the public instance column. The caller need only supply the
-/// four varying arrays and the ea_pk value.
+/// share, randomness, and ciphertext coordinate arrays plus the ea_pk value.
 pub(crate) fn prove_elgamal_encryptions(
     ecc_chip: EccChip<OrchardFixedBases>,
     mut layouter: impl Layouter<pallas::Base>,

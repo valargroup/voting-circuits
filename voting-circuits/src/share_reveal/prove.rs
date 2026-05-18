@@ -85,7 +85,7 @@ pub fn warm_share_reveal_keys() {
 ///
 /// Returns the serialized proof bytes. The caller must have constructed
 /// a valid `Circuit` (with all witnesses populated) and a matching
-/// `Instance` (7 public inputs).
+/// `Instance` (9 public inputs).
 ///
 /// **Expensive**: K=11 proof generation takes ~5-15 seconds in release mode.
 pub fn create_share_reveal_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {

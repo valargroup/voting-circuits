@@ -1,7 +1,7 @@
 //! Real Halo2 prove/verify for the vote proof circuit (ZKP #2).
 //!
 //! Follows the same pattern as `delegation/prove.rs` but for the
-//! 11-condition vote proof circuit at K=14.
+//! 12-condition vote proof circuit at K=13.
 
 use std::string::String;
 use std::vec::Vec;
@@ -85,7 +85,7 @@ pub fn vote_proof_proving_key(
 /// a valid `Circuit` (with all witnesses populated) and a matching
 /// `Instance` ([`Instance::NUM_PUBLIC_INPUTS`] public inputs).
 ///
-/// **Expensive**: K=14 proof generation takes ~30-60 seconds in release mode.
+/// **Expensive**: K=13 proof generation takes ~30-60 seconds in release mode.
 /// Params and keys are cached so only the first call pays keygen.
 pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
     let (params, pk, _vk) = get_vote_proof_keys();
@@ -116,24 +116,26 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
 ///
 /// # Caller-authenticated inputs
 ///
-/// `constrain_instance` pins each public input to whatever value the
-/// *verifier* supplies; the protocol cannot tell whether that value was
-/// the *right* one. The following fields of `instance` MUST be sourced
-/// from a trusted channel (a signed governance announcement, a signed
-/// chain head) before calling this function. Substituting them is not
-/// detectable from the proof alone — most notably, an attacker can pick
-/// their own `ea_pk` (`= sk·G` for an `sk` they know) and decrypt all
-/// posted shares, with the proof still verifying:
+/// Some public inputs are constrained to witness-derived cells, and every
+/// public input is bound into the proof transcript. Neither property tells the
+/// verifier whether caller-provided governance or chain values are the right
+/// ones. The following fields of `instance` MUST be sourced from a trusted
+/// channel (a signed governance announcement, a signed chain head) before
+/// calling this function. Substituting them is not detectable from the proof
+/// alone. Most notably, an attacker can pick their own `ea_pk` (`= sk*G` for
+/// an `sk` they know) and decrypt all posted shares, with the proof still
+/// verifying:
 ///
 /// - `instance.proposal_id` — must come from the active session's
 ///   published proposal list.
 /// - `instance.voting_round_id` — must come from the same governance
 ///   announcement as `proposal_id`.
-/// - `instance.vote_comm_tree_root` — must be the vote commitment tree
+/// - `instance.vote_comm_tree_root` - must be the vote commitment tree
 ///   root at `vote_comm_tree_anchor_height` (verifier looks it up by
 ///   height, not by accepting it from the prover bundle).
-/// - `instance.vote_comm_tree_anchor_height` — must be a valid chain
-///   height accepted by the consuming chain's anchor-validity check.
+/// - `instance.vote_comm_tree_anchor_height` - must be a valid chain
+///   height accepted by the consuming chain's anchor-validity check. This
+///   slot is transcript-bound but not constrained to any circuit witness.
 /// - `instance.ea_pk_x`, `instance.ea_pk_y` — must come from the
 ///   election authority's published session key for `voting_round_id`.
 ///   Wiring `ea_pk` from the same bundle that carries the proof lets a

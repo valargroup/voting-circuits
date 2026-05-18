@@ -9,8 +9,8 @@
 //! - **Condition 3**: Shares Hash Integrity (blinded per-share commitments,
 //!   then ConstantLength<16> Poseidon over the 16 commitments).
 //! - **Condition 4**: Share Membership (custom mux gate).
-//! - **Condition 5**: Share Nullifier Integrity (4-layer Poseidon chain with
-//!   `voting_round_id` binding).
+//! - **Condition 5**: Share Nullifier Integrity (four-input Poseidon hash with
+//!   round binding through `vote_commitment`).
 
 pub(crate) mod builder;
 pub(crate) mod circuit;
