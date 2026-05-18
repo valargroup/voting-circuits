@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- Declared Rust 1.86 as the minimum supported Rust version.
+
+### Changed
+
+- Share-reveal APIs are now always available; the `share-reveal` Cargo feature was removed.
+
+### Removed
+
+- Removed the `mock-prover-checks` Cargo feature and its optional vote-proof builder diagnostics.
+
 ### Security
 
 - Bind the delegation nullifier domain to `vote_round_id` in-circuit, preventing `dom` from being used as a free public input.

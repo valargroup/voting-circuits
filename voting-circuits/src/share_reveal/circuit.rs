@@ -57,6 +57,7 @@ use halo2_proofs::{
     },
     poly::Rotation,
 };
+use itertools::Itertools;
 use pasta_curves::{pallas, vesta};
 
 use halo2_gadgets::{
@@ -414,7 +415,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             // selected_comm == Σ sel[i] * comm[i]
             let comm_mux_expr = comm
                 .iter()
-                .zip(sel.iter())
+                .zip_eq(sel.iter())
                 .fold(selected_comm, |acc, (c, s)| acc - s.clone() * c.clone());
             let comm_mux = ("comm mux", comm_mux_expr);
 

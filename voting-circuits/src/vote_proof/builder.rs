@@ -547,9 +547,6 @@ pub fn build_vote_proof_from_delegation(
             pk_d_derived, vpk_pk_d_affine,
             "CommitIvk chain mismatch: [ivk]*g_d != pk_d from address"
         );
-
-        #[cfg(feature = "mock-prover-checks")]
-        std::eprintln!("[BUILDER] key-chain consistency checks passed");
     }
 
     // ---- Proposal authority ----
@@ -779,28 +776,6 @@ pub fn build_vote_proof_from_delegation(
         ea_pk_x,
         ea_pk_y,
     );
-
-    // ---- Optional MockProver check ----
-    #[cfg(feature = "mock-prover-checks")]
-    {
-        use halo2_proofs::dev::MockProver;
-        let mock_circuit = circuit.clone();
-        let prover = MockProver::run(
-            super::circuit::K,
-            &mock_circuit,
-            vec![instance.to_halo2_instance()],
-        )
-        .expect("MockProver::run should not fail");
-
-        if let Err(failures) = prover.verify() {
-            return Err(VoteProofBuildError::InvalidShares(format!(
-                "circuit constraints not satisfied: {} failure(s): {:?}",
-                failures.len(),
-                failures,
-            )));
-        }
-        std::eprintln!("[BUILDER] MockProver passed");
-    }
 
     // ---- Generate proof ----
 

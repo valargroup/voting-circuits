@@ -14,17 +14,15 @@ use std::{
 };
 
 use orchard::{
+    constants::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH,
     keys::{FullViewingKey, Scope, SpendingKey},
     note::{ExtractedNoteCommitment, Note, RandomSeed, Rho},
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
 };
 use voting_circuits::delegation::{
-    build_delegation_bundle, DelegationBundle, ImtProvider, RealNoteInput, SpacedLeafImtProvider,
+    build_delegation_bundle, DelegationBundle, ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
 };
-
-const K: u32 = 14;
-const MERKLE_DEPTH: usize = 32;
 
 struct TrackingAllocator;
 
