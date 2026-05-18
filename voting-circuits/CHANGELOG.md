@@ -17,6 +17,7 @@
 
 ### Security
 
+- Add a protocol domain tag to the delegation rho binding hash.
 - Bind the delegation nullifier domain to `vote_round_id` in-circuit, preventing `dom` from being used as a free public input.
 - Reject identity delegation `rk` values during public input construction instead of panicking while preparing Halo2 inputs.
 - Return typed vote-proof builder errors for identity election authority keys,
