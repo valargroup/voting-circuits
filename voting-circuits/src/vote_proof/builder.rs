@@ -28,6 +28,7 @@ use super::circuit::{
 };
 use super::prove::create_vote_proof;
 use crate::circuit::elgamal::{base_to_scalar, spend_auth_g_affine};
+use crate::ProveError;
 
 /// Ballot divisor — must match `delegation::circuit::BALLOT_DIVISOR`.
 const BALLOT_DIVISOR: u64 = 12_500_000;
@@ -260,6 +261,14 @@ pub enum VoteProofBuildError {
     InvalidEncryptedShare(String),
     /// The proposal identifier is outside the supported 1-indexed range.
     InvalidProposalId(u64),
+    /// Halo2 proof creation failed.
+    Prove(ProveError),
+}
+
+impl From<ProveError> for VoteProofBuildError {
+    fn from(error: ProveError) -> Self {
+        VoteProofBuildError::Prove(error)
+    }
 }
 
 impl core::fmt::Display for VoteProofBuildError {
@@ -288,6 +297,18 @@ impl core::fmt::Display for VoteProofBuildError {
                     proposal_id
                 )
             }
+            VoteProofBuildError::Prove(error) => {
+                write!(f, "proof generation failed: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for VoteProofBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            VoteProofBuildError::Prove(error) => Some(error),
+            _ => None,
         }
     }
 }
@@ -798,7 +819,7 @@ pub fn build_vote_proof_from_delegation(
 
     // ---- Generate proof ----
 
-    let proof = create_vote_proof(circuit, &instance);
+    let proof = create_vote_proof(circuit, &instance)?;
 
     Ok(VoteProofBundle {
         proof,
@@ -1547,5 +1568,13 @@ mod tests {
             original, shuffled,
             "shuffle should reorder (vanishingly unlikely to be identity for 12 non-zero shares)"
         );
+    }
+
+    #[test]
+    fn prove_error_maps_into_build_error() {
+        let err =
+            VoteProofBuildError::from(ProveError::Halo2(halo2_proofs::plonk::Error::Synthesis));
+
+        assert!(matches!(err, VoteProofBuildError::Prove(_)));
     }
 }

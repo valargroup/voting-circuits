@@ -11,8 +11,10 @@
 pub(crate) mod circuit;
 pub(crate) mod domain_tags;
 mod protocol_hash;
+mod prove_error;
 pub(crate) mod shares_hash;
 
+pub use prove_error::ProveError;
 pub use shares_hash::shares_hash_from_comms;
 
 pub mod delegation;
