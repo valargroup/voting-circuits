@@ -17,9 +17,6 @@ use rand::rngs::OsRng;
 
 use super::circuit::{Circuit, Instance, K};
 
-/// Number of public inputs for the vote proof circuit.
-const NUM_PUBLIC_INPUTS: usize = 9;
-
 // ================================================================
 // Cached params + keys
 // ================================================================
@@ -87,7 +84,7 @@ pub fn vote_proof_proving_key(
 ///
 /// Returns the serialized proof bytes. The caller must have constructed
 /// a valid `Circuit` (with all witnesses populated) and a matching
-/// `Instance` (9 public inputs).
+/// `Instance` ([`Instance::NUM_PUBLIC_INPUTS`] public inputs).
 ///
 /// **Expensive**: K=14 proof generation takes ~30-60 seconds in release mode.
 /// Params and keys are cached so only the first call pays keygen.
@@ -114,7 +111,7 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
 // ================================================================
 
 /// Verify a vote proof circuit proof given serialized proof bytes and
-/// the 9 public inputs.
+/// the typed public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
 ///
@@ -169,9 +166,9 @@ pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String
 /// Verify a vote proof circuit proof from raw field-element bytes.
 ///
 /// This is the lower-level entry point used by the FFI layer. It takes
-/// the proof bytes and a flat array of `NUM_PUBLIC_INPUTS × 32` bytes of
-/// LE-encoded Pallas base field elements (the public inputs in canonical
-/// order).
+/// the proof bytes and a flat array of [`Instance::NUM_PUBLIC_INPUTS`] × 32
+/// bytes of LE-encoded Pallas base field elements (the public inputs in
+/// canonical order).
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
 ///
@@ -201,12 +198,12 @@ pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String
 pub fn verify_vote_proof_raw(proof: &[u8], public_inputs_bytes: &[u8]) -> Result<(), String> {
     use pasta_curves::group::ff::PrimeField;
 
-    let expected_len = NUM_PUBLIC_INPUTS * 32;
+    let expected_len = Instance::NUM_PUBLIC_INPUTS * 32;
     if public_inputs_bytes.len() != expected_len {
         return Err(format!(
             "expected {} bytes ({} × 32) for public inputs, got {}",
             expected_len,
-            NUM_PUBLIC_INPUTS,
+            Instance::NUM_PUBLIC_INPUTS,
             public_inputs_bytes.len()
         ));
     }
@@ -214,8 +211,8 @@ pub fn verify_vote_proof_raw(proof: &[u8], public_inputs_bytes: &[u8]) -> Result
     // Deserialize each 32-byte chunk as a Pallas Fp element.
     // The vote proof circuit's public inputs live on the Vesta
     // scalar field, which is the same as the Pallas base field.
-    let mut public_inputs: Vec<vesta::Scalar> = Vec::with_capacity(NUM_PUBLIC_INPUTS);
-    for i in 0..NUM_PUBLIC_INPUTS {
+    let mut public_inputs: Vec<vesta::Scalar> = Vec::with_capacity(Instance::NUM_PUBLIC_INPUTS);
+    for i in 0..Instance::NUM_PUBLIC_INPUTS {
         let start = i * 32;
         let mut repr = [0u8; 32];
         repr.copy_from_slice(&public_inputs_bytes[start..start + 32]);
@@ -238,4 +235,85 @@ pub fn verify_vote_proof_raw(proof: &[u8], public_inputs_bytes: &[u8]) -> Result
 
     verify_proof(params, vk, strategy, &[&[&public_inputs]], &mut transcript)
         .map_err(|e| format!("vote proof verification failed: {:?}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pasta_curves::group::ff::PrimeField;
+
+    fn serialize_instance(instance: &Instance) -> Vec<u8> {
+        instance
+            .to_halo2_instance()
+            .into_iter()
+            .flat_map(|input| input.to_repr())
+            .collect()
+    }
+
+    #[test]
+    fn public_input_count_matches_instance_layout() {
+        let instance = Instance::from_parts(
+            pallas::Base::from(1),
+            pallas::Base::from(2),
+            pallas::Base::from(3),
+            pallas::Base::from(4),
+            pallas::Base::from(5),
+            pallas::Base::from(6),
+            pallas::Base::from(7),
+            pallas::Base::from(8),
+            pallas::Base::from(9),
+            pallas::Base::from(10),
+            pallas::Base::from(11),
+        );
+
+        assert_eq!(
+            instance.to_halo2_instance().len(),
+            Instance::NUM_PUBLIC_INPUTS
+        );
+        assert_eq!(
+            serialize_instance(&instance).len(),
+            Instance::NUM_PUBLIC_INPUTS * 32
+        );
+    }
+
+    #[test]
+    fn raw_verify_rejects_legacy_nine_input_encoding_before_proof_verification() {
+        let err = verify_vote_proof_raw(&[], &[0u8; 9 * 32]).unwrap_err();
+        assert_eq!(
+            err,
+            "expected 352 bytes (11 × 32) for public inputs, got 288"
+        );
+    }
+
+    #[test]
+    #[ignore = "expensive end-to-end proof generation; run with --ignored when touching FFI verification"]
+    fn raw_verify_accepts_proof_created_by_typed_builder() {
+        use crate::vote_proof::{build_vote_proof_from_delegation, spend_auth_g_affine};
+        use group::Curve;
+        use orchard::keys::SpendingKey;
+
+        let sk = SpendingKey::from_bytes([0x42; 32]).expect("valid test spending key");
+        let ea_pk =
+            (pallas::Point::from(spend_auth_g_affine()) * pallas::Scalar::from(42u64)).to_affine();
+        let bundle = build_vote_proof_from_delegation(
+            &sk,
+            1,
+            12_500_000,
+            pallas::Base::from(0xDEAD_u64),
+            pallas::Base::from(0xCAFE_u64),
+            [pallas::Base::zero(); crate::vote_proof::VOTE_COMM_TREE_DEPTH],
+            0,
+            123,
+            1,
+            1,
+            ea_pk,
+            pallas::Scalar::from(7u64),
+            65535,
+            true,
+        )
+        .expect("vote proof builder should produce a valid proof");
+
+        verify_vote_proof_raw(&bundle.proof, &serialize_instance(&bundle.instance))
+            .expect("raw verifier should accept the builder's public input layout");
+    }
 }
