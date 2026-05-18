@@ -12,7 +12,6 @@ use halo2_proofs::{
     poly::commitment::Params,
     transcript::{Blake2bRead, Blake2bWrite, Challenge255},
 };
-use pasta_curves::{pallas, vesta};
 use rand::rngs::OsRng;
 
 use super::circuit::{Circuit, Instance, K};
@@ -123,85 +122,6 @@ pub fn verify_delegation_proof(proof: &[u8], instance: &Instance) -> Result<(), 
     let (_pk, vk) = delegation_proving_key(&params);
 
     let public_inputs = instance.to_halo2_instance();
-
-    let strategy = SingleVerifier::new(&params);
-    let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);
-
-    verify_proof(
-        &params,
-        &vk,
-        strategy,
-        &[&[&public_inputs]],
-        &mut transcript,
-    )
-    .map_err(|e| format!("delegation verification failed: {:?}", e))
-}
-
-/// Verify a delegation circuit proof from raw field-element bytes.
-///
-/// This is the lower-level entry point used by the FFI layer. It takes
-/// the proof bytes and a flat array of 14 × 32-byte LE-encoded Pallas
-/// base field elements (the public inputs in canonical order).
-///
-/// Returns `Ok(())` if verification succeeds, or an error message.
-///
-/// # Per-slot layout and caller authentication
-///
-/// The per-slot meaning of `public_inputs_bytes` matches the offsets
-/// defined at the top of `delegation/circuit.rs`. Each entry is
-/// annotated with whether it is *proof-attested* (the proof itself
-/// authenticates the value) or *caller-authenticated* (the caller MUST
-/// source it from a trusted channel — see `verify_delegation_proof` for
-/// the same contract on the typed entry point).
-///
-/// ```text
-/// bytes[ 0..32]  = nf_signed         [proof-attested]
-/// bytes[32..64]  = rk_x              [proof-attested]
-/// bytes[64..96]  = rk_y              [proof-attested]
-/// bytes[96..128] = cmx_new           [proof-attested]
-/// bytes[128..160] = van_comm         [proof-attested]
-/// bytes[160..192] = vote_round_id    [caller-authenticated]
-/// bytes[192..224] = nc_root          [caller-authenticated]
-/// bytes[224..256] = nf_imt_root      [caller-authenticated]
-/// bytes[256..288] = gov_null[0]      [proof-attested]
-/// bytes[288..320] = gov_null[1]      [proof-attested]
-/// bytes[320..352] = gov_null[2]      [proof-attested]
-/// bytes[352..384] = gov_null[3]      [proof-attested]
-/// bytes[384..416] = gov_null[4]      [proof-attested]
-/// bytes[416..448] = dom              [proof-attested]
-/// ```
-pub fn verify_delegation_proof_raw(proof: &[u8], public_inputs_bytes: &[u8]) -> Result<(), String> {
-    use pasta_curves::group::ff::PrimeField;
-
-    if public_inputs_bytes.len() != 14 * 32 {
-        return Err(format!(
-            "expected 448 bytes (14 × 32) for public inputs, got {}",
-            public_inputs_bytes.len()
-        ));
-    }
-
-    // Deserialize each 32-byte chunk as a Pallas Fp element.
-    // Note: the delegation circuit's public inputs live on the Vesta
-    // scalar field, which is the same as the Pallas base field.
-    let mut public_inputs: Vec<vesta::Scalar> = Vec::with_capacity(14);
-    for i in 0..14 {
-        let start = i * 32;
-        let mut repr = [0u8; 32];
-        repr.copy_from_slice(&public_inputs_bytes[start..start + 32]);
-        let fp_opt: Option<pallas::Base> = pallas::Base::from_repr(repr).into();
-        match fp_opt {
-            Some(f) => public_inputs.push(f),
-            None => {
-                return Err(format!(
-                    "public input {} is not a canonical Pallas Fp encoding",
-                    i
-                ))
-            }
-        }
-    }
-
-    let params = delegation_params();
-    let (_pk, vk) = delegation_proving_key(&params);
 
     let strategy = SingleVerifier::new(&params);
     let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);

@@ -13,11 +13,11 @@
 ### Removed
 
 - Removed the `mock-prover-checks` Cargo feature and its optional vote-proof builder diagnostics.
+- Removed the raw field-byte verifier APIs for delegation, vote proof, and share reveal proofs.
 
 ### Security
 
 - Bind the delegation nullifier domain to `vote_round_id` in-circuit, preventing `dom` from being used as a free public input.
-- Fix `verify_vote_proof_raw` to accept the vote proof circuit's 11 public inputs instead of rejecting well-formed raw verification payloads as 9-input payloads.
 - Reject identity delegation `rk` values during public input construction instead of panicking while preparing Halo2 inputs.
 - Return typed vote-proof builder errors for identity election authority keys,
   identity randomized voting public keys, and identity encrypted share points.
