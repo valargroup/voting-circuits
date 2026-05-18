@@ -629,7 +629,7 @@ pub fn build_delegation_bundle(
     );
 
     // Condition 3: rho binding.
-    // rho_signed = Poseidon(cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
+    // rho_signed = Poseidon(domain, cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
     // Binds the keystone note to the exact notes being delegated.
     let rho = rho_binding_hash(
         cmx_values[0],
