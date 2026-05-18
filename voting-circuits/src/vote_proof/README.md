@@ -45,7 +45,7 @@ Proves that a registered voter is casting a valid vote, without revealing which 
    * **voting_round_id cell**: copied from the instance column, used in condition 2 Poseidon hash and condition 5 inner hash.
    * **domain_van_nullifier cell**: constant encoding of `"vote authority spend"` (condition 5).
    * **proposal_authority_new**: derived as `proposal_authority_old - (1 << proposal_id)` (condition 6).
-   * **shares_hash**: Poseidon hash of 10 enc_share x-coordinates (condition 10). Internal wire consumed by condition 12.
+   * **shares_hash**: two-level Poseidon hash over 16 blinded share commitments (condition 10). Internal wire consumed by condition 12. See `crate::shares_hash` for the authoritative preimage shape — `share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`; y-coordinates defend against ciphertext sign-malleability.
    * **SpendAuthG x, y constants**: coordinates of the El Gamal generator (condition 11). Baked into the verification key via `assign_advice_from_constant`.
    * **ea_pk_x, ea_pk_y cells**: copied from the instance column (condition 11). Each ea_pk `NonIdentityPoint` witness is constrained to match these cells.
    * **DOMAIN_VC constant**: `1`. Domain separation tag for Vote Commitments (condition 12). Baked into the verification key.
@@ -65,7 +65,7 @@ Where:
 - **DOMAIN_VAN**: `0`. Domain separation tag for Vote Authority Notes (vs `DOMAIN_VC = 1` for Vote Commitments). Assigned via `assign_advice_from_constant` so the value is baked into the verification key.
 - **vpk_g_d**, **vpk_pk_d**: voting public key address components (diversified base and transmission key x-coordinates). Same encoding as in ZKP 1 condition 7, so a VAN created by delegation has the same commitment structure.
 - **total_note_value**: the voter's total delegated weight. Shared with condition 8 (shares sum check).
-- **voting_round_id**: the vote round identifier (public input at offset 6). Copied from the instance column via `assign_advice_from_instance`, ensuring the in-circuit value matches the verifier's public input.
+- **voting_round_id**: the vote round identifier (public input `VOTING_ROUND_ID`, offset 8). Copied from the instance column via `assign_advice_from_instance`, ensuring the in-circuit value matches the verifier's public input.
 - **proposal_authority_old**: remaining proposal authority bitmask. Shared with condition 6 (decrement check).
 - **van_comm_rand**: random blinding factor. Prevents observers from brute-forcing the address or weight from the public VAN commitment.
 - **vote_authority_note_old**: the witnessed VAN commitment. Constrained to equal the two-layer Poseidon output via `constrain_equal`.
@@ -92,7 +92,7 @@ Where:
 - **vote_authority_note_old**: the Merkle leaf. Cell-equality-linked to condition 2's derived VAN hash, binding the membership proof to the same commitment.
 - **vote_comm_tree_position**: leaf position in the tree (private witness). At each level, the position bit determines child ordering.
 - **vote_comm_tree_path**: 24 sibling hashes along the authentication path (private witness).
-- **vote_comm_tree_root**: the public tree anchor (public input at offset 3).
+- **vote_comm_tree_root**: the public tree anchor (public input `VOTE_COMM_TREE_ROOT`, offset 5).
 
 **Function:** Poseidon-based Merkle path verification (24 levels). At each level, a conditional swap gate orders (current, sibling) into (left, right) based on the position bit, then `Poseidon(left, right)` computes the parent. The hash function matches `vote_commitment_tree::MerkleHashVote::combine` — `Poseidon(left, right)` with no level tag.
 
@@ -103,7 +103,7 @@ Where:
 
 Identical to the delegation circuit's `q_imt_swap` gate.
 
-**Constraint:** The circuit computes the Merkle root from the leaf and path, then enforces `constrain_instance(computed_root, VOTE_COMM_TREE_ROOT)` — binding the derived root to the public input at offset 3.
+**Constraint:** The circuit computes the Merkle root from the leaf and path, then enforces `constrain_instance(computed_root, VOTE_COMM_TREE_ROOT)` — binding the derived root to the `VOTE_COMM_TREE_ROOT` public input (offset 5).
 
 **Out-of-circuit helper:** `poseidon_hash_2()` computes `Poseidon(a, b)` outside the circuit for builder and test use.
 
@@ -208,7 +208,7 @@ No diff/gap or strict range-check chip; the 16-bit decomposition implies `propos
 
 **Structure:** One region: row 0 has `proposal_id`, `one_shifted` (lookup); rows 1..17 have bits, selectors, running sums; gates for init (row 1), recurrence (rows 2..17), and `run_selected = 1` at the last bit row. Equality constraints bind recomposed `run_old` to `proposal_authority_old` and `run_new` to `proposal_authority_new`.
 
-**Constructions:** Lookup table (`table_proposal_id`, `table_one_shifted`), `AddChip`, `LookupRangeCheckConfig` (10-bit words; 16-bit range enforced via limb checks and `(2^16 - 1) - value` gap check).
+**Constructions:** Custom `AuthorityDecrementChip` (see `src/vote_proof/authority_decrement.rs`) — a dedicated 17-row bit-decomposition chip with its own `(proposal_id, 2^proposal_id)` lookup table covering `proposal_id ∈ [0, 15]`. Range enforcement comes from the bit decomposition itself (16 boolean cells recompose into `proposal_authority_old`), not from `AddChip` or `LookupRangeCheckConfig`; those chips are not used by Condition 6.
 
 ## Condition 7: New VAN Integrity ✅
 
@@ -303,15 +303,17 @@ If a share exceeds `2^30` or is a wrapped large field element (e.g. `p - k` from
 Purpose: commit to the 16 El Gamal ciphertext pairs so they can be verified in conditions 11 and 12 without re-witnessing.
 
 ```
-share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x)   for i in 0..16
+share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i in 0..16
 shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
 ```
 
-Where:
-- **c1_i_x**: x-coordinate of `C1_i = r_i * G` (the El Gamal randomness point for share `i`), extracted via `ExtractP`. Private witness field `enc_share_c1_x[i]`.
-- **c2_i_x**: x-coordinate of `C2_i = shares_i * G + r_i * ea_pk` (the El Gamal ciphertext point for share `i`), extracted via `ExtractP`. Private witness field `enc_share_c2_x[i]`.
+> The authoritative description of this shape lives in `crate::shares_hash`'s module documentation. The formula here defers to it; if the two ever diverge, the gadget in `shares_hash.rs` is the source of truth.
 
-The blinded share commitments `share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x)` are hashed together. This matches the order used in ZKP 3 (vote reveal proof), where the server recomputes `shares_hash` from the 16 ciphertexts in the witness.
+Where:
+- **c1_i_x**, **c1_i_y**: coordinates of `C1_i = r_i * G` (the El Gamal randomness point for share `i`), extracted via `ExtractP`. Private witness fields `enc_share_c1_x[i]`, `enc_share_c1_y[i]`.
+- **c2_i_x**, **c2_i_y**: coordinates of `C2_i = shares_i * G + r_i * ea_pk` (the El Gamal ciphertext point for share `i`), extracted via `ExtractP`. Private witness fields `enc_share_c2_x[i]`, `enc_share_c2_y[i]`.
+
+The blinded share commitments `share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)` are hashed together. The y-coordinates bind each commitment to the exact curve point — without them an adversary could negate ElGamal ciphertext points (sign-malleability) without invalidating the ZKP. This matches the preimage used by ZKP 3 (vote reveal proof), where the voting client recomputes `shares_hash` from the 16 ciphertexts in the witness.
 
 **Function:** `Poseidon` with `ConstantLength<16>` over 16 blinded share commitments. Uses `Pow5Chip` / `P128Pow5T3` with rate 2 (8 absorption rounds for 16 inputs, ~9 permutations, ~600 rows).
 
@@ -319,7 +321,7 @@ The blinded share commitments `share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x)`
 
 **Relationship to other conditions:**
 - Condition 11 constrains that the witnessed `(c1_i_x, c2_i_x)` values are valid El Gamal encryptions of the corresponding plaintext shares from conditions 8/9. The enc_share cells are cloned before the Poseidon hash and reused as `constrain_equal` targets in condition 11.
-- Condition 12 chains `shares_hash` into the full vote commitment via `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`, which is bound to `VOTE_COMMITMENT` at offset 2.
+- Condition 12 chains `shares_hash` into the full vote commitment via `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`, which is bound to the `VOTE_COMMITMENT` public input (offset 4).
 
 **Out-of-circuit helper:** `shares_hash()` computes the same Poseidon hash outside the circuit for builder and test use.
 
@@ -378,13 +380,13 @@ vote_commitment = Poseidon(DOMAIN_VC, voting_round_id, shares_hash, proposal_id,
 
 Where:
 - **DOMAIN_VC**: `1`. Domain separation tag for Vote Commitments (vs `DOMAIN_VAN = 0`). Assigned via `assign_advice_from_constant` so the value is baked into the verification key. Prevents a vote commitment from ever colliding with a VAN in the shared vote commitment tree.
-- **shares_hash**: the Poseidon hash of all 10 enc_share x-coordinates, computed in condition 10. This is a purely internal wire (not a public input) — it flows from condition 10's output cell directly into condition 12's Poseidon input, ensuring the vote commitment is bound to the actual El Gamal ciphertexts without re-hashing.
-- **proposal_id**: which proposal this vote is for (public input at offset 5). Copied from the instance column via `assign_advice_from_instance`. The verifier checks it matches a valid proposal in the voting window.
+- **shares_hash**: the two-level Poseidon hash of all 16 blinded share commitments (each binding both x- and y-coordinates of the El Gamal ciphertext), computed in condition 10. This is a purely internal wire (not a public input) — it flows from condition 10's output cell directly into condition 12's Poseidon input, ensuring the vote commitment is bound to the actual El Gamal ciphertexts without re-hashing.
+- **proposal_id**: which proposal this vote is for (public input `PROPOSAL_ID`, offset 7). Copied from the instance column via `assign_advice_from_instance`. The verifier checks it matches a valid proposal in the voting window.
 - **vote_decision**: the voter's choice (private witness). Hidden inside the vote commitment — only revealed in ZKP #3 when individual shares are opened. The decision value is opaque to the circuit; its semantic meaning is defined by the application layer.
 
 **Function:** `Poseidon` with `ConstantLength<5>`. Uses `Pow5Chip` / `P128Pow5T3` with rate 2 (3 absorption rounds for 5 inputs).
 
-**Constraint:** The circuit computes the Poseidon hash and enforces `constrain_instance(vote_commitment, VOTE_COMMITMENT)` — binding the derived value to the public input at offset 2. This is the terminal constraint of the vote commitment construction chain: conditions 8–9 validate the plaintext shares, condition 10 hashes the ciphertexts, condition 11 proves the ciphertexts are valid El Gamal encryptions, and condition 12 wraps everything into a single public commitment.
+**Constraint:** The circuit computes the Poseidon hash and enforces `constrain_instance(vote_commitment, VOTE_COMMITMENT)` — binding the derived value to the `VOTE_COMMITMENT` public input (offset 4). This is the terminal constraint of the vote commitment construction chain: conditions 8–9 validate the plaintext shares, condition 10 hashes the ciphertexts, condition 11 proves the ciphertexts are valid El Gamal encryptions, and condition 12 wraps everything into a single public commitment.
 
 **Data flow (conditions 8–12):**
 ```
@@ -425,5 +427,6 @@ vote_decision ──────────────────────
 | `EccChip` | 3, 4, 11 | Fixed-base and variable-base scalar multiplication, point addition, ExtractP (cond 4: [alpha_v]*G + vsk_ak) |
 | `SinsemillaChip` | 3 | Sinsemilla hash inside CommitIvk |
 | `CommitIvkChip` | 3 | Canonicity gate for ak/nk decomposition in CommitIvk |
-| `AddChip` | 6, 8 | Field element addition (authority decrement, shares sum) |
-| `LookupRangeCheckConfig` | 6, 9 | 10-bit running-sum range checks |
+| `AddChip` | 8 | Field element addition (shares sum) |
+| `LookupRangeCheckConfig` | 9 | 10-bit running-sum range checks |
+| `AuthorityDecrementChip` (custom) | 6 | Bit-decomposition + `(proposal_id, 2^proposal_id)` lookup; see `authority_decrement.rs` |

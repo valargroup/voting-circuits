@@ -85,6 +85,39 @@ pub fn create_delegation_proof(circuit: Circuit, instance: &Instance) -> Vec<u8>
 /// the 14 public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
+///
+/// # Caller-authenticated inputs
+///
+/// `constrain_instance` pins each public input to whatever value the
+/// *verifier* supplies; the protocol cannot tell whether that value was
+/// the *right* one. The following fields of `instance` MUST be sourced
+/// from a trusted channel (a signed governance announcement, a signed
+/// chain head, the consuming chain's own state) before calling this
+/// function. Substituting them is not detectable from the proof alone:
+///
+/// - `instance.van_comm` — must come from the active governance session's
+///   published VAN commitment.
+/// - `instance.vote_round_id` — must come from the same governance
+///   announcement as `van_comm`.
+/// - `instance.nc_root` — must be the Orchard note commitment tree root
+///   at the announced snapshot height.
+/// - `instance.nf_imt_root` — must be the alternate-nullifier IMT root at
+///   the same snapshot height as `nc_root`.
+/// - `instance.dom` — out-of-circuit-derived
+///   `Poseidon("governance authorization", vote_round_id)`; verifiers
+///   should re-derive locally from the authenticated `vote_round_id`
+///   rather than accept it from the prover bundle.
+///
+/// # Proof-attested outputs
+///
+/// The following fields are produced by the circuit from private
+/// witnesses; successful verification is itself their authentication and
+/// the caller does not need a separate trusted channel:
+///
+/// - `instance.nf_signed`
+/// - `instance.rk`
+/// - `instance.cmx_new`
+/// - `instance.gov_null[..]`
 pub fn verify_delegation_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
     let params = delegation_params();
     let (_pk, vk) = delegation_proving_key(&params);
@@ -111,6 +144,32 @@ pub fn verify_delegation_proof(proof: &[u8], instance: &Instance) -> Result<(), 
 /// base field elements (the public inputs in canonical order).
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
+///
+/// # Per-slot layout and caller authentication
+///
+/// The per-slot meaning of `public_inputs_bytes` matches the offsets
+/// defined at the top of `delegation/circuit.rs`. Each entry is
+/// annotated with whether it is *proof-attested* (the proof itself
+/// authenticates the value) or *caller-authenticated* (the caller MUST
+/// source it from a trusted channel — see `verify_delegation_proof` for
+/// the same contract on the typed entry point).
+///
+/// ```text
+/// bytes[ 0..32]  = nf_signed         [proof-attested]
+/// bytes[32..64]  = rk_x              [proof-attested]
+/// bytes[64..96]  = rk_y              [proof-attested]
+/// bytes[96..128] = cmx_new           [proof-attested]
+/// bytes[128..160] = van_comm         [caller-authenticated]
+/// bytes[160..192] = vote_round_id    [caller-authenticated]
+/// bytes[192..224] = nc_root          [caller-authenticated]
+/// bytes[224..256] = nf_imt_root      [caller-authenticated]
+/// bytes[256..288] = gov_null[0]      [proof-attested]
+/// bytes[288..320] = gov_null[1]      [proof-attested]
+/// bytes[320..352] = gov_null[2]      [proof-attested]
+/// bytes[352..384] = gov_null[3]      [proof-attested]
+/// bytes[384..416] = gov_null[4]      [proof-attested]
+/// bytes[416..448] = dom              [caller-authenticated]
+/// ```
 pub fn verify_delegation_proof_raw(proof: &[u8], public_inputs_bytes: &[u8]) -> Result<(), String> {
     use pasta_curves::group::ff::PrimeField;
 

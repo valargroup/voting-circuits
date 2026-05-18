@@ -117,6 +117,42 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
 /// the 9 public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
+///
+/// # Caller-authenticated inputs
+///
+/// `constrain_instance` pins each public input to whatever value the
+/// *verifier* supplies; the protocol cannot tell whether that value was
+/// the *right* one. The following fields of `instance` MUST be sourced
+/// from a trusted channel (a signed governance announcement, a signed
+/// chain head) before calling this function. Substituting them is not
+/// detectable from the proof alone — most notably, an attacker can pick
+/// their own `ea_pk` (`= sk·G` for an `sk` they know) and decrypt all
+/// posted shares, with the proof still verifying:
+///
+/// - `instance.proposal_id` — must come from the active session's
+///   published proposal list.
+/// - `instance.voting_round_id` — must come from the same governance
+///   announcement as `proposal_id`.
+/// - `instance.vote_comm_tree_root` — must be the vote commitment tree
+///   root at `vote_comm_tree_anchor_height` (verifier looks it up by
+///   height, not by accepting it from the prover bundle).
+/// - `instance.vote_comm_tree_anchor_height` — must be a valid chain
+///   height accepted by the consuming chain's anchor-validity check.
+/// - `instance.ea_pk_x`, `instance.ea_pk_y` — must come from the
+///   election authority's published session key for `voting_round_id`.
+///   Wiring `ea_pk` from the same bundle that carries the proof lets a
+///   malicious client choose a key it controls.
+///
+/// # Proof-attested outputs
+///
+/// The following fields are produced by the circuit from private
+/// witnesses; successful verification is itself their authentication and
+/// the caller does not need a separate trusted channel:
+///
+/// - `instance.van_nullifier`
+/// - `instance.r_vpk_x`, `instance.r_vpk_y`
+/// - `instance.vote_authority_note_new`
+/// - `instance.vote_commitment`
 pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
     let (params, _pk, vk) = get_vote_proof_keys();
 
@@ -132,10 +168,35 @@ pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String
 /// Verify a vote proof circuit proof from raw field-element bytes.
 ///
 /// This is the lower-level entry point used by the FFI layer. It takes
-/// the proof bytes and a flat array of 9 × 32-byte LE-encoded Pallas
-/// base field elements (the public inputs in canonical order).
+/// the proof bytes and a flat array of `NUM_PUBLIC_INPUTS × 32` bytes of
+/// LE-encoded Pallas base field elements (the public inputs in canonical
+/// order).
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
+///
+/// # Per-slot layout and caller authentication
+///
+/// The per-slot meaning of `public_inputs_bytes` matches the offsets
+/// defined at the top of `vote_proof/circuit.rs`. Each entry is annotated
+/// with whether it is *proof-attested* (the proof itself authenticates
+/// the value) or *caller-authenticated* (the caller MUST source it from
+/// a trusted channel — see `verify_vote_proof` for the same contract on
+/// the typed entry point, including why wiring `ea_pk_x/y` from the
+/// proof bundle is a custody-attack surface).
+///
+/// ```text
+/// bytes[  0.. 32] = van_nullifier              [proof-attested]
+/// bytes[ 32.. 64] = r_vpk_x                    [proof-attested]
+/// bytes[ 64.. 96] = r_vpk_y                    [proof-attested]
+/// bytes[ 96..128] = vote_authority_note_new    [proof-attested]
+/// bytes[128..160] = vote_commitment            [proof-attested]
+/// bytes[160..192] = vote_comm_tree_root        [caller-authenticated]
+/// bytes[192..224] = vote_comm_tree_anchor_h    [caller-authenticated]
+/// bytes[224..256] = proposal_id                [caller-authenticated]
+/// bytes[256..288] = voting_round_id            [caller-authenticated]
+/// bytes[288..320] = ea_pk_x                    [caller-authenticated]
+/// bytes[320..352] = ea_pk_y                    [caller-authenticated]
+/// ```
 pub fn verify_vote_proof_raw(proof: &[u8], public_inputs_bytes: &[u8]) -> Result<(), String> {
     use pasta_curves::group::ff::PrimeField;
 

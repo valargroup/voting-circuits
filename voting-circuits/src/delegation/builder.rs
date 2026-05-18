@@ -24,6 +24,32 @@ use super::{
     imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
 };
 
+/// Diversifier-index base for synthetic padding notes (Scope::External).
+///
+/// Padding slots are derived as `fvk.address_at(PADDING_DIVERSIFIER_BASE + i, Scope::External)`
+/// for `i ∈ 0..(5 - n_real)`. The value `1000` is observationally
+/// indistinguishable from any other diversifier index to an outside observer
+/// — Orchard's FF1-based diversifier permutation hides the index space — so
+/// no soundness or privacy primitive depends on the choice. Two properties
+/// the convention does provide:
+///
+/// - **A single named anchor.** Builder and tests reference this constant
+///   instead of restating the literal at every call site, so a future
+///   refactor that changes the base value (or replaces this scheme with,
+///   e.g., hash-to-curve padding `g_d`) only needs to touch one symbol.
+/// - **Stability of cached `PrecomputedRandomness`.** Phase 1 captures
+///   `(rho, rseed)` per padded slot; Phase 2 must re-derive the same
+///   addresses to recover the same `nf_signed`. Pinning the base in a named
+///   constant makes that contract explicit.
+///
+/// `Scope::External` is used because padding slots always set
+/// `is_internal = false`, so condition 11's `selected_ivk` mux pins them
+/// to the external `ivk` — internal-scope padding would require also
+/// muxing the diversifier derivation path and is not needed for any
+/// existing flow (internal-scope addresses are typically wallet
+/// change/self-receive and have no reason to appear as padding).
+pub(crate) const PADDING_DIVERSIFIER_BASE: u32 = 1000;
+
 /// Rho and rseed for a single padded note, captured during Phase 1 (PCZT construction).
 #[derive(Clone, Debug)]
 pub struct PaddedNoteData {
@@ -193,8 +219,10 @@ pub fn build_delegation_bundle(
     // Dummy notes use v=0, which gates condition 10 (Merkle path) via
     // v * (root - anchor) = 0. All other conditions run unconditionally.
     for i in n_real..5 {
-        // Use a high diversifier index to avoid collision with real notes.
-        let pad_addr = fvk.address_at((1000 + i) as u32, Scope::External);
+        // Padding-address derivation: see PADDING_DIVERSIFIER_BASE's docstring
+        // for the convention (base + offset, Scope::External, bound to the
+        // real ivk via condition 11's mux with is_internal = false).
+        let pad_addr = fvk.address_at(PADDING_DIVERSIFIER_BASE + i as u32, Scope::External);
         let pad_idx = i - n_real; // index into precomputed.padded_notes
 
         let pad_note = if let Some(pre) = precomputed {
