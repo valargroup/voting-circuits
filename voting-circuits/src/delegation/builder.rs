@@ -197,7 +197,7 @@ pub fn build_delegation_bundle(
     rng: &mut impl RngCore,
     precomputed: Option<&PrecomputedRandomness>,
 ) -> Result<DelegationBundle, DelegationBuildError> {
-    // The circuit exposes a fixed five-slot shape; callers split larger
+    // The circuit exposes a fixed MAX_REAL_NOTES shape; callers split larger
     // wallets into multiple delegation proofs rather than changing the VK.
     let n_real = real_notes.len();
     if n_real == 0 || n_real > circuit::MAX_REAL_NOTES {
