@@ -25,9 +25,10 @@
 //!   builds this reveal proof). Using the blind (rather than a
 //!   ciphertext coordinate) ensures the nullifier is not publicly
 //!   derivable from on-chain data, since ciphertext coordinates are
-//!   posted as public inputs alongside the proof. Round-binding is
-//!   transitive through `vote_commitment`, which already commits to
-//!   `voting_round_id`.
+//!   posted as public inputs alongside the proof. Round, proposal, decision,
+//!   `shares_hash`, and `share_comms` binding is transitive through
+//!   `vote_commitment`, which is already checked against the vote commitment
+//!   tree.
 //!
 //! ## Privacy
 //!
@@ -124,12 +125,13 @@ const VOTE_DECISION: usize = 6;
 const VOTE_COMM_TREE_ROOT: usize = 7;
 /// Public input offset for the voting round identifier.
 ///
-/// Constrained in-circuit: `voting_round_id` is hashed into the share
-/// nullifier (condition 5) to bind it to a specific round. This prevents
-/// cross-round proof replay — the commitment tree is global (not per-round),
-/// so `vote_comm_tree_root` alone does not provide round scoping. The chain
-/// also validates that `voting_round_id` matches an active session (Gov Steps
-/// V1 §5.4 "Out-of-circuit checks").
+/// Constrained in-circuit: `voting_round_id` is hashed into `vote_commitment`
+/// and `vote_commitment` is hashed into the share nullifier. That transitive
+/// path binds the nullifier to a specific round. This prevents cross-round
+/// proof replay because the commitment tree is global, not per-round, so
+/// `vote_comm_tree_root` alone does not provide round scoping. The chain also
+/// validates that `voting_round_id` matches an active session (Gov Steps V1
+/// §5.4 "Out-of-circuit checks").
 const VOTING_ROUND_ID: usize = 8;
 
 // ================================================================
@@ -151,9 +153,10 @@ pub use crate::domain_tags::share_spend as domain_tag_share_spend;
 /// `blind` is the share commitment blinding factor for this share index.
 /// Because blinds are never posted on-chain, the nullifier cannot be
 /// derived by an observer — even one who knows the vote commitment tree
-/// contents and the public ciphertext coordinates. Round-binding comes
-/// transitively through `vote_commitment`, which already commits to
-/// `voting_round_id` as one of its Poseidon inputs.
+/// contents and the public ciphertext coordinates. Round, proposal, decision,
+/// `shares_hash`, and `share_comms` binding comes transitively through
+/// `vote_commitment`. The nullifier deliberately consumes the parent vote
+/// commitment instead of re-hashing its full preimage.
 pub fn share_nullifier_hash(
     vote_commitment: pallas::Base,
     share_index: pallas::Base,
@@ -794,10 +797,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Unlike ciphertext coordinates (c1_x, c2_x), the blind is never
         // posted on-chain, so an observer cannot enumerate vote commitments
         // to link nullifiers to their source.
-        // Round-binding is transitive through vote_commitment, which already
-        // commits to voting_round_id as one of its Poseidon inputs. Likewise, a
-        // wrong public `vote_decision` changes the condition-2 commitment and
-        // is rejected by the Merkle path binding in condition 1.
+        // Round, proposal, decision, shares_hash, and share_comms binding is
+        // transitive through vote_commitment. A wrong public `vote_decision` or
+        // a wrong private share-commitment set changes the condition-2
+        // commitment and is rejected by the Merkle path binding in condition 1.
         // ---------------------------------------------------------------
         {
             // "share spend" domain tag — constant-constrained so the
@@ -936,6 +939,7 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ff::PrimeField;
     use group::Curve;
     use halo2_proofs::dev::MockProver;
     use pasta_curves::pallas;
@@ -1187,6 +1191,64 @@ mod tests {
         // Must fail: tampered share_comm → wrong shares_hash → wrong vote_commitment
         // → Merkle root computed in-circuit ≠ instance.vote_comm_tree_root.
         assert!(prover.verify().is_err());
+    }
+
+    #[test]
+    fn share_nullifier_tracks_shares_hash_through_vote_commitment() {
+        let voting_round_id = pallas::Base::from(42u64);
+        let proposal_id = pallas::Base::from(7u64);
+        let vote_decision = pallas::Base::from(1u64);
+        let shares_hash_a = pallas::Base::from(100u64);
+        let shares_hash_b = pallas::Base::from(101u64);
+        let share_index = pallas::Base::from(3u64);
+        let blind = pallas::Base::from(200u64);
+
+        let vote_commitment_a = compute_vote_commitment_hash(
+            voting_round_id,
+            shares_hash_a,
+            proposal_id,
+            vote_decision,
+        );
+        let vote_commitment_b = compute_vote_commitment_hash(
+            voting_round_id,
+            shares_hash_b,
+            proposal_id,
+            vote_decision,
+        );
+        assert_ne!(vote_commitment_a, vote_commitment_b);
+
+        let share_nullifier_a = share_nullifier_hash(vote_commitment_a, share_index, blind);
+        let share_nullifier_b = share_nullifier_hash(vote_commitment_b, share_index, blind);
+        assert_ne!(share_nullifier_a, share_nullifier_b);
+
+        assert_eq!(
+            vote_commitment_a.to_repr(),
+            [
+                246, 84, 48, 178, 227, 178, 234, 71, 2, 178, 177, 211, 238, 120, 238, 157, 174, 5,
+                29, 244, 76, 128, 250, 245, 139, 137, 84, 246, 108, 197, 47, 31,
+            ]
+        );
+        assert_eq!(
+            vote_commitment_b.to_repr(),
+            [
+                153, 178, 215, 171, 108, 162, 193, 164, 62, 112, 205, 83, 186, 133, 99, 176, 44,
+                202, 218, 73, 114, 189, 204, 58, 82, 13, 52, 188, 69, 70, 131, 3,
+            ]
+        );
+        assert_eq!(
+            share_nullifier_a.to_repr(),
+            [
+                119, 176, 211, 29, 114, 129, 188, 150, 122, 163, 222, 136, 21, 250, 159, 126, 139,
+                224, 205, 109, 60, 84, 112, 66, 101, 139, 161, 62, 127, 17, 37, 22,
+            ]
+        );
+        assert_eq!(
+            share_nullifier_b.to_repr(),
+            [
+                244, 6, 225, 7, 34, 104, 123, 192, 48, 94, 4, 222, 156, 224, 137, 204, 121, 90, 18,
+                186, 234, 235, 223, 30, 101, 75, 79, 249, 44, 11, 24, 59,
+            ]
+        );
     }
 
     #[test]
