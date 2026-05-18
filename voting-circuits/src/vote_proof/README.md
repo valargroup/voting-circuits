@@ -208,7 +208,7 @@ No diff/gap or strict range-check chip; the 16-bit decomposition implies `propos
 
 **Structure:** One region: row 0 has `proposal_id`, `one_shifted` (lookup); rows 1..17 have bits, selectors, running sums; gates for init (row 1), recurrence (rows 2..17), and `run_selected = 1` at the last bit row. Equality constraints bind recomposed `run_old` to `proposal_authority_old` and `run_new` to `proposal_authority_new`.
 
-**Constructions:** Custom `AuthorityDecrementChip` (see `src/vote_proof/authority_decrement.rs`) — a dedicated 17-row bit-decomposition chip with its own `(proposal_id, 2^proposal_id)` lookup table covering `proposal_id ∈ [0, 15]`. Range enforcement comes from the bit decomposition itself (16 boolean cells recompose into `proposal_authority_old`), not from `AddChip` or `LookupRangeCheckConfig`; those chips are not used by Condition 6.
+**Constructions:** Custom `AuthorityDecrementChip` (see `src/vote_proof/authority_decrement.rs`) — a dedicated 17-row bit-decomposition chip with its own `(proposal_id, 2^proposal_id)` lookup table covering `proposal_id ∈ [0, 15]`. Range enforcement comes from the bit decomposition itself (16 boolean cells recompose into `proposal_authority_old`).
 
 ## Condition 7: New VAN Integrity ✅
 
