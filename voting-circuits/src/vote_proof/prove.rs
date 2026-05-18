@@ -145,9 +145,10 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
 ///
 /// # Proof-attested outputs
 ///
-/// The following fields are produced by the circuit from private
-/// witnesses; successful verification is itself their authentication and
-/// the caller does not need a separate trusted channel:
+/// The following public inputs are derived outside the circuit but
+/// constrained in-circuit against authenticated inputs and private witnesses;
+/// successful verification is itself their authentication and the caller does
+/// not need a separate trusted channel:
 ///
 /// - `instance.van_nullifier`
 /// - `instance.r_vpk_x`, `instance.r_vpk_y`

@@ -882,8 +882,9 @@ impl Instance {
     /// `vote_comm_tree_root`, and `voting_round_id` out-of-band before
     /// passing them here — see
     /// [`crate::share_reveal::prove::verify_share_reveal_proof`] for the
-    /// trust contract. The remaining fields (`share_nullifier`,
-    /// `enc_share_c1_*`, `enc_share_c2_*`) are proof-attested outputs.
+    /// trust contract. The remaining fields are proof-attested outputs
+    /// derived outside the circuit but constrained in-circuit against
+    /// authenticated inputs and private witnesses.
     #[allow(clippy::too_many_arguments)]
     pub fn from_parts(
         share_nullifier: pallas::Base,

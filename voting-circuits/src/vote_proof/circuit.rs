@@ -1415,9 +1415,9 @@ impl Instance {
     /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here —
     /// see [`crate::vote_proof::prove::verify_vote_proof`] for the trust
     /// contract (and why wiring `ea_pk_*` from the same bundle as the
-    /// proof is a custody-attack surface). The remaining fields
-    /// (`van_nullifier`, `r_vpk_*`, `vote_authority_note_new`,
-    /// `vote_commitment`) are proof-attested outputs.
+    /// proof is a custody-attack surface). The remaining fields are
+    /// proof-attested outputs derived outside the circuit but constrained
+    /// in-circuit against authenticated inputs and private witnesses.
     pub fn from_parts(
         van_nullifier: pallas::Base,
         r_vpk_x: pallas::Base,
