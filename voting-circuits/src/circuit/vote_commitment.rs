@@ -9,7 +9,7 @@
 //! ```
 //!
 //! The domain tag bakes into the verification key, preventing a
-//! client miuses driving the honest circuit from substituting VAN
+//! client misuse driving the honest circuit from substituting VAN
 //! commitments for vote commitments in the shared tree.
 
 use pasta_curves::pallas;
