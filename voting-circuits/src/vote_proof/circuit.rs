@@ -1408,6 +1408,9 @@ pub struct Instance {
 }
 
 impl Instance {
+    /// Number of public inputs serialized by [`Self::to_halo2_instance`].
+    pub const NUM_PUBLIC_INPUTS: usize = 11;
+
     /// Constructs an [`Instance`] from its constituent parts.
     ///
     /// Callers should authenticate `vote_comm_tree_root`,
