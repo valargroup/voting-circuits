@@ -250,6 +250,8 @@ pub enum VoteProofBuildError {
     InvalidShares(String),
     /// The election authority's public key is the identity point.
     InvalidElectionPublicKey,
+    /// The randomized voting public key is the identity point.
+    InvalidRandomizedVotingPublicKey,
     /// A derived El Gamal ciphertext point was the identity point.
     InvalidEncryptedShare(String),
 }
@@ -265,6 +267,9 @@ impl core::fmt::Display for VoteProofBuildError {
             }
             VoteProofBuildError::InvalidElectionPublicKey => {
                 write!(f, "invalid election public key: identity point")
+            }
+            VoteProofBuildError::InvalidRandomizedVotingPublicKey => {
+                write!(f, "invalid randomized voting public key: identity point")
             }
             VoteProofBuildError::InvalidEncryptedShare(msg) => {
                 write!(f, "invalid encrypted share: {}", msg)
@@ -696,8 +701,10 @@ pub fn build_vote_proof_from_delegation(
     // alpha_v is now provided by the caller so they can sign with rsk_v.
     let ak_point = pallas::Point::from(spend_auth_g_affine()) * vsk;
     let r_vpk = (ak_point + pallas::Point::from(spend_auth_g_affine()) * alpha_v).to_affine();
-    let r_vpk_x = *r_vpk.coordinates().unwrap().x();
-    let r_vpk_y = *r_vpk.coordinates().unwrap().y();
+    let r_vpk_coords =
+        pallas_coordinates(r_vpk).ok_or(VoteProofBuildError::InvalidRandomizedVotingPublicKey)?;
+    let r_vpk_x = *r_vpk_coords.x();
+    let r_vpk_y = *r_vpk_coords.y();
     let r_vpk_bytes: [u8; 32] = r_vpk.to_bytes();
 
     // ---- Vote commitment ----
@@ -923,6 +930,35 @@ mod tests {
             err,
             VoteProofBuildError::InvalidEncryptedShare(msg)
                 if msg == "share 0 c2 is identity"
+        ));
+    }
+
+    #[test]
+    fn build_vote_proof_rejects_identity_r_vpk() {
+        let sk = test_sk();
+        let ea_pk =
+            (pallas::Point::from(spend_auth_g_affine()) * pallas::Scalar::from(42u64)).to_affine();
+        let err = build_vote_proof_from_delegation(
+            &sk,
+            1,
+            BALLOT_DIVISOR,
+            test_van(),
+            test_round_id(),
+            [pallas::Base::from(0u64); VOTE_COMM_TREE_DEPTH],
+            0,
+            123,
+            1,
+            1,
+            ea_pk,
+            -extract_vsk(&sk),
+            65535,
+            true,
+        )
+        .expect_err("alpha_v = -vsk should make r_vpk the identity");
+
+        assert!(matches!(
+            err,
+            VoteProofBuildError::InvalidRandomizedVotingPublicKey
         ));
     }
 
