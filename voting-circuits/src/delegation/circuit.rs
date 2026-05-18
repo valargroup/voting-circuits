@@ -1798,11 +1798,11 @@ pub struct Instance {
 impl Instance {
     /// Constructs an [`Instance`] from its constituent parts.
     ///
-    /// Callers should authenticate `van_comm`, `vote_round_id`,
-    /// `nc_root`, `nf_imt_root`, and `dom` out-of-band before passing them
-    /// here — see [`crate::delegation::prove::verify_delegation_proof`] for
-    /// the trust contract. The remaining fields (`nf_signed`, `rk`,
-    /// `cmx_new`, `gov_null`) are proof-attested outputs.
+    /// Callers should authenticate `vote_round_id`, `nc_root`, and
+    /// `nf_imt_root` out-of-band before passing them here — see
+    /// [`crate::delegation::prove::verify_delegation_proof`] for the trust
+    /// contract. The remaining fields, including `van_comm` and `dom`, are
+    /// proof-attested outputs.
     pub fn from_parts(
         nf_signed: Nullifier,
         rk: VerificationKey<SpendAuth>,

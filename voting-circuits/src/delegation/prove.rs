@@ -95,20 +95,20 @@ pub fn create_delegation_proof(circuit: Circuit, instance: &Instance) -> Vec<u8>
 /// chain head, the consuming chain's own state) before calling this
 /// function. Substituting them is not detectable from the proof alone:
 ///
-/// - `instance.van_comm` — must come from the active governance session's
-///   published VAN commitment.
 /// - `instance.vote_round_id` — must come from the same governance
 ///   announcement as `van_comm`.
 /// - `instance.nc_root` — must be the Orchard note commitment tree root
 ///   at the announced snapshot height.
 /// - `instance.nf_imt_root` — must be the alternate-nullifier IMT root at
 ///   the same snapshot height as `nc_root`.
-/// - `instance.dom` — out-of-circuit-derived
-///   `Poseidon("governance authorization", vote_round_id)`; verifiers
-///   should re-derive locally from the authenticated `vote_round_id`
-///   rather than accept it from the prover bundle.
 ///
 /// # Proof-attested outputs
+///
+/// The following public inputs are derived outside the circuit but
+/// constrained in-circuit against authenticated inputs and private witnesses:
+///
+/// - `instance.van_comm`
+/// - `instance.dom` — `Poseidon("governance authorization", vote_round_id)`.
 ///
 /// The following fields are produced by the circuit from private
 /// witnesses; successful verification is itself their authentication and
