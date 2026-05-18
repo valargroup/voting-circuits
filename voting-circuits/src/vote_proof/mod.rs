@@ -9,7 +9,7 @@
 //! - **Condition 3**: Diversified Address Integrity (CommitIvk chain, `constrain_equal`).
 //! - **Condition 4**: Spend Authority (fixed-base mul + point add, `constrain_instance`).
 //! - **Condition 5**: VAN Nullifier Integrity (nested Poseidon, `constrain_instance`).
-//! - **Condition 6**: Proposal Authority Decrement (AddChip + range check).
+//! - **Condition 6**: Proposal Authority Decrement (custom bit-decomposition chip with a `(proposal_id, 2^proposal_id)` lookup; see `authority_decrement.rs`).
 //! - **Condition 7**: New VAN Integrity (Poseidon hash, `constrain_instance`).
 //! - **Condition 8**: Shares Sum Correctness (AddChip, `constrain_equal`).
 //! - **Condition 9**: Shares Range (LookupRangeCheck, `[0, 2^30)`).

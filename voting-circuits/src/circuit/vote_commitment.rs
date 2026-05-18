@@ -8,9 +8,9 @@
 //!                            shares_hash, proposal_id, vote_decision)
 //! ```
 //!
-//! The domain tag bakes into the verification key, preventing malicious
-//! provers from substituting VAN commitments for vote commitments in the
-//! shared tree.
+//! The domain tag bakes into the verification key, preventing a
+//! client misuse driving the honest circuit from substituting VAN
+//! commitments for vote commitments in the shared tree.
 
 use pasta_curves::pallas;
 

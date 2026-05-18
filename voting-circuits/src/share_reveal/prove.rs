@@ -107,6 +107,40 @@ pub fn create_share_reveal_proof(circuit: Circuit, instance: &Instance) -> Vec<u
 /// the 9 public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
+///
+/// # Caller-authenticated inputs
+///
+/// `constrain_instance` pins each public input to whatever value the
+/// *verifier* supplies; the protocol cannot tell whether that value was
+/// the *right* one. The following fields of `instance` MUST be sourced
+/// from a trusted channel (authenticated chain state, a signed
+/// governance announcement) before calling this function. Substituting
+/// them is not detectable from the proof alone:
+///
+/// - `instance.proposal_id` — must come from the active session's
+///   published proposal list (the same value bound into the matching
+///   vote-proof's `vote_commitment`).
+/// - `instance.voting_round_id` — must come from the same governance
+///   announcement as `proposal_id`.
+/// - `instance.vote_comm_tree_root` — must be the vote commitment tree
+///   root at the announced snapshot height (verifier looks it up by
+///   height, not by accepting it from the prover bundle).
+/// - `instance.vote_decision` — the on-chain reveal of the voter's
+///   choice; the caller must accept it only as part of the same chain
+///   bundle that carries the proof, not from an untrusted side channel
+///   (the proof binds it but does not assert it equals any particular
+///   value).
+///
+/// # Proof-attested outputs
+///
+/// The following public inputs are derived outside the circuit but
+/// constrained in-circuit against authenticated inputs and private witnesses;
+/// successful verification is itself their authentication and the caller does
+/// not need a separate trusted channel:
+///
+/// - `instance.share_nullifier`
+/// - `instance.enc_share_c1_x`, `instance.enc_share_c1_y`
+/// - `instance.enc_share_c2_x`, `instance.enc_share_c2_y`
 pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
     let (params, _pk, vk) = share_reveal_cached_keys();
 
@@ -126,6 +160,27 @@ pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<()
 /// base field elements (the public inputs in canonical order).
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
+///
+/// # Per-slot layout and caller authentication
+///
+/// The per-slot meaning of `public_inputs_bytes` matches the offsets
+/// defined at the top of `share_reveal/circuit.rs`. Each entry is
+/// annotated with whether it is *proof-attested* (the proof itself
+/// authenticates the value) or *caller-authenticated* (the caller MUST
+/// source it from a trusted channel — see `verify_share_reveal_proof`
+/// for the same contract on the typed entry point).
+///
+/// ```text
+/// bytes[  0.. 32] = share_nullifier      [proof-attested]
+/// bytes[ 32.. 64] = enc_share_c1_x       [proof-attested]
+/// bytes[ 64.. 96] = enc_share_c1_y       [proof-attested]
+/// bytes[ 96..128] = enc_share_c2_x       [proof-attested]
+/// bytes[128..160] = enc_share_c2_y       [proof-attested]
+/// bytes[160..192] = proposal_id          [caller-authenticated]
+/// bytes[192..224] = vote_decision        [caller-authenticated]
+/// bytes[224..256] = vote_comm_tree_root  [caller-authenticated]
+/// bytes[256..288] = voting_round_id      [caller-authenticated]
+/// ```
 pub fn verify_share_reveal_proof_raw(
     proof: &[u8],
     public_inputs_bytes: &[u8],

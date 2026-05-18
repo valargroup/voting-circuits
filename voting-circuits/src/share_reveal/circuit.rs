@@ -11,27 +11,33 @@
 //! - **Condition 3**: Shares Hash Integrity — `shares_hash =
 //!   Poseidon(share_comm_0, ..., share_comm_15)`, where share_comms are
 //!   private witnesses transitively bound to the public tree root.
-//! - **Condition 4**: Primary Share Binding — the prover knows a blind
-//!   such that `share_comms[share_index] = Poseidon(blind, c1_x, c2_x)`,
+//! - **Condition 4**: Primary Share Binding — the voting client knows a
+//!   blind such that
+//!   `share_comms[share_index] = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`
+//!   (see `crate::shares_hash` for the authoritative five-input shape;
+//!   the y-coordinates defend against ciphertext sign-malleability),
 //!   binding the publicly revealed encrypted share to the committed set.
 //! - **Condition 5**: Share Nullifier Integrity — `share_nullifier` is
 //!   correctly derived as
 //!   `Poseidon(domain_tag, vote_commitment, share_index, blind)`.
-//!   `blind` is the share commitment blinding factor — a secret known only
-//!   to the voter and helper server. Using the blind (rather than a
-//!   ciphertext coordinate) ensures the nullifier is not publicly derivable
-//!   from on-chain data, since ciphertext coordinates are posted as public
-//!   inputs alongside the proof. Round-binding is transitive through
-//!   `vote_commitment`, which already commits to `voting_round_id`.
+//!   `blind` is the share commitment blinding factor — a secret held by
+//!   the voting client (the host program that built ZKP #2 and now
+//!   builds this reveal proof). Using the blind (rather than a
+//!   ciphertext coordinate) ensures the nullifier is not publicly
+//!   derivable from on-chain data, since ciphertext coordinates are
+//!   posted as public inputs alongside the proof. Round-binding is
+//!   transitive through `vote_commitment`, which already commits to
+//!   `voting_round_id`.
 //!
 //! ## Privacy
 //!
-//! Only the primary share's blind is provided as a private witness,
-//! avoiding the need to send all 16 blinds to the helper server. The 16
-//! `share_comms` are private witnesses — they never appear on chain,
-//! preserving share-level unlinkability. Soundness is guaranteed because
-//! share_comms are transitively bound to the public `vote_comm_tree_root`
-//! via `shares_hash → vote_commitment → Merkle path`.
+//! Only the primary share's blind is supplied as a private witness, so
+//! the voting client does not need to surface the other 15 blinds when
+//! it assembles the reveal. The 16 `share_comms` are private witnesses —
+//! they never appear on chain, preserving share-level unlinkability.
+//! Soundness is guaranteed because `share_comms` are transitively bound
+//! to the public `vote_comm_tree_root` via
+//! `shares_hash → vote_commitment → Merkle path`.
 //!
 //! ## Column layout
 //!
@@ -235,13 +241,22 @@ pub struct Circuit {
 
     // === Condition 3: Shares Hash Integrity ===
     /// Pre-computed per-share Poseidon commitments (private witnesses).
-    /// `share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x)`.
-    /// Transitively bound to the public tree root via shares_hash → vote_commitment → Merkle path.
+    ///
+    /// Shape: see `crate::shares_hash` — five-input
+    /// `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` including the
+    /// y-coordinates that defend against ciphertext sign-malleability.
+    /// Transitively bound to the public tree root via
+    /// `shares_hash → vote_commitment → Merkle path`.
     pub(crate) share_comms: [Value<pallas::Base>; 16],
 
     // === Condition 4: Primary Share Binding ===
-    /// Blind factor for the revealed share:
-    /// `share_comms[share_index] = Poseidon(primary_blind, c1_x, c2_x)`.
+    /// Blind factor for the revealed share. The synthesize body
+    /// (see the "Condition 4: Primary Share Binding" region below) recomputes
+    /// `Poseidon(primary_blind, c1_x, c2_x, c1_y, c2_y)` using the shared
+    /// `crate::shares_hash` gadget and constrains it to equal
+    /// `share_comms[share_index]`; the y-coordinates are the
+    /// sign-malleability defense and the gadget is the single source of
+    /// truth for the preimage shape.
     pub(crate) primary_blind: Value<pallas::Base>,
 
     // === Share selection ===
@@ -546,13 +561,20 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // ---------------------------------------------------------------
         // Condition 4: Primary Share Binding.
         //
-        // Proves the prover knows the blind for the revealed share:
+        // Proves that the ciphertext coordinates of the *revealed* share
+        // correspond to the share commitment at the declared
+        // `share_index`, by recomputing the commitment and matching it
+        // against the muxed-out `share_comms[share_index]`:
         //   derived_comm = Poseidon(primary_blind, enc_c1_x, enc_c2_x,
         //                          enc_c1_y, enc_c2_y)
         //   share_comms[share_index] == derived_comm
         //
-        // All ciphertext coordinates come from the public instance column.
-        // Including y-coordinates prevents sign-malleability attacks.
+        // Defense: an adversary that has seen the on-chain ciphertexts
+        // but does not hold the blind cannot claim the wrong share is
+        // the revealed one — the binding goes via the blind, which only
+        // the voting client knows. All ciphertext coordinates come from
+        // the public instance column. Including y-coordinates prevents
+        // sign-malleability attacks.
         // ---------------------------------------------------------------
 
         let enc_c1_x = layouter.assign_region(
@@ -820,9 +842,15 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
 /// Public inputs to the Share Reveal circuit (9 field elements).
 ///
-/// These are the values posted to the vote chain that both the prover
-/// and verifier agree on. The verifier checks the proof against these
-/// values without seeing any private witnesses.
+/// The voting client (prover) chooses these values when assembling the
+/// proof; the verifier accepts them as the binding the proof must
+/// satisfy and checks the proof without seeing any private witnesses.
+/// The relationship is asymmetric: a malicious-custody client can
+/// choose any public-input vector it likes, so the verifier must source
+/// the *correct* values from authenticated chain state (see
+/// [`crate::share_reveal::prove::verify_share_reveal_proof`] for which
+/// fields require caller authentication versus which are proof-attested
+/// outputs).
 #[derive(Clone, Debug)]
 pub struct Instance {
     /// Poseidon nullifier for this share (prevents double-counting).
@@ -849,6 +877,14 @@ pub struct Instance {
 
 impl Instance {
     /// Constructs an [`Instance`] from its constituent parts.
+    ///
+    /// Callers should authenticate `proposal_id`, `vote_decision`,
+    /// `vote_comm_tree_root`, and `voting_round_id` out-of-band before
+    /// passing them here — see
+    /// [`crate::share_reveal::prove::verify_share_reveal_proof`] for the
+    /// trust contract. The remaining fields are proof-attested outputs
+    /// derived outside the circuit but constrained in-circuit against
+    /// authenticated inputs and private witnesses.
     #[allow(clippy::too_many_arguments)]
     pub fn from_parts(
         share_nullifier: pallas::Base,

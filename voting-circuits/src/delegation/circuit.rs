@@ -2,6 +2,17 @@
 //!
 //! A single circuit proving all 14 conditions of the delegation ZKP:
 //!
+//! The "signed" / keystone note (conditions 1–6) is a synthetic
+//! Orchard-spend shape constructed locally by the voting client so that
+//! a Keystone-class hardware wallet (which only signs Orchard Actions)
+//! can produce a spend-auth signature under `rk` over the wrapping
+//! Action's sighash. It does not exist on any chain and the circuit
+//! never proves Merkle membership for it. See `README.md` (section
+//! "Integration: the Keystone (signed) note is synthetic") for the
+//! load-bearing distinction between the chain
+//! `wallet → rk → nf_signed → rho_signed → van_comm` (binding) and the
+//! Orchard-Action shape mimicry that surrounds it.
+//!
 //! - **Condition 1**: Signed note commitment integrity.
 //! - **Condition 2**: Nullifier integrity.
 //! - **Condition 3**: Rho binding — keystone rho = Poseidon(cmx_1..5, van_comm, vote_round_id).
@@ -1752,9 +1763,16 @@ fn synthesize_note_slot(
 
 /// Public inputs to the delegation circuit (14 field elements).
 ///
-/// These are the values posted to the vote chain (§2.4) that both the prover
-/// and verifier agree on. The verifier checks the proof against these values
-/// without seeing any private witnesses.
+/// The voting client (prover) chooses these values when assembling the
+/// proof and posts them to the vote chain (§2.4); the verifier accepts
+/// them as the binding the proof must satisfy and checks the proof
+/// without seeing any private witnesses. The relationship is
+/// asymmetric: a malicious-custody client can choose any public-input
+/// vector it likes, so the verifier must source the *correct* values
+/// from authenticated chain state (see
+/// [`crate::delegation::prove::verify_delegation_proof`] for which
+/// fields require caller authentication versus which are proof-attested
+/// outputs).
 #[derive(Clone, Debug)]
 pub struct Instance {
     /// The derived nullifier of the keystone note.
@@ -1779,6 +1797,12 @@ pub struct Instance {
 
 impl Instance {
     /// Constructs an [`Instance`] from its constituent parts.
+    ///
+    /// Callers should authenticate `vote_round_id`, `nc_root`, and
+    /// `nf_imt_root` out-of-band before passing them here — see
+    /// [`crate::delegation::prove::verify_delegation_proof`] for the trust
+    /// contract. The remaining fields, including `van_comm` and `dom`, are
+    /// proof-attested outputs.
     pub fn from_parts(
         nf_signed: Nullifier,
         rk: VerificationKey<SpendAuth>,
@@ -1977,8 +2001,14 @@ mod tests {
         let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
 
         for i in 1..5u32 {
-            // Use fvk.address_at() so pk_d = [ivk] * g_d with the REAL ivk.
-            let pad_addr = fvk.address_at(100 + i, Scope::External);
+            // Exercise the same padding-address derivation as the production
+            // builder so the test catches drift if the convention changes.
+            // The shared constant pins the diversifier base; Scope::External
+            // matches condition 11's mux (is_internal = false for padding).
+            let pad_addr = fvk.address_at(
+                crate::delegation::builder::PADDING_DIVERSIFIER_BASE + i,
+                Scope::External,
+            );
             let (_, _, dummy) = Note::dummy(&mut rng, None);
             let pad_note = Note::new(
                 pad_addr,

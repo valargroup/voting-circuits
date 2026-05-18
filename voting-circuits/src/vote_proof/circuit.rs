@@ -8,7 +8,7 @@
 //! - **Condition 3**: Diversified Address Integrity (`vpk_pk_d = [ivk_v] * vpk_g_d` via CommitIvk).
 //! - **Condition 4**: Spend Authority — `r_vpk = vsk.ak + [alpha_v] * G` (fixed-base mul + point add, `constrain_instance`).
 //! - **Condition 5**: VAN Nullifier Integrity (nested Poseidon, `constrain_instance`).
-//! - **Condition 6**: Proposal Authority Decrement (AddChip + range check).
+//! - **Condition 6**: Proposal Authority Decrement (custom bit-decomposition chip with a `(proposal_id, 2^proposal_id)` lookup; see `authority_decrement.rs`).
 //! - **Condition 7**: New VAN Integrity (Poseidon hash, `constrain_instance`).
 //! - **Condition 8**: Shares Sum Correctness (AddChip, `constrain_equal`).
 //! - **Condition 9**: Shares Range (LookupRangeCheck, `[0, 2^30)`).
@@ -297,9 +297,11 @@ pub fn shares_hash(
 
 /// Configuration for the Vote Proof circuit.
 ///
-/// Holds chip configs for Poseidon (conditions 1, 2, 5, 7, 10), AddChip
-/// (conditions 6, 8), LookupRangeCheck (conditions 6, 9), ECC
-/// (conditions 3, 11), and the Merkle swap gate (condition 1).
+/// Holds chip configs for Poseidon (conditions 1, 2, 5, 7, 10, 12), AddChip
+/// (condition 8), LookupRangeCheck (condition 9), ECC (conditions 3, 4, 11),
+/// the Merkle swap gate (condition 1), and the custom
+/// `AuthorityDecrementChip` (condition 6; see `authority_decrement.rs` —
+/// uses neither AddChip nor LookupRangeCheck).
 #[derive(Clone, Debug)]
 pub struct Config {
     /// Public input column (9 field elements).
@@ -323,8 +325,9 @@ pub struct Config {
     ///
     /// Uses advices[7] (a), advices[8] (b), advices[6] (c), matching
     /// the delegation circuit's column assignment.
-    /// Used in conditions 6 (proposal authority decrement) and 8 (shares
-    /// sum correctness).
+    /// Used in condition 8 (shares sum correctness). Condition 6
+    /// (proposal authority decrement) uses the dedicated
+    /// `AuthorityDecrementChip` instead — it does not call `AddChip`.
     add_config: AddConfig,
     /// ECC chip configuration (condition 3: diversified address integrity, condition 11: El Gamal).
     ///
@@ -1369,9 +1372,15 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
 /// Public inputs to the Vote Proof circuit (11 field elements).
 ///
-/// These are the values posted to the vote chain that both the prover
-/// and verifier agree on. The verifier checks the proof against these
-/// values without seeing any private witnesses.
+/// The voting client (prover) chooses these values when assembling the
+/// proof; the verifier accepts them as the binding the proof must
+/// satisfy and checks the proof without seeing any private witnesses.
+/// The relationship is asymmetric: a malicious-custody client can
+/// choose any public-input vector it likes, so the verifier must source
+/// the *correct* values from authenticated chain state (see
+/// [`crate::vote_proof::prove::verify_vote_proof`] for which fields
+/// require caller authentication versus which are proof-attested
+/// outputs).
 #[derive(Clone, Debug)]
 pub struct Instance {
     /// The nullifier of the old VAN being spent (prevents double-vote).
@@ -1400,6 +1409,15 @@ pub struct Instance {
 
 impl Instance {
     /// Constructs an [`Instance`] from its constituent parts.
+    ///
+    /// Callers should authenticate `vote_comm_tree_root`,
+    /// `vote_comm_tree_anchor_height`, `proposal_id`, `voting_round_id`,
+    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here —
+    /// see [`crate::vote_proof::prove::verify_vote_proof`] for the trust
+    /// contract (and why wiring `ea_pk_*` from the same bundle as the
+    /// proof is a custody-attack surface). The remaining fields are
+    /// proof-attested outputs derived outside the circuit but constrained
+    /// in-circuit against authenticated inputs and private witnesses.
     pub fn from_parts(
         van_nullifier: pallas::Base,
         r_vpk_x: pallas::Base,

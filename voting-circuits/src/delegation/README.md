@@ -5,6 +5,8 @@ A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384
 **Public inputs:** 14 field elements.
 **Per-note slots:** 5 (unused slots are padded with zero-value notes).
 
+**Note value asymmetry:** the keystone (signed) note has value `1` zatoshi (a UX concession so Keystone-class hardware wallets render the spend for user approval); the output (change) note has value `0`. See conditions 1 and 6.
+
 ## Inputs
 
 - Public (14 field elements)
@@ -65,19 +67,67 @@ A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384
    * **cmx_1..5**: produced by per-note condition 9, consumed by condition 3.
    * **v_1..5**: produced by per-note condition 9, consumed by conditions 7 and 8.
 
+## Integration: the Keystone (signed) note is synthetic
+
+The keystone (signed) note **does not exist on any chain**. It is a
+synthetic Orchard-spend shape locally constructed by the voting client
+so that:
+
+1. The Keystone hardware wallet — which only signs Orchard Actions —
+   can be coerced into producing a spend-auth signature under `rk` over
+   the wrapping Action's ZIP-244 sighash. The voting protocol piggybacks
+   on Orchard's existing wallet-UX surface rather than adding a new
+   signing protocol.
+2. The wallet's UI renders `v_signed = 1` zatoshi for user approval;
+   zero-value spends are not rendered, which is why the keystone value
+   is 1 rather than 0 (see condition 1 below).
+3. The proof's public-input layout `(nf_signed, rk, cmx_new, ...)`
+   matches what the wrapping Orchard Action expects.
+
+Unlike each of the five real-note slots, which carry a Sinsemilla
+Merkle membership proof against the public `nc_root` anchor (gated by
+`v * (root - nc_root) = 0` so that `v = 0` padding slots can skip the
+check), the keystone branch witnesses **no Merkle path** and performs
+**no anchor check**. `cm_signed` is recomputed from witnessed
+`(g_d_signed, pk_d_signed, v_signed, rho_signed, psi_signed, rcm_signed)`
+and constrained equal to a separately-witnessed `cm_signed` ECC point;
+this is a "the prover knows the opening" check, not a membership check.
+The voter does not own a 1-zatoshi keystone note that the proof spends.
+
+The keystone branch's in-circuit conditions therefore sort into three
+buckets, useful for auditing future refactors:
+
+- **Protocol-relevant.** Condition 5 (the prover knows `(ak, nk, rivk)`
+  consistent with the real-note slots' `ivk`); condition 4
+  (`rk = [α]·SpendAuthG + ak`).
+- **Wallet-authorization binding (load-bearing as a chain).** Condition
+  3 (`rho_signed = Poseidon(cmx_1..5, van_comm, vote_round_id)`) and
+  condition 2 (`nf_signed = DeriveNullifier(nk, rho_signed, psi_signed, cm_signed)`,
+  exposed as a public input). Together with the verifier-enforced
+  `proof.nf_signed == action.nullifier` check, this is the chain by
+  which the wallet's spend-auth signature cryptographically commits to
+  `van_comm` and `vote_round_id`. Remove any link in this chain and the
+  binding breaks.
+- **Orchard-Action shape mimicry.** Condition 1 (`cm_signed`
+  well-formed under the keystone diversified address) and condition 6
+  (`cmx_new` derivation from the synthetic output note). These exist to
+  make the wrapping Action's public-input layout look like a standard
+  Orchard spend; the voting protocol does not consume `cm_signed` or
+  `cmx_new` for any of its own invariants.
+
 ## 1. Signed Note Commitment Integrity
 
 Purpose: ensure that the signed note commitment is correctly constructed. Establishes the binding link between spending authority, nullifier key, and the note itself.
 
 ```
-NoteCommit_rcm_signed(repr(g_d_signed), repr(pk_d_signed), 0, rho_signed, psi_signed) = cm_signed
+NoteCommit_rcm_signed(repr(g_d_signed), repr(pk_d_signed), 1, rho_signed, psi_signed) = cm_signed
 ```
 
 Where:
 - **rcm_signed**: the note commitment randomness (trapdoor). A scalar derived from the note's `rseed` and `rho`. Blinds the commitment.
 - **repr(g_d_signed)**: the diversified base point from the recipient's payment address.
 - **repr(pk_d_signed)**: the diversified transmission key.
-- **0**: the note value is hardcoded to zero (the keystone is always a dummy/zero-value note).
+- **1**: the keystone note value is hardcoded to 1 zatoshi (a minimum-value dummy note). The value of 1 rather than 0 exists so that hardware wallets such as Keystone — which do not render zero-value spends on screen — surface the spend for user approval. Contrast condition 6, which uses value 0 for the *output* (change) note; the asymmetry is intentional. See condition 6 for the output-side commitment shape.
 - **rho_signed**: the nullifier of the note that was spent to create this note. Bound by condition 3.
 - **psi_signed**: pseudorandom field element from `rseed` and `rho`.
 - **cm_signed**: the witnessed note commitment. The circuit recomputes NoteCommit and enforces strict equality.
