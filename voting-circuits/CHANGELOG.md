@@ -8,6 +8,8 @@
 - Added `vote_proof_cached_keys()` so callers can warm and reuse the vote proof
   params, proving key, and verifying key together.
 - Added `ProveError` for typed Halo2 proof creation failures.
+- Exported delegation, vote-proof, and share-reveal public input offsets from
+  their module roots for clients that construct or inspect proof instances.
 
 ### Changed
 

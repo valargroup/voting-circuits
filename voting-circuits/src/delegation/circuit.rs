@@ -108,32 +108,38 @@ pub const K: u32 = 14;
 // ================================================================
 
 /// Public input offset for the derived nullifier.
-const NF_SIGNED: usize = 0;
+pub const NF_SIGNED_PUBLIC_OFFSET: usize = 0;
 /// Public input offset for rk (x-coordinate).
-const RK_X: usize = 1;
+pub const RK_X_PUBLIC_OFFSET: usize = 1;
 /// Public input offset for rk (y-coordinate).
-const RK_Y: usize = 2;
+pub const RK_Y_PUBLIC_OFFSET: usize = 2;
 /// Public input offset for the output note's extracted commitment (condition 6).
-const CMX_NEW: usize = 3;
+pub const CMX_NEW_PUBLIC_OFFSET: usize = 3;
 /// Public input offset for the governance commitment.
-const VAN_COMM: usize = 4;
+pub const VAN_COMM_PUBLIC_OFFSET: usize = 4;
 /// Public input offset for the vote round identifier.
-const VOTE_ROUND_ID: usize = 5;
+pub const VOTE_ROUND_ID_PUBLIC_OFFSET: usize = 5;
 /// Public input offset for the note commitment tree root.
-const NC_ROOT: usize = 6;
+pub const NC_ROOT_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the nullifier IMT root.
-const NF_IMT_ROOT: usize = 7;
+pub const NF_IMT_ROOT_PUBLIC_OFFSET: usize = 7;
 /// Public input offsets for per-note governance nullifiers (derived from real notes).
-const GOV_NULL_1: usize = 8;
-const GOV_NULL_2: usize = 9;
-const GOV_NULL_3: usize = 10;
-const GOV_NULL_4: usize = 11;
-const GOV_NULL_5: usize = 12;
+pub const GOV_NULL_1_PUBLIC_OFFSET: usize = 8;
+pub const GOV_NULL_2_PUBLIC_OFFSET: usize = 9;
+pub const GOV_NULL_3_PUBLIC_OFFSET: usize = 10;
+pub const GOV_NULL_4_PUBLIC_OFFSET: usize = 11;
+pub const GOV_NULL_5_PUBLIC_OFFSET: usize = 12;
 
 /// Gov null offsets indexed by note slot.
-const GOV_NULL_OFFSETS: [usize; 5] = [GOV_NULL_1, GOV_NULL_2, GOV_NULL_3, GOV_NULL_4, GOV_NULL_5];
+pub const GOV_NULL_PUBLIC_OFFSETS: [usize; 5] = [
+    GOV_NULL_1_PUBLIC_OFFSET,
+    GOV_NULL_2_PUBLIC_OFFSET,
+    GOV_NULL_3_PUBLIC_OFFSET,
+    GOV_NULL_4_PUBLIC_OFFSET,
+    GOV_NULL_5_PUBLIC_OFFSET,
+];
 /// Public input offset for the nullifier domain.
-const DOM: usize = 13;
+pub const DOM_PUBLIC_OFFSET: usize = 13;
 
 /// Maximum proposal authority — the default for a fresh delegation.
 ///
@@ -810,8 +816,12 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // Constrain nf_signed to equal the public input.
         // Enforce that the nullifier computed inside the circuit matches the nullifier provided
-        // as a public input from outside the circuit (supplied at NF_SIGNED of the public input)
-        layouter.constrain_instance(nf_signed.inner().cell(), config.primary, NF_SIGNED)?;
+        // as a public input from outside the circuit (supplied at NF_SIGNED_PUBLIC_OFFSET).
+        layouter.constrain_instance(
+            nf_signed.inner().cell(),
+            config.primary,
+            NF_SIGNED_PUBLIC_OFFSET,
+        )?;
 
         // ---------------------------------------------------------------
         // Condition 4: Spend authority.
@@ -825,15 +835,15 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Uses the shared gadget from crate::circuit::spend_authority – a 1:1 copy of
         // the upstream Orchard spend authority check:
         //   https://github.com/zcash/orchard/blob/main/src/circuit.rs#L542-L558
-        // Note: RK_X and RK_Y are public inputs.
+        // Note: RK_X_PUBLIC_OFFSET and RK_Y_PUBLIC_OFFSET are public inputs.
         crate::circuit::spend_authority::prove_spend_authority(
             ecc_chip.clone(),
             layouter.namespace(|| "cond4 spend authority"),
             self.alpha,
             &ak_P.clone().into(),
             config.primary,
-            RK_X,
-            RK_Y,
+            RK_X_PUBLIC_OFFSET,
+            RK_Y_PUBLIC_OFFSET,
         )?;
 
         // ---------------------------------------------------------------
@@ -974,7 +984,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "van_comm",
                     config.primary,
-                    VAN_COMM,
+                    VAN_COMM_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -989,7 +999,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "vote_round_id",
                     config.primary,
-                    VOTE_ROUND_ID,
+                    VOTE_ROUND_ID_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -1006,7 +1016,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "dom",
                     config.primary,
-                    DOM,
+                    DOM_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -1037,7 +1047,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "nc_root",
                     config.primary,
-                    NC_ROOT,
+                    NC_ROOT_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -1053,7 +1063,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "nf_imt_root",
                     config.primary,
-                    NF_IMT_ROOT,
+                    NF_IMT_ROOT_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -1094,7 +1104,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 &nf_imt_root_cell,
                 &self.notes[i],
                 i,
-                GOV_NULL_OFFSETS[i],
+                GOV_NULL_PUBLIC_OFFSETS[i],
             )?;
             cmx_cells.push(cmx_i);
             v_cells.push(v_i);
@@ -1206,7 +1216,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
             // The output note's value is always 0.
             // Zero is enforced transitively: v_new feeds into NoteCommit -> cm_new,
-            // whose x-coordinate is constrained to the CMX_NEW public input.
+            // whose x-coordinate is constrained to the CMX_NEW_PUBLIC_OFFSET public input.
             // Any non-zero value would produce a different cmx, breaking the proof.
             let v_new = assign_free_advice(
                 layouter.namespace(|| "v_new = 0"),
@@ -1232,7 +1242,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let cmx = cm_new.extract_p();
 
             // Constrain cmx to equal the public input.
-            layouter.constrain_instance(cmx.inner().cell(), config.primary, CMX_NEW)?;
+            layouter.constrain_instance(
+                cmx.inner().cell(),
+                config.primary,
+                CMX_NEW_PUBLIC_OFFSET,
+            )?;
 
             // Extract x-coordinates of the output address for condition 7.
             (
@@ -1893,7 +1907,8 @@ impl Instance {
     /// halo2's `MockProver::run`, `create_proof`, and `verify_proof` expect.
     ///
     /// The order must match the instance column offsets defined at the top of
-    /// this file (`NF_SIGNED`, `RK_X`, `RK_Y`, `CMX_NEW`, etc.).
+    /// this file (`NF_SIGNED_PUBLIC_OFFSET`, `RK_X_PUBLIC_OFFSET`,
+    /// `RK_Y_PUBLIC_OFFSET`, `CMX_NEW_PUBLIC_OFFSET`, etc.).
     pub fn to_halo2_instance(&self) -> Vec<vesta::Scalar> {
         vec![
             self.nf_signed.inner(),
@@ -2358,15 +2373,15 @@ mod tests {
         let t = make_test_data();
         let pi = t.instance.to_halo2_instance();
         assert_eq!(pi.len(), 14, "Expected exactly 14 public inputs");
-        assert_eq!(pi[NF_SIGNED], t.instance.nf_signed.inner());
-        assert_eq!(pi[RK_X], t.instance.rk_x);
-        assert_eq!(pi[RK_Y], t.instance.rk_y);
-        assert_eq!(pi[CMX_NEW], t.instance.cmx_new);
-        assert_eq!(pi[VAN_COMM], t.instance.van_comm);
-        assert_eq!(pi[NC_ROOT], t.instance.nc_root);
-        assert_eq!(pi[NF_IMT_ROOT], t.instance.nf_imt_root);
-        assert_eq!(pi[GOV_NULL_1], t.instance.gov_null[0]);
-        assert_eq!(pi[DOM], t.instance.dom);
+        assert_eq!(pi[NF_SIGNED_PUBLIC_OFFSET], t.instance.nf_signed.inner());
+        assert_eq!(pi[RK_X_PUBLIC_OFFSET], t.instance.rk_x);
+        assert_eq!(pi[RK_Y_PUBLIC_OFFSET], t.instance.rk_y);
+        assert_eq!(pi[CMX_NEW_PUBLIC_OFFSET], t.instance.cmx_new);
+        assert_eq!(pi[VAN_COMM_PUBLIC_OFFSET], t.instance.van_comm);
+        assert_eq!(pi[NC_ROOT_PUBLIC_OFFSET], t.instance.nc_root);
+        assert_eq!(pi[NF_IMT_ROOT_PUBLIC_OFFSET], t.instance.nf_imt_root);
+        assert_eq!(pi[GOV_NULL_1_PUBLIC_OFFSET], t.instance.gov_null[0]);
+        assert_eq!(pi[DOM_PUBLIC_OFFSET], t.instance.dom);
     }
 
     #[test]

@@ -74,8 +74,8 @@ use orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
 ///     let rk = alpha_commitment.add(layouter.namespace(|| "rk"), &ak_P)?;
 ///
 ///     // Constrain rk to equal public input
-///     layouter.constrain_instance(rk.inner().x().cell(), config.primary, RK_X)?;
-///     layouter.constrain_instance(rk.inner().y().cell(), config.primary, RK_Y)?;
+///     layouter.constrain_instance(rk.inner().x().cell(), config.primary, rk_x_row)?;
+///     layouter.constrain_instance(rk.inner().y().cell(), config.primary, rk_y_row)?;
 /// }
 /// ```
 #[allow(non_snake_case)]

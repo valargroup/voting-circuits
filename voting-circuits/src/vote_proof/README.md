@@ -71,7 +71,7 @@ Where:
 - **DOMAIN_VAN**: `0`. Domain separation tag for Vote Authority Notes (vs `DOMAIN_VC = 1` for Vote Commitments). Assigned via `assign_advice_from_constant` so the value is baked into the verification key.
 - **vpk_g_d**, **vpk_pk_d**: voting public key address components (diversified base and transmission key x-coordinates). Same encoding as in ZKP 1 condition 7, so a VAN created by delegation has the same commitment structure.
 - **total_note_value**: the voter's total delegated weight. Shared with condition 8 (shares sum check).
-- **voting_round_id**: the vote round identifier (public input `VOTING_ROUND_ID`, offset 8). Copied from the instance column via `assign_advice_from_instance`, ensuring the in-circuit value matches the verifier's public input.
+- **voting_round_id**: the vote round identifier (public input `VOTING_ROUND_ID_PUBLIC_OFFSET`, offset 8). Copied from the instance column via `assign_advice_from_instance`, ensuring the in-circuit value matches the verifier's public input.
 - **proposal_authority_old**: remaining proposal authority bitmask. Shared with condition 6 (decrement check).
 - **van_comm_rand**: random blinding factor. Prevents observers from brute-forcing the address or weight from the public VAN commitment.
 - **vote_authority_note_old**: the witnessed VAN commitment. Constrained to equal the two-layer Poseidon output via `constrain_equal`.
@@ -80,7 +80,7 @@ Where:
 
 **Constraint:** The circuit computes the two-layer hash and enforces strict equality with `vote_authority_note_old`. Since `vote_authority_note_old` will also be used as the Merkle leaf in condition 1, this creates a binding: the VAN membership proof and the VAN integrity check are tied to the same commitment.
 
-**Condition 4: Spend Authority** — enforced in-circuit. The spec requires `r_vpk = vsk.ak + [alpha_v] * G`. The circuit witnesses `alpha_v`, computes `[alpha_v]*SpendAuthG` via fixed-base mul, adds it to `vsk_ak_point` (from condition 3), and constrains the result to the instance column at `R_VPK_X` and `R_VPK_Y` (public input offsets 1 and 2). The vote signature is verified out-of-circuit under `r_vpk` over the transaction sighash.
+**Condition 4: Spend Authority** — enforced in-circuit. The spec requires `r_vpk = vsk.ak + [alpha_v] * G`. The circuit witnesses `alpha_v`, computes `[alpha_v]*SpendAuthG` via fixed-base mul, adds it to `vsk_ak_point` (from condition 3), and constrains the result to the instance column at `R_VPK_X_PUBLIC_OFFSET` and `R_VPK_Y_PUBLIC_OFFSET` (public input offsets 1 and 2). The vote signature is verified out-of-circuit under `r_vpk` over the transaction sighash.
 
 **Out-of-circuit helper:** `van_integrity::van_integrity_hash(vpk_g_d, vpk_pk_d, total_note_value, voting_round_id, proposal_authority_old, van_comm_rand)` from the shared `circuit::van_integrity` module computes the same two-layer hash outside the circuit for builder and test use. (Note: the shared module's parameter names are `g_d_x`/`pk_d_x`.)
 
@@ -98,7 +98,7 @@ Where:
 - **vote_authority_note_old**: the Merkle leaf. Cell-equality-linked to condition 2's derived VAN hash, binding the membership proof to the same commitment.
 - **vote_comm_tree_position**: leaf position in the tree (private witness). At each level, the position bit determines child ordering.
 - **vote_comm_tree_path**: 24 sibling hashes along the authentication path (private witness).
-- **vote_comm_tree_root**: the public tree anchor (public input `VOTE_COMM_TREE_ROOT`, offset 5).
+- **vote_comm_tree_root**: the public tree anchor (public input `VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET`, offset 5).
 - **vote_comm_tree_anchor_height**: the chain height used by the verifier's caller to look up `vote_comm_tree_root` (public input offset 6). The circuit does not constrain this value to the Merkle path witness.
 
 **Function:** Poseidon-based Merkle path verification (24 levels). At each level, a conditional swap gate orders (current, sibling) into (left, right) based on the position bit, then `Poseidon(left, right)` computes the parent. The hash function matches `vote_commitment_tree::MerkleHashVote::combine` — `Poseidon(left, right)` with no level tag.
@@ -110,7 +110,7 @@ Where:
 
 Identical to the delegation circuit's `q_imt_swap` gate.
 
-**Constraint:** The circuit computes the Merkle root from the leaf and path, then enforces `constrain_instance(computed_root, VOTE_COMM_TREE_ROOT)`, binding the derived root to the `VOTE_COMM_TREE_ROOT` public input (offset 5). The verifier's caller enforces the binding between the height and root when it looks up the root at `vote_comm_tree_anchor_height`.
+**Constraint:** The circuit computes the Merkle root from the leaf and path, then enforces `constrain_instance(computed_root, VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET)`, binding the derived root to the `VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET` public input (offset 5). The verifier's caller enforces the binding between the height and root when it looks up the root at `vote_comm_tree_anchor_height`.
 
 **Out-of-circuit helper:** `poseidon_hash_2()` computes `Poseidon(a, b)` outside the circuit for builder and test use.
 
@@ -164,7 +164,7 @@ Purpose: bind the rerandomized voting public key `r_vpk` to the spending key and
 vsk_ak_point   = [vsk] * SpendAuthG        (from condition 3)
 alpha_v_commit = [alpha_v] * SpendAuthG    (fixed-base ECC mul)
 r_vpk_derived  = alpha_v_commit + vsk_ak_point
-constrain_instance(r_vpk_derived, R_VPK_X), constrain_instance(r_vpk_derived.y(), R_VPK_Y)
+constrain_instance(r_vpk_derived, R_VPK_X_PUBLIC_OFFSET), constrain_instance(r_vpk_derived.y(), R_VPK_Y_PUBLIC_OFFSET)
 ```
 
 Where:
@@ -196,7 +196,7 @@ Single `ConstantLength<4>` call matching ZKP 1 condition 14's governance nullifi
 
 **Structure:** Single `ConstantLength<4>` Poseidon hash (2 permutations at rate 2, ~130 rows).
 
-**Constraint:** The circuit computes the nested hash and enforces `constrain_instance(result, VAN_NULLIFIER)` — binding the derived value to the public input at offset 0. This is the first `constrain_instance` call in the circuit.
+**Constraint:** The circuit computes the nested hash and enforces `constrain_instance(result, VAN_NULLIFIER_PUBLIC_OFFSET)` — binding the derived value to the public input at offset 0. This is the first `constrain_instance` call in the circuit.
 
 **Out-of-circuit helper:** `van_nullifier_hash()` computes the same nested Poseidon hash outside the circuit. `domain_van_nullifier()` returns the domain separator constant.
 
@@ -230,7 +230,7 @@ Where:
 - **vpk_g_d**, **vpk_pk_d**, **total_note_value**, **voting_round_id**, **van_comm_rand** are cell-equality-linked to the same witness cells used in condition 2.
 - **proposal_authority_new**: flows from condition 6's output. This is the only difference between the condition 2 and condition 7 hashes.
 
-**Constraint:** The circuit computes the two-layer hash and enforces `constrain_instance(derived_van_new, VOTE_AUTHORITY_NOTE_NEW)` — binding the result to the public input at offset 3.
+**Constraint:** The circuit computes the two-layer hash and enforces `constrain_instance(derived_van_new, VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET)` — binding the result to the public input at offset 3.
 
 **Out-of-circuit helper:** Reuses `van_integrity::van_integrity_hash(vpk_g_d, vpk_pk_d, total_note_value, voting_round_id, proposal_authority_new, van_comm_rand)` with `proposal_authority_new = proposal_authority_old - (1 << proposal_id)`. (Note: the shared module's parameter names are `g_d_x`/`pk_d_x`.)
 
@@ -335,11 +335,11 @@ share's blind and coordinates.
 
 **Function:** 16 per-share `Poseidon` commitments, followed by an outer `Poseidon` with `ConstantLength<16>` over those 16 blinded share commitments. Uses `Pow5Chip` / `P128Pow5T3` with rate 2.
 
-**Constraint:** The circuit computes the two-level Poseidon hash over all 16 blinded share commitments. The resulting `shares_hash` cell is an internal wire — it is not directly bound to any public input. Instead, condition 12 consumes it as an input to `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`, which IS bound to `VOTE_COMMITMENT`.
+**Constraint:** The circuit computes the two-level Poseidon hash over all 16 blinded share commitments. The resulting `shares_hash` cell is an internal wire — it is not directly bound to any public input. Instead, condition 12 consumes it as an input to `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`, which IS bound to `VOTE_COMMITMENT_PUBLIC_OFFSET`.
 
 **Relationship to other conditions:**
 - Condition 11 constrains that the witnessed `(c1_i_x, c1_i_y, c2_i_x, c2_i_y)` values are valid El Gamal encryptions of the corresponding plaintext shares from conditions 8/9. The enc_share cells are cloned before the Poseidon hash and reused as `constrain_equal` targets in condition 11.
-- Condition 12 chains `shares_hash` into the full vote commitment via `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`, which is bound to the `VOTE_COMMITMENT` public input (offset 4).
+- Condition 12 chains `shares_hash` into the full vote commitment via `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`, which is bound to the `VOTE_COMMITMENT_PUBLIC_OFFSET` public input (offset 4).
 
 **Out-of-circuit helper:** `shares_hash()` computes the same Poseidon hash outside the circuit for builder and test use.
 
@@ -365,7 +365,7 @@ Where:
 - **enc_share_c1_x/y[i]**, **enc_share_c2_x/y[i]**: the coordinate cells from condition 10's witness region. These are the same cells that were hashed into `shares_hash` by condition 10's Poseidon hash. Condition 11 constrains the ECC computation output to match them via `constrain_equal`, creating a binding between the Poseidon hash (condition 10) and the actual El Gamal encryption.
 
 **Structure:**
-1. Witness ea_pk once as `NonIdentityPoint`; `constrain_instance` x and y to public inputs (rows `EA_PK_X`, `EA_PK_Y`)
+1. Witness ea_pk once as `NonIdentityPoint`; `constrain_instance` x and y to public inputs (rows `EA_PK_X_PUBLIC_OFFSET`, `EA_PK_Y_PUBLIC_OFFSET`)
 2. Construct the full `FixedPointBaseField` and short `FixedPointShort` descriptors once (hoisted above loop)
 3. For each share i (0..15):
    a. `spend_auth_g_base.clone().mul(r_cells[i])` → C1 point (fixed-base)
@@ -399,19 +399,19 @@ vote_commitment = Poseidon(DOMAIN_VC, voting_round_id, shares_hash, proposal_id,
 Where:
 - **DOMAIN_VC**: `1`. Domain separation tag for Vote Commitments (vs `DOMAIN_VAN = 0`). Assigned via `assign_advice_from_constant` so the value is baked into the verification key. Prevents a vote commitment from ever colliding with a VAN in the shared vote commitment tree.
 - **shares_hash**: the two-level Poseidon hash of all 16 blinded share commitments (each binding both x- and y-coordinates of the El Gamal ciphertext), computed in condition 10. This is a purely internal wire (not a public input) — it flows from condition 10's output cell directly into condition 12's Poseidon input, ensuring the vote commitment is bound to the actual El Gamal ciphertexts without re-hashing.
-- **proposal_id**: which proposal this vote is for (public input `PROPOSAL_ID`, offset 7). Copied from the instance column via `assign_advice_from_instance`. The verifier checks it matches a valid proposal in the voting window.
+- **proposal_id**: which proposal this vote is for (public input `PROPOSAL_ID_PUBLIC_OFFSET`, offset 7). Copied from the instance column via `assign_advice_from_instance`. The verifier checks it matches a valid proposal in the voting window.
 - **vote_decision**: the voter's choice (private witness). Hidden inside the vote commitment — only revealed in ZKP #3 when individual shares are opened. The decision value is opaque to the circuit; its semantic meaning is defined by the application layer.
 
 **Function:** `Poseidon` with `ConstantLength<5>`. Uses `Pow5Chip` / `P128Pow5T3` with rate 2 (3 absorption rounds for 5 inputs).
 
-**Constraint:** The circuit computes the Poseidon hash and enforces `constrain_instance(vote_commitment, VOTE_COMMITMENT)` — binding the derived value to the `VOTE_COMMITMENT` public input (offset 4). This is the terminal constraint of the vote commitment construction chain: conditions 8–9 validate the plaintext shares, condition 10 hashes the ciphertexts, condition 11 proves the ciphertexts are valid El Gamal encryptions, and condition 12 wraps everything into a single public commitment.
+**Constraint:** The circuit computes the Poseidon hash and enforces `constrain_instance(vote_commitment, VOTE_COMMITMENT_PUBLIC_OFFSET)` — binding the derived value to the `VOTE_COMMITMENT_PUBLIC_OFFSET` public input (offset 4). This is the terminal constraint of the vote commitment construction chain: conditions 8–9 validate the plaintext shares, condition 10 hashes the ciphertexts, condition 11 proves the ciphertexts are valid El Gamal encryptions, and condition 12 wraps everything into a single public commitment.
 
 **Data flow (conditions 8–12):**
 ```
 shares (8: sum, 9: range) ──┐
                              ├─ enc_shares (11: El Gamal) ──→ shares_hash (10: Poseidon<16>)
 randomness ──────────────────┘                                       │
-                                                                     ├─ vote_commitment (12: Poseidon<5>) ──→ VOTE_COMMITMENT
+                                                                     ├─ vote_commitment (12: Poseidon<5>) ──→ VOTE_COMMITMENT_PUBLIC_OFFSET
 proposal_id ─────────────────────────────────────────────────────────┤
 vote_decision ───────────────────────────────────────────────────────┘
 ```
