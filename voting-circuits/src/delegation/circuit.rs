@@ -932,11 +932,13 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 self.rcm_signed.as_ref().map(|rcm| rcm.inner()),
             )?;
 
-            // The signed note's value is always 1 (ZIP §Dummy Signed Note).
-            // Value 1 ensures hardware wallets render the transaction on screen.
-            // The value is enforced transitively: v_signed feeds into NoteCommit -> cm_signed
-            // -> derive_nullifier -> nf_signed, which is constrained to the public input.
-            // Any different value would produce a different nf_signed, breaking the proof.
+            // The keystone note's value is 1 zatoshi by convention, so Keystone-class
+            // hardware wallets render the wrapping Orchard Action for user approval.
+            // This is not an independent circuit-level value check: nf_signed is a
+            // public input supplied by the same host that computes it from v_signed.
+            // The load-bearing check is the wallet UI and user approval of "1 zat";
+            // zero-value spends are not rendered by Keystone. See `delegation/README.md`
+            // ("Integration: the Keystone (signed) note is synthetic").
             let v_signed = assign_free_advice(
                 layouter.namespace(|| "v_signed = 1"),
                 config.advices[0],
