@@ -508,6 +508,17 @@ fn deterministic_shuffle(
 /// * `alpha_v` - Spend auth randomizer for the voting hotkey. The caller
 ///   retains this to sign the sighash with `rsk_v = ask_v.randomize(&alpha_v)`.
 ///
+/// # Caller contract
+///
+/// `alpha_v` is a secret, one-time spend-auth randomizer and MUST be drawn
+/// from a CSPRNG such as `OsRng` for each vote proof. `van_comm_rand` is the
+/// secret VAN commitment blinding factor originally used by
+/// `delegation::build_delegation_bundle`; pass the retained value unchanged.
+/// `voting_round_id`, `anchor_height`, `proposal_id`, `ea_pk`, and the vote
+/// commitment tree witness are authenticated session parameters: the builder
+/// constrains proofs to the supplied values but cannot prove they came from the
+/// intended chain state or governance announcement.
+///
 /// El Gamal encryption randomness (`r_i`) and share blind factors (`blind_i`)
 /// are derived deterministically from `sk`, `voting_round_id`, `proposal_id`,
 /// `vote_authority_note_old`, and each share's index via a Blake2b-512 PRF.
