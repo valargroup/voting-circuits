@@ -1,8 +1,8 @@
 //! Protocol domain-separation tag registry.
 //!
-//! This module is the crate-local source of truth for the field elements
-//! used only as domain separators. It does not define whole hash formulas;
-//! the hash-owning modules remain responsible for their preimage layout.
+//! This module is the crate-local source of truth for domain separator
+//! constants. It does not define whole hash formulas; the hash-owning
+//! modules remain responsible for their preimage layout.
 //!
 //! ## Encoding rule
 //!
@@ -13,6 +13,8 @@
 //!   the byte level because the hash separates cross-protocol or cross-circuit
 //!   replay domains. These are encoded as a zero-padded 32-byte little-endian
 //!   integer and parsed as a canonical Pallas base-field element.
+//! - Single-byte PRF domain tags are used as byte preimage fields when one
+//!   BLAKE2b construction produces several independent vote-proof streams.
 
 use ff::PrimeField;
 use pasta_curves::pallas;
@@ -22,6 +24,21 @@ pub const DOMAIN_VAN: u64 = 0;
 
 /// Domain tag for vote commitments in the shared vote tree.
 pub const DOMAIN_VC: u64 = 1;
+
+/// Blake2b-512 personalization for vote share secret derivation.
+///
+/// Distinct from Zcash's `"Zcash_ExpandSeed"` personalization to avoid
+/// collisions with Zcash key-derivation streams that use similar inputs.
+pub(crate) const VOTE_PRF_PERSONALIZATION: &[u8; 16] = b"ZcashVote_Expand";
+
+/// PRF domain for vote-proof El Gamal encryption randomness.
+pub(crate) const VOTE_PRF_DOMAIN_ELGAMAL: u8 = 0x00;
+/// PRF domain for vote-proof share commitment blind factors.
+pub(crate) const VOTE_PRF_DOMAIN_BLIND: u8 = 0x01;
+/// PRF domain for vote-proof share-order shuffle seed.
+pub(crate) const VOTE_PRF_DOMAIN_SHUFFLE: u8 = 0x02;
+/// PRF domain for vote-proof remainder distribution weights.
+pub(crate) const VOTE_PRF_DOMAIN_REMAINDER: u8 = 0x03;
 
 /// Encodes a short ASCII tag as a canonical Pallas base-field element.
 ///
@@ -84,6 +101,25 @@ mod tests {
                 assert_ne!(
                     left, right,
                     "domain tags must be distinct: {left_name} and {right_name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn vote_prf_domains_are_distinct() {
+        let domains = [
+            ("elgamal", VOTE_PRF_DOMAIN_ELGAMAL),
+            ("blind", VOTE_PRF_DOMAIN_BLIND),
+            ("shuffle", VOTE_PRF_DOMAIN_SHUFFLE),
+            ("remainder", VOTE_PRF_DOMAIN_REMAINDER),
+        ];
+
+        for (i, (left_name, left)) in domains.iter().enumerate() {
+            for (right_name, right) in domains.iter().skip(i + 1) {
+                assert_ne!(
+                    left, right,
+                    "vote PRF domains must be distinct: {left_name} and {right_name}"
                 );
             }
         }

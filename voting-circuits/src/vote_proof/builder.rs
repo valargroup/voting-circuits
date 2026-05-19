@@ -28,7 +28,7 @@ use super::circuit::{
 };
 use super::prove::create_vote_proof;
 use crate::circuit::elgamal::{base_to_scalar, spend_auth_g_affine};
-use crate::ProveError;
+use crate::{domain_tags, ProveError};
 
 /// Ballot divisor — must match `delegation::circuit::BALLOT_DIVISOR`.
 const BALLOT_DIVISOR: u64 = 12_500_000;
@@ -164,7 +164,7 @@ fn distribute_remainder(
     for i in 0..slots.len() {
         let hash = vote_share_prf(
             sk,
-            DOMAIN_REMAINDER,
+            domain_tags::VOTE_PRF_DOMAIN_REMAINDER,
             round_id,
             proposal_id,
             van_commitment,
@@ -348,20 +348,7 @@ fn extract_vsk(sk: &SpendingKey) -> pallas::Scalar {
     }
 }
 
-/// Blake2b-512 personalization for vote share secret derivation.
-/// Distinct from Zcash's `"Zcash_ExpandSeed"` to avoid domain collisions.
-const VOTE_PRF_PERSONALIZATION: &[u8; 16] = b"ZcashVote_Expand";
-
-/// Domain separator for El Gamal encryption randomness.
-const DOMAIN_ELGAMAL: u8 = 0x00;
-/// Domain separator for share commitment blind factors.
-const DOMAIN_BLIND: u8 = 0x01;
-/// Domain separator for share-order shuffle seed.
-const DOMAIN_SHUFFLE: u8 = 0x02;
-/// Domain separator for remainder distribution weights.
-const DOMAIN_REMAINDER: u8 = 0x03;
-
-/// Core PRF: BLAKE2b-512 keyed by the spending key with voting-specific
+/// Core PRF: BLAKE2b-512 bound to the spending key with voting-specific
 /// personalization and domain-separated inputs.
 ///
 /// `PRF(sk, domain, round_id, proposal_id, van_commitment, share_index)`
@@ -381,7 +368,7 @@ fn vote_share_prf(
 ) -> [u8; 64] {
     *blake2b_simd::Params::new()
         .hash_length(64)
-        .personal(VOTE_PRF_PERSONALIZATION)
+        .personal(domain_tags::VOTE_PRF_PERSONALIZATION)
         .to_state()
         .update(sk.to_bytes())
         .update(&[domain])
@@ -407,7 +394,7 @@ fn derive_share_randomness(
 ) -> pallas::Base {
     let hash = vote_share_prf(
         sk,
-        DOMAIN_ELGAMAL,
+        domain_tags::VOTE_PRF_DOMAIN_ELGAMAL,
         round_id,
         proposal_id,
         van_commitment,
@@ -428,7 +415,7 @@ fn derive_share_blind(
 ) -> pallas::Base {
     let hash = vote_share_prf(
         sk,
-        DOMAIN_BLIND,
+        domain_tags::VOTE_PRF_DOMAIN_BLIND,
         round_id,
         proposal_id,
         van_commitment,
@@ -446,7 +433,7 @@ fn derive_share_blind(
 /// Shuffling makes each index equally likely to hold any denomination.
 ///
 /// The permutation is derived from the same PRF used for El Gamal randomness
-/// and blind factors, with a distinct domain separator (`DOMAIN_SHUFFLE`).
+/// and blind factors, with a distinct shuffle domain separator.
 /// Share index 0 is used for the PRF call (the seed depends on the VAN, round,
 /// and proposal — not on the permutation step) to produce 64 bytes of
 /// pseudorandom data, which is consumed 4 bytes at a time for modular indices.
@@ -460,7 +447,14 @@ fn deterministic_shuffle(
     // The share index is hardcoded to 0 here because the shuffle
     // function only needs one PRF call to seed the entire Fisher
     // Yates shuffle. It doesn't need per-share derivations.
-    let seed = vote_share_prf(sk, DOMAIN_SHUFFLE, round_id, proposal_id, van_commitment, 0);
+    let seed = vote_share_prf(
+        sk,
+        domain_tags::VOTE_PRF_DOMAIN_SHUFFLE,
+        round_id,
+        proposal_id,
+        van_commitment,
+        0,
+    );
     for i in (1..NUM_SHARES).rev() {
         // Each iteration consumes the next 4-byte slice of the seed as a
         // random u32: i=15 reads seed[0..4], i=14 reads seed[4..8], …,
@@ -854,6 +848,29 @@ mod tests {
 
     fn test_van() -> pallas::Base {
         pallas::Base::from(0xDEAD_u64)
+    }
+
+    #[test]
+    fn vote_share_prf_has_frozen_test_vector() {
+        let hash = vote_share_prf(
+            &test_sk(),
+            crate::domain_tags::VOTE_PRF_DOMAIN_ELGAMAL,
+            test_round_id(),
+            1,
+            test_van(),
+            0,
+        );
+
+        assert_eq!(
+            hash,
+            [
+                0x62, 0x03, 0x29, 0x9b, 0x2c, 0x58, 0x4b, 0xa6, 0x37, 0x4d, 0xbe, 0xd6, 0x45, 0x71,
+                0x6f, 0x03, 0x31, 0x56, 0x95, 0x6f, 0xf1, 0x88, 0x8e, 0x75, 0x41, 0x43, 0xb1, 0xf5,
+                0x54, 0xea, 0xb5, 0xb0, 0x6b, 0xdf, 0x7d, 0xca, 0xd4, 0x5a, 0xc2, 0xf4, 0xb9, 0x6a,
+                0xe4, 0x5b, 0xb9, 0x98, 0xd0, 0x5b, 0x4a, 0x8f, 0x12, 0x49, 0x52, 0xb3, 0x0b, 0x19,
+                0xc1, 0xaf, 0x89, 0x35, 0x8a, 0x96, 0xe0, 0x2c,
+            ]
+        );
     }
 
     #[test]
