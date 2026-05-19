@@ -87,7 +87,7 @@ pub fn warm_share_reveal_keys() {
 ///
 /// Returns the serialized proof bytes. Returns an error if the caller
 /// provides a circuit without all witnesses populated or an instance
-/// that Halo2 cannot prove against.
+/// with 9 public inputs that Halo2 cannot prove against.
 ///
 /// **Expensive**: K=11 proof generation takes ~5-15 seconds in release mode.
 /// Params and keys are cached so only the first call pays keygen.

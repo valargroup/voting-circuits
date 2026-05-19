@@ -42,8 +42,10 @@
 //!   *(implemented)*
 //! - **Condition 9**: Shares Range — each `shares_j` in `[0, 2^30)`.
 //!   *(implemented)*
-//! - **Condition 10**: Shares Hash Integrity — `shares_hash = H(enc_share_1..16)`.
-//!   `shares_hash` is an internal wire, not a public instance. *(implemented)*
+//! - **Condition 10**: Shares Hash Integrity — each encrypted share is first
+//!   blinded with `DOMAIN_SHARE_COMM`, then the 16 per-share commitments are
+//!   hashed into `shares_hash`. `shares_hash` is an internal wire, not a public
+//!   instance. *(implemented)*
 //! - **Condition 11**: Encryption Integrity — each `enc_share_i = ElGamal(shares_i, r_i, ea_pk)`.
 //!   *(implemented)*
 //! - **Condition 12**: Vote Commitment Integrity — `vote_commitment = H(DOMAIN_VC, voting_round_id,
@@ -63,13 +65,14 @@ use crate::circuit::address_ownership::{prove_address_ownership, spend_auth_g_mu
 use crate::circuit::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
 use crate::circuit::nonzero::NonZeroConfig;
 use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
+use crate::circuit::share_commitment;
 use crate::circuit::van_integrity;
 use crate::circuit::vote_commitment;
 use crate::domain_tags;
 pub use crate::protocol_hash::poseidon_hash_2;
 use crate::shares_hash::compute_shares_hash_in_circuit;
 #[cfg(test)]
-use crate::shares_hash::{hash_share_commitment_in_circuit, share_commitment, shares_hash};
+use crate::shares_hash::{hash_share_commitment_in_circuit, shares_hash};
 use halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
@@ -106,7 +109,7 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 /// Circuit size (2^K rows).
 ///
 /// K=13 (8,192 rows). `CircuitCost::measure` reports a floor-planner
-/// high-water mark of **7,945 rows** (97.0% of 8,192). The `V1` floor planner
+/// high-water mark of **7,897 rows** (96.4% of 8,192). The `V1` floor planner
 /// packs non-overlapping regions into the same row range across different
 /// columns, so the high-water mark is much lower than a naive sum-of-heights
 /// estimate.
@@ -122,6 +125,8 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 ///   `cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
 pub const K: u32 = 13;
 
+#[cfg(test)]
+use share_commitment::share_commitment;
 pub(crate) use van_integrity::DOMAIN_VAN;
 pub(crate) use vote_commitment::DOMAIN_VC;
 
@@ -432,7 +437,7 @@ pub struct Circuit {
     pub(crate) enc_share_c2_y: [Value<pallas::Base>; 16],
 
     // Condition 10 (Shares Hash Integrity): per-share blind factors for blinded commitments.
-    /// Random blind factors: share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y).
+    /// Random blind factors: share_comm_i = Poseidon(DOMAIN_SHARE_COMM, blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y).
     pub(crate) share_blinds: [Value<pallas::Base>; 16],
 
     // Condition 11 (Encryption Integrity): El Gamal randomness and public key.
@@ -497,12 +502,6 @@ impl Circuit {
         }
     }
 }
-
-/// In-circuit Poseidon hash for one share commitment: `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
-///
-/// Uses the same parameters as the out-of-circuit
-/// [`crate::shares_hash::share_commitment`] (P128Pow5T3, ConstantLength<5>,
-/// width 3, rate 2) so that native and in-circuit hashes match.
 
 impl plonk::Circuit<pallas::Base> for Circuit {
     type Config = Config;
@@ -1112,7 +1111,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // ---------------------------------------------------------------
         // Condition 10: Shares Hash Integrity (blinded commitments).
         //
-        // share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)
+        // share_comm_i = Poseidon(DOMAIN_SHARE_COMM, blind_i,
+        //                         c1_i_x, c2_i_x, c1_i_y, c2_i_y)
         // shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
         //
         // The y-coordinates bind each share commitment to the exact curve
@@ -1137,6 +1137,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
             .expect("always 16 elements");
+
+        let domain_share_comm =
+            share_commitment::assign_domain_share_comm(&mut layouter, config.advices[0])?;
 
         let enc_c1: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
             .map(|i| {
@@ -1199,6 +1202,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let shares_hash = compute_shares_hash_in_circuit(
             || config.poseidon_chip(),
             layouter.namespace(|| "cond10: shares hash"),
+            domain_share_comm,
             blinds,
             enc_c1,
             enc_c2,
@@ -1432,7 +1436,7 @@ mod tests {
     use super::*;
     use crate::circuit::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
     use core::iter;
-    use ff::Field;
+    use ff::{Field, PrimeField};
     use group::ff::PrimeFieldBits;
     use group::{Curve, Group};
     use halo2_gadgets::sinsemilla::primitives::CommitDomain;
@@ -1553,7 +1557,7 @@ mod tests {
     /// for use in the Instance. The `proposal_id` must match the
     /// instance's proposal_id so the circuit's condition 12 (which
     /// copies proposal_id from the instance) agrees with the instance.
-    fn set_condition_11(
+    fn set_condition_12(
         circuit: &mut Circuit,
         shares_hash_val: pallas::Base,
         proposal_id: u64,
@@ -1686,7 +1690,7 @@ mod tests {
 
         // Condition 12: vote commitment from shares_hash + proposal + decision.
         let vote_commitment =
-            set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+            set_condition_12(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -1791,7 +1795,7 @@ mod tests {
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
-        let vc = set_condition_11(
+        let vc = set_condition_12(
             &mut circuit,
             shares_hash_val,
             TEST_PROPOSAL_ID,
@@ -1939,7 +1943,7 @@ mod tests {
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let vc = set_condition_12(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2042,7 +2046,7 @@ mod tests {
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let vc = set_condition_12(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2205,7 +2209,7 @@ mod tests {
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let vc = set_condition_12(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2514,7 +2518,7 @@ mod tests {
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let vc = set_condition_12(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2650,7 +2654,7 @@ mod tests {
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
         circuit.ea_pk = Value::known(ea_pk_affine);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let vc = set_condition_12(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2789,7 +2793,7 @@ mod tests {
         circuit.ea_pk = Value::known(ea_pk_affine);
 
         let vote_commitment =
-            set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+            set_condition_12(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2890,8 +2894,7 @@ mod tests {
     }
 
     /// Verifies the out-of-circuit share_commitment helper is deterministic
-    /// and that input order matters (Poseidon(blind, c1_x, c2_x, c1_y, c2_y) ≠
-    /// Poseidon(blind, c2_x, c1_x, c2_y, c1_y)).
+    /// and that input order matters.
     #[test]
     fn share_commitment_deterministic() {
         let mut rng = OsRng;
@@ -2913,6 +2916,43 @@ mod tests {
         let blind_alt = pallas::Base::random(&mut rng);
         let h4 = share_commitment(blind_alt, c1_x, c2_x, c1_y, c2_y);
         assert_ne!(h1, h4);
+    }
+
+    /// Even if the share blind is set to the vote commitment domain tag and
+    /// the remaining inputs are shaped like a vote commitment preimage, the
+    /// share commitment uses its own pinned domain.
+    #[test]
+    fn share_commitment_domain_separates_vote_commitment_shape() {
+        let voting_round_id = pallas::Base::from(11u64);
+        let shares_hash = pallas::Base::from(22u64);
+        let proposal_id = pallas::Base::from(3u64);
+        let vote_decision = pallas::Base::from(1u64);
+
+        let vote_commitment =
+            vote_commitment_hash(voting_round_id, shares_hash, proposal_id, vote_decision);
+        let shape_overlap_share_commitment = share_commitment(
+            pallas::Base::from(DOMAIN_VC),
+            voting_round_id,
+            shares_hash,
+            proposal_id,
+            vote_decision,
+        );
+
+        assert_eq!(
+            vote_commitment.to_repr(),
+            [
+                70, 114, 148, 71, 228, 55, 194, 154, 195, 194, 133, 222, 203, 11, 174, 163, 74, 20,
+                85, 36, 103, 39, 22, 81, 245, 10, 23, 88, 115, 254, 254, 50,
+            ]
+        );
+        assert_eq!(
+            shape_overlap_share_commitment.to_repr(),
+            [
+                67, 67, 1, 91, 168, 243, 48, 129, 115, 80, 130, 0, 38, 45, 204, 82, 225, 208, 122,
+                41, 143, 233, 124, 107, 249, 117, 167, 190, 235, 13, 157, 38,
+            ]
+        );
+        assert_ne!(vote_commitment, shape_overlap_share_commitment);
     }
 
     /// Minimal circuit that computes one share commitment in-circuit and constrains
@@ -2999,9 +3039,12 @@ mod tests {
                 Value::known(self.c2_y),
             )?;
             let chip = PoseidonChip::construct(config.poseidon_config.clone());
+            let domain_share_comm =
+                share_commitment::assign_domain_share_comm(&mut layouter, config.advices[0])?;
             let result = hash_share_commitment_in_circuit(
                 chip,
                 layouter.namespace(|| "share_comm"),
+                domain_share_comm,
                 blind_cell,
                 c1_x_cell,
                 c2_x_cell,
@@ -3015,9 +3058,9 @@ mod tests {
     }
 
     /// Verifies that the in-circuit share commitment hash matches the native
-    /// share_commitment(blind, c1_x, c2_x, c1_y, c2_y). The test builds a minimal circuit
-    /// that computes the hash and constrains it to the instance column, then
-    /// runs MockProver with the native hash as the public input.
+    /// share commitment helper. The test builds a minimal circuit that computes
+    /// the hash and constrains it to the instance column, then runs MockProver
+    /// with the native hash as the public input.
     #[test]
     fn hash_share_commitment_in_circuit_matches_native() {
         let mut rng = OsRng;
@@ -3036,7 +3079,7 @@ mod tests {
             c2_y,
         };
         let instance = vec![vec![expected]];
-        // K=10 (1024 rows) is enough for one Poseidon(3) region.
+        // K=10 (1024 rows) is enough for one Poseidon(6) region.
         const TEST_K: u32 = 10;
         let prover = MockProver::run(TEST_K, &circuit, instance).expect("MockProver::run failed");
         assert_eq!(prover.verify(), Ok(()));
@@ -3081,7 +3124,7 @@ mod tests {
         circuit.enc_share_c2_x = c2_x.map(Value::known);
         circuit.enc_share_c2_y = c2_y.map(Value::known);
         let shares_hash_val = shares_hash(blinds, c1_x, c2_x, c1_y, c2_y);
-        instance.vote_commitment = set_condition_11(
+        instance.vote_commitment = set_condition_12(
             &mut circuit,
             shares_hash_val,
             TEST_PROPOSAL_ID,

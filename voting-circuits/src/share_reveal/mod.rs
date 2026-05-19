@@ -7,10 +7,11 @@
 //! - **Condition 1**: VC Membership (Poseidon Merkle path).
 //! - **Condition 2**: Vote Commitment Integrity (ConstantLength<5> Poseidon).
 //! - **Condition 3**: Shares Hash Integrity (blinded per-share commitments,
-//!   then ConstantLength<16> Poseidon over the 16 commitments).
+//!   then ConstantLength<16> Poseidon over the 16 commitments). The per-share
+//!   commitment shape is `ConstantLength<6>` and starts with `DOMAIN_SHARE_COMM`.
 //! - **Condition 4**: Share Membership (custom mux gate).
-//! - **Condition 5**: Share Nullifier Integrity (four-input Poseidon hash with
-//!   round binding through `vote_commitment`).
+//! - **Condition 5**: Share Nullifier Integrity (`ConstantLength<4>` Poseidon
+//!   over domain tag, vote commitment, share index, and blind).
 
 pub(crate) mod builder;
 pub(crate) mod circuit;

@@ -3,12 +3,13 @@
 Proves that a registered voter is casting a valid vote, without revealing which VAN they hold. The structure follows the delegation circuit's pattern (ZKP 1). Numbering matches Gov Steps V1 (ZKP #2): 12 conditions total; all conditions 1–12 are fully constrained in-circuit (condition 4 enforces spend authority `r_vpk = vsk.ak + [alpha_v]*G` in-circuit; the vote signature is verified out-of-circuit under `r_vpk`).
 
 **Public inputs:** 11 field elements.
-**Current K:** 13 (8,192 rows) — accommodates conditions 1–4 and 5–12, including the El Gamal integrity gadget, two-level shares hash, and the 10-bit lookup table. High-water mark is 7,945 rows (97.0% utilization).
+**Current K:** 13 (8,192 rows) — accommodates conditions 1–4 and 5–12, including the El Gamal integrity gadget, two-level shares hash, and the 10-bit lookup table. High-water mark is 7,897 rows (96.4% utilization).
 
 **Authoritative hash sources:** this README is explanatory. Reusable hash
 preimages are owned by `crate::circuit::van_integrity` (VAN integrity),
+`crate::circuit::share_commitment` (per-share commitments),
 `crate::circuit::vote_commitment` (vote commitment), and
-`crate::shares_hash` (encrypted-share commitments and `shares_hash`).
+`crate::shares_hash` (`shares_hash` aggregation).
 Domain-tag encoding is owned by `crate::domain_tags`.
 
 ## Inputs
@@ -51,9 +52,10 @@ Domain-tag encoding is owned by `crate::domain_tags`.
    * **voting_round_id cell**: copied from the instance column, used in condition 2 Poseidon hash and condition 5 inner hash.
    * **domain_van_nullifier cell**: constant encoding of `"vote authority spend"` (condition 5).
    * **proposal_authority_new**: derived as `proposal_authority_old - (1 << proposal_id)` (condition 6).
-   * **shares_hash**: two-level Poseidon hash over 16 blinded share commitments (condition 10). Internal wire consumed by condition 12. See `crate::shares_hash` for the authoritative preimage shape; y-coordinates defend against ciphertext sign-malleability.
-   * **SpendAuthG fixed-base tables**: El Gamal generator tables for the full `[r_i]*G` path and short `[v_i]*G` path (condition 11). Baked into the verification key.
+   * **shares_hash**: two-level Poseidon hash over 16 blinded share commitments (condition 10). Internal wire consumed by condition 12. See `crate::circuit::share_commitment` for the authoritative per-share preimage shape and `crate::shares_hash` for the aggregate shape; y-coordinates defend against ciphertext sign-malleability.
+   * **SpendAuthG fixed-base tables**: generator tables used by the El Gamal gadget (condition 11). The full `SpendAuthGBase` path handles `[r_i] * G`; the short `SpendAuthGShort` path handles range-checked `[v_i] * G`.
    * **ea_pk_x, ea_pk_y cells**: copied from the instance column (condition 11). Each ea_pk `NonIdentityPoint` witness is constrained to match these cells.
+   * **DOMAIN_SHARE_COMM constant**: `2`. Domain separation tag for per-share commitments (condition 10). Baked into the verification key.
    * **DOMAIN_VC constant**: `1`. Domain separation tag for Vote Commitments (condition 12). Baked into the verification key.
    * **proposal_id cell**: copied from the instance column (condition 12). Used in the vote commitment Poseidon hash.
 
@@ -313,27 +315,20 @@ If a share exceeds `2^30` or is a wrapped large field element (e.g. `p - k` from
 Purpose: commit to the 16 El Gamal ciphertext pairs so they can be verified in conditions 11 and 12 without re-witnessing.
 
 ```
-share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i in 0..16
+share_comm_i = Poseidon(DOMAIN_SHARE_COMM, blind_i,
+                        c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i in 0..16
 shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
 ```
 
-> The authoritative description of this shape lives in `crate::shares_hash`'s module documentation. The formula here defers to it; if the two ever diverge, the gadget in `shares_hash.rs` is the source of truth.
+> The authoritative description of the per-share shape lives in `crate::circuit::share_commitment`. The aggregate `shares_hash` gadget lives in `crate::shares_hash`.
 
 Where:
 - **c1_i_x**, **c1_i_y**: coordinates of `C1_i = r_i * G` (the El Gamal randomness point for share `i`). The x-coordinate is taken via `ExtractP`; the y-coordinate comes from the inner point. Private witness fields `enc_share_c1_x[i]`, `enc_share_c1_y[i]`.
 - **c2_i_x**, **c2_i_y**: coordinates of `C2_i = shares_i * G + r_i * ea_pk` (the El Gamal ciphertext point for share `i`). The x-coordinate is taken via `ExtractP`; the y-coordinate comes from the inner point. Private witness fields `enc_share_c2_x[i]`, `enc_share_c2_y[i]`.
 
-The circuit first computes each blinded share commitment
-`share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`, then
-hashes the 16 `share_comm_i` values together. The y-coordinates bind each
-commitment to the exact curve point — without them an adversary could negate
-ElGamal ciphertext points (sign-malleability) without invalidating the ZKP.
-ZKP 3 (vote reveal proof) uses the same commitment shape: it recomputes
-`shares_hash` from private `share_comms`, then binds the selected public
-ciphertext coordinates by recomputing the primary share commitment from that
-share's blind and coordinates.
+The blinded share commitments are hashed together. `DOMAIN_SHARE_COMM` separates the per-share hash from vote commitments. The y-coordinates bind each commitment to the exact curve point — without them an adversary could negate ElGamal ciphertext points (sign-malleability) without invalidating the ZKP. ZKP 3 hashes the same 16 private `share_comm` witnesses and recomputes the selected commitment from the revealed ciphertext plus its blind.
 
-**Function:** 16 per-share `Poseidon` commitments, followed by an outer `Poseidon` with `ConstantLength<16>` over those 16 blinded share commitments. Uses `Pow5Chip` / `P128Pow5T3` with rate 2.
+**Function:** inner per-share `Poseidon` with `ConstantLength<6>`, then outer `Poseidon` with `ConstantLength<16>` over 16 blinded share commitments. Both use `Pow5Chip` / `P128Pow5T3` with rate 2.
 
 **Constraint:** The circuit computes the two-level Poseidon hash over all 16 blinded share commitments. The resulting `shares_hash` cell is an internal wire — it is not directly bound to any public input. Instead, condition 12 consumes it as an input to `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`, which IS bound to `VOTE_COMMITMENT_PUBLIC_OFFSET`.
 
@@ -370,13 +365,13 @@ Where:
 3. For each share i (0..15):
    a. `r_i * r_i_inv = 1` rejects exact zero randomness
    b. `spend_auth_g_base.clone().mul(r_cells[i])` → C1 point (fixed-base)
-   c. `constrain_equal(C1.x/y, enc_c1_x/y[i])`
+   c. `constrain_equal(C1.x, enc_c1_x[i])` and `constrain_equal(C1.y, enc_c1_y[i])`
    d. `ScalarFixedShort::new(share_cells[i])` → `spend_auth_g_short.clone().mul(...)` → vG point (short fixed-base)
    e. `ScalarVar::from_base(r_cells[i])` → `ea_pk.mul(r_i_scalar)` → rP point (variable-base)
    f. `vG.add(rP)` → C2 point
-   g. `constrain_equal(C2.x/y, enc_c2_x/y[i])`
+   g. `constrain_equal(C2.x, enc_c2_x[i])` and `constrain_equal(C2.y, enc_c2_y[i])`
 
-Total: 16 non-zero checks, 32 fixed-base scalar multiplications, 16 variable-base scalar multiplications (ea_pk), 16 point additions, 1 `NonIdentityPoint` witness (ea_pk, reused), 64 `constrain_equal` constraints.
+Total: 16 non-zero checks, 16 full fixed-base scalar multiplications, 16 short fixed-base scalar multiplications, 16 variable-base scalar multiplications (ea_pk), 16 point additions, 1 `NonIdentityPoint` witness (ea_pk, reused), 64 `constrain_equal` constraints.
 
 **Scalar field handling:** All scalars (r_i, v_i) are base field elements. C1's `[r_i]*G` fixed-base path passes the randomness cell directly as a `BaseFieldElem` input to `FixedPointBaseField::mul`. C2's `[v_i]*G` path wraps the range-checked share cell as a `ScalarFixedShort`, which is valid because condition 9 proves shares are below 2^30. For the variable-base path (`[r_i]*ea_pk`), `ScalarVar::from_base` decomposes the randomness cell into a running-sum `ScalarVar`. Every canonical Pallas base field element fits in the scalar field because the base field modulus is smaller than the scalar field modulus.
 
@@ -410,7 +405,7 @@ Where:
 **Data flow (conditions 8–12):**
 ```
 shares (8: sum, 9: range) ──┐
-                             ├─ enc_shares (11: El Gamal) ──→ shares_hash (10: Poseidon<16>)
+                             ├─ enc_shares (11: El Gamal) ──→ shares_hash (10: Poseidon<6> per share, then Poseidon<16>)
 randomness ──────────────────┘                                       │
                                                                      ├─ vote_commitment (12: Poseidon<5>) ──→ VOTE_COMMITMENT_PUBLIC_OFFSET
 proposal_id ─────────────────────────────────────────────────────────┤
@@ -431,7 +426,8 @@ vote_decision ──────────────────────
 | `advices[7]` | Poseidon state + AddChip input (a) |
 | `advices[8]` | Poseidon state + AddChip input (b) |
 | `advices[9]` | Range check running sum |
-| `lagrange_coeffs[0]` | Constants (DOMAIN_VAN, DOMAIN_VC, ONE) |
+| `constants` | Dedicated fixed column for constants assigned with `assign_advice_from_constant`, including DOMAIN_VAN, DOMAIN_SHARE_COMM, DOMAIN_VC, and ONE |
+| `lagrange_coeffs[0]` | Sinsemilla fixed `y_Q` column; no longer used for general circuit constants |
 | `lagrange_coeffs[1]` | ECC Lagrange coefficients |
 | `lagrange_coeffs[2..5]` | Poseidon rc_a |
 | `lagrange_coeffs[5..8]` | Poseidon rc_b |
