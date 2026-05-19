@@ -220,9 +220,18 @@ fn build_punctured_ranges_local(sorted_nfs: &[pallas::Base]) -> Vec<[pallas::Bas
         .collect()
 }
 
-/// Find the punctured-range index containing `value`. Mirrors
-/// `imt_tree::tree::find_punctured_range_for_value`; the integration tests
-/// cross-check both implementations on the same roots and proof witnesses.
+/// Find the punctured range whose open interval can witness `value`.
+///
+/// This is the provider side of the same contract enforced by
+/// `PuncturedIntervalGate`. It returns `None` for values below the first range,
+/// values equal to a leaf boundary (`nf_lo` or `nf_hi`), values past `nf_hi`,
+/// and values equal to `nf_mid`. The boundary cases correspond to the gate's
+/// strict `x_lo = real_nf - nf_lo - 1` and `x_hi = nf_hi - real_nf - 1` range
+/// checks. The `nf_mid` case corresponds to the inverse witness non-equality gate.
+///
+/// Mirrors `imt_tree::tree::find_punctured_range_for_value`; the integration
+/// tests cross-check both implementations on the same roots and proof
+/// witnesses.
 fn find_range_for_value(ranges: &[[pallas::Base; 3]], value: pallas::Base) -> Option<usize> {
     let i = ranges.partition_point(|[nf_lo, _, _]| *nf_lo < value);
     if i == 0 {
@@ -400,6 +409,47 @@ mod tests {
                 33, 58, 71, 28, 174, 217, 192, 215, 38, 189, 209, 38, 27, 71, 135, 247, 157, 111,
                 146, 254, 20, 25, 211, 204, 191, 4, 120, 54, 134, 218, 195, 29,
             ])
+        );
+    }
+
+    #[test]
+    fn find_range_for_value_rejects_punctured_interval_boundaries() {
+        let ranges = [
+            [
+                pallas::Base::from(10u64),
+                pallas::Base::from(15u64),
+                pallas::Base::from(20u64),
+            ],
+            [
+                pallas::Base::from(20u64),
+                pallas::Base::from(25u64),
+                pallas::Base::from(30u64),
+            ],
+        ];
+
+        for rejected in [9u64, 10, 15, 20, 25, 30, 31] {
+            assert_eq!(
+                find_range_for_value(&ranges, pallas::Base::from(rejected)),
+                None,
+                "boundary value {rejected} must not produce an IMT proof"
+            );
+        }
+
+        assert_eq!(
+            find_range_for_value(&ranges, pallas::Base::from(11u64)),
+            Some(0)
+        );
+        assert_eq!(
+            find_range_for_value(&ranges, pallas::Base::from(19u64)),
+            Some(0)
+        );
+        assert_eq!(
+            find_range_for_value(&ranges, pallas::Base::from(21u64)),
+            Some(1)
+        );
+        assert_eq!(
+            find_range_for_value(&ranges, pallas::Base::from(29u64)),
+            Some(1)
         );
     }
 }
