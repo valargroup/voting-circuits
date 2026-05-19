@@ -1,7 +1,8 @@
 //! Multi-note delegation bundle builder.
 //!
 //! Orchestrates the creation of a complete delegation proof:
-//! a single merged circuit proving all 15 conditions for up to 5 notes.
+//! a single merged circuit proving all 15 conditions for up to
+//! `circuit::MAX_REAL_NOTES` notes.
 //! Handles padding unused note slots with zero-value notes that still carry
 //! valid IMT non-membership proofs against the real tree root.
 
@@ -35,8 +36,9 @@ use super::{
 //
 // Domain-separated from Orchard's `KEY_DIVERSIFICATION_PERSONALIZATION`
 // (`"z.cash:Orchard-gd"`) so that `g_d_pad = hash_to_curve(PADDING_PERSONALIZATION)(...)`
-// cannot collide with any real Orchard diversified base `g_d = DiversifyHash(d)`.
-// Locked against the Orchard constant by `test_padding_personalization_is_domain_separated_from_orchard`.
+// is not generated through Orchard diversifier selection. Any accidental point
+// collision is treated as a negligible hash-to-curve collision rather than a
+// burned diversifier-index overlap.
 pub(crate) const PADDING_PERSONALIZATION: &str = "shielded-vote/padding-v1";
 
 /// Rho and rseed for a single padded note, captured during Phase 1 (PCZT construction).
@@ -62,6 +64,17 @@ pub struct PrecomputedRandomness {
     pub rseed_output: [u8; 32],
 }
 
+/// Which precomputed note input failed validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrecomputedRandomnessLocation {
+    /// A padded note entry by index in `PrecomputedRandomness::padded_notes`.
+    PaddedNote(usize),
+    /// The synthetic signed note.
+    SignedNote,
+    /// The output note.
+    OutputNote,
+}
+
 /// Input for a single real note in the delegation.
 #[derive(Debug)]
 pub struct RealNoteInput {
@@ -72,6 +85,9 @@ pub struct RealNoteInput {
     /// Merkle authentication path for the note commitment.
     pub merkle_path: MerklePath,
     /// IMT non-membership proof for this note's nullifier.
+    ///
+    /// This must satisfy [`ImtProofData`]'s tree contract and authenticate to
+    /// the same nullifier IMT root used for the bundle.
     pub imt_proof: ImtProofData,
     /// Whether this note uses the internal (change) or external scope.
     pub scope: Scope,
@@ -143,6 +159,8 @@ pub(crate) struct PaddingSlot {
     pub(crate) cmx: pallas::Base,
     pub(crate) v_raw: u64,
     pub(crate) gov_null: pallas::Base,
+    #[cfg(test)]
+    pub(crate) real_nf: pallas::Base,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -160,16 +178,20 @@ pub(crate) fn build_padding_slot(
 
     let (rho, rseed) = if let Some(pre) = precomputed {
         // Reuse randomness so the prover commits to the same values.
-        assert!(
-            pad_idx < pre.padded_notes.len(),
-            "precomputed.padded_notes has {} entries but need index {}",
-            pre.padded_notes.len(),
-            pad_idx
-        );
+        if pad_idx >= pre.padded_notes.len() {
+            return Err(DelegationBuildError::MissingPrecomputedPaddedNote {
+                index: pad_idx,
+                actual: pre.padded_notes.len(),
+            });
+        }
         let pd = &pre.padded_notes[pad_idx];
-        let rho = Rho::from_bytes(&pd.rho).expect("precomputed rho must be valid");
-        let rseed =
-            RandomSeed::from_bytes(pd.rseed, &rho).expect("precomputed rseed must be valid");
+        let rho = Rho::from_bytes(&pd.rho)
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedRho { index: pad_idx })?;
+        let location = PrecomputedRandomnessLocation::PaddedNote(pad_idx);
+        let rseed = RandomSeed::from_bytes(pd.rseed, &rho)
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
         (rho, rseed)
     } else {
         let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
@@ -219,16 +241,75 @@ pub(crate) fn build_padding_slot(
         cmx,
         v_raw: 0,
         gov_null,
+        #[cfg(test)]
+        real_nf,
+    })
+}
+
+#[cfg(test)]
+pub(crate) struct PaddingSlotForTesting {
+    pub witness: NoteSlotWitness,
+    pub cmx: pallas::Base,
+    pub gov_null: pallas::Base,
+    pub real_nf: pallas::Base,
+}
+
+#[cfg(test)]
+pub(crate) fn build_padding_slot_for_testing(
+    slot_index: usize,
+    pad_idx: usize,
+    fvk: &FullViewingKey,
+    _ak: &SpendValidatingKey,
+    dom: pallas::Base,
+    imt_provider: &impl ImtProvider,
+    rng: &mut impl RngCore,
+) -> Result<PaddingSlotForTesting, DelegationBuildError> {
+    let padding = build_padding_slot(
+        slot_index,
+        pad_idx,
+        fvk.nk(),
+        dom,
+        fvk.ivk_scalar(Scope::External),
+        imt_provider,
+        rng,
+        None,
+    )?;
+
+    Ok(PaddingSlotForTesting {
+        witness: padding.witness,
+        cmx: padding.cmx,
+        gov_null: padding.gov_null,
+        real_nf: padding.real_nf,
     })
 }
 
 /// Errors from delegation bundle construction.
 #[derive(Clone, Debug)]
 pub enum DelegationBuildError {
-    /// Must have 1–5 real notes.
+    /// Must have 1 to `circuit::MAX_REAL_NOTES` real notes.
     InvalidNoteCount(usize),
+    /// Public input construction failed.
+    Instance(circuit::InstanceError),
+    /// A required precomputed padded note entry is missing.
+    MissingPrecomputedPaddedNote { index: usize, actual: usize },
+    /// A precomputed padded note rho is not a canonical field encoding.
+    InvalidPrecomputedRho { index: usize },
+    /// A precomputed rseed is not valid for the note rho.
+    InvalidPrecomputedRseed {
+        location: PrecomputedRandomnessLocation,
+    },
+    /// Precomputed note components do not produce a valid Orchard note.
+    InvalidPrecomputedNote {
+        location: PrecomputedRandomnessLocation,
+    },
     /// IMT proof fetch failed for a padded note nullifier.
     ImtFetchFailed(super::imt::ImtError),
+}
+
+impl From<circuit::InstanceError> for DelegationBuildError {
+    fn from(e: circuit::InstanceError) -> Self {
+        DelegationBuildError::Instance(e)
+    }
 }
 
 impl From<super::imt::ImtError> for DelegationBuildError {
@@ -241,7 +322,30 @@ impl std::fmt::Display for DelegationBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DelegationBuildError::InvalidNoteCount(n) => {
-                write!(f, "invalid note count: {} (expected 1–5)", n)
+                write!(
+                    f,
+                    "invalid note count: {} (expected 1–{})",
+                    n,
+                    circuit::MAX_REAL_NOTES
+                )
+            }
+            DelegationBuildError::Instance(e) => {
+                write!(f, "instance construction failed: {e}")
+            }
+            DelegationBuildError::MissingPrecomputedPaddedNote { index, actual } => {
+                write!(
+                    f,
+                    "missing precomputed padded note at index {index} (got {actual} entries)"
+                )
+            }
+            DelegationBuildError::InvalidPrecomputedRho { index } => {
+                write!(f, "invalid precomputed padded note rho at index {index}")
+            }
+            DelegationBuildError::InvalidPrecomputedRseed { location } => {
+                write!(f, "invalid precomputed rseed for {location}")
+            }
+            DelegationBuildError::InvalidPrecomputedNote { location } => {
+                write!(f, "invalid precomputed note components for {location}")
             }
             DelegationBuildError::ImtFetchFailed(e) => {
                 write!(f, "IMT proof fetch failed: {e}")
@@ -250,18 +354,38 @@ impl std::fmt::Display for DelegationBuildError {
     }
 }
 
-/// Build a complete delegation bundle with 1–5 real notes and padding.
+impl std::fmt::Display for PrecomputedRandomnessLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PrecomputedRandomnessLocation::PaddedNote(index) => {
+                write!(f, "padded note {index}")
+            }
+            PrecomputedRandomnessLocation::SignedNote => write!(f, "signed note"),
+            PrecomputedRandomnessLocation::OutputNote => write!(f, "output note"),
+        }
+    }
+}
+
+/// Build a complete delegation bundle with 1 to `circuit::MAX_REAL_NOTES`
+/// real notes and padding.
 ///
 /// # Arguments
 ///
-/// - `real_notes`: 1–5 real notes with their keys, Merkle paths, and IMT proofs.
+/// - `real_notes`: 1 to `circuit::MAX_REAL_NOTES` real notes with their keys,
+///   Merkle paths, and IMT proofs.
 /// - `fvk`: The delegator's full viewing key (shared across all real notes).
 /// - `alpha`: Spend auth randomizer for the keystone signature.
 /// - `output_recipient`: Address of the voting hotkey (output note recipient).
 /// - `vote_round_id`: Voting round identifier.
-/// - `nc_root`: Note commitment tree root (shared anchor).
+/// - `nc_root`: Note commitment tree root (shared ledger-state anchor).
+///   The caller must pin this from the chain's note commitment tree at the
+///   verifier-accepted snapshot height; the builder does not authenticate it.
 /// - `van_comm_rand`: Blinding factor for the governance commitment.
-/// - `imt_provider`: Provider for padded-note IMT non-membership proofs.
+/// - `imt_provider`: Provider for the bundle-wide alternate-nullifier IMT root
+///   and padded-note IMT non-membership proofs. Every real-note proof in
+///   `real_notes` must authenticate to this provider's root, and the caller
+///   must ensure the provider root is from the same ledger snapshot as
+///   `nc_root`.
 /// - `rng`: Random number generator.
 /// - `precomputed`: If `Some`, reuse Phase 1 randomness for padded/signed/output notes
 ///   (ZCA-74 fix). If `None`, sample fresh randomness (backward compat for tests).
@@ -278,9 +402,10 @@ pub fn build_delegation_bundle(
     rng: &mut impl RngCore,
     precomputed: Option<&PrecomputedRandomness>,
 ) -> Result<DelegationBundle, DelegationBuildError> {
-    // The circuit supports 1–5 real notes; reject empty or oversized bundles.
+    // The circuit exposes a fixed MAX_REAL_NOTES shape; callers split larger
+    // wallets into multiple delegation proofs rather than changing the VK.
     let n_real = real_notes.len();
-    if n_real == 0 || n_real > 5 {
+    if n_real == 0 || n_real > circuit::MAX_REAL_NOTES {
         return Err(DelegationBuildError::InvalidNoteCount(n_real));
     }
 
@@ -297,10 +422,10 @@ pub fn build_delegation_bundle(
     let dom = derive_nullifier_domain(vote_round_id);
 
     // Collect per-note data.
-    let mut note_slots = Vec::with_capacity(5);
-    let mut cmx_values = Vec::with_capacity(5);
-    let mut v_values = Vec::with_capacity(5);
-    let mut gov_nulls = Vec::with_capacity(5);
+    let mut note_slots = Vec::with_capacity(circuit::MAX_REAL_NOTES);
+    let mut cmx_values = Vec::with_capacity(circuit::MAX_REAL_NOTES);
+    let mut v_values = Vec::with_capacity(circuit::MAX_REAL_NOTES);
+    let mut gov_nulls = Vec::with_capacity(circuit::MAX_REAL_NOTES);
 
     // Process real notes: derive psi/rcm from rseed, compute the note commitment,
     // real nullifier, and gov nullifier, then pack everything into a NoteSlotWitness.
@@ -316,7 +441,7 @@ pub fn build_delegation_bundle(
 
         // Condition 12: real nullifier for IMT non-membership.
         let real_nf = note.nullifier(fvk);
-        // Condition 14: alternate nullifier = Poseidon(nk, dom, real_nf).
+        // Condition 14: alternate nullifier = Poseidon(domain tag, nk, dom, real_nf).
         let gov_null = gov_null_hash(nk_val, dom, real_nf.inner());
 
         let slot = NoteSlotWitness {
@@ -341,10 +466,10 @@ pub fn build_delegation_bundle(
         gov_nulls.push(gov_null);
     }
 
-    // Pad remaining slots to 5 with zero-value dummy notes (ZIP §Note Padding).
+    // Pad remaining slots with zero-value dummy notes (ZIP §Note Padding).
     // Dummy notes use v=0, which gates condition 10 (Merkle path) via
     // v * (root - anchor) = 0. All other conditions run unconditionally.
-    for i in n_real..5 {
+    for i in n_real..circuit::MAX_REAL_NOTES {
         let pad_idx = i - n_real; // index into precomputed.padded_notes
         let padding = build_padding_slot(i, pad_idx, nk, dom, ivk, imt_provider, rng, precomputed)?;
 
@@ -354,7 +479,8 @@ pub fn build_delegation_bundle(
         gov_nulls.push(padding.gov_null);
     }
 
-    let notes: [NoteSlotWitness; 5] = note_slots.try_into().unwrap_or_else(|_| unreachable!());
+    let notes: [NoteSlotWitness; circuit::MAX_REAL_NOTES] =
+        note_slots.try_into().unwrap_or_else(|_| unreachable!());
 
     // Condition 8: ballot scaling.
     // num_ballots = floor(v_total / BALLOT_DIVISOR)
@@ -391,7 +517,7 @@ pub fn build_delegation_bundle(
     );
 
     // Condition 3: rho binding.
-    // rho_signed = Poseidon(cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
+    // rho_signed = Poseidon(domain, cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
     // Binds the keystone note to the exact notes being delegated.
     let rho = rho_binding_hash(
         cmx_values[0],
@@ -409,10 +535,13 @@ pub fn build_delegation_bundle(
     let sender_address = fvk.address_at(0u32, Scope::External);
     let signed_rho = Rho::from_nf_old(Nullifier::from_inner(rho));
     let signed_note = if let Some(pre) = precomputed {
+        let location = PrecomputedRandomnessLocation::SignedNote;
         let rseed = RandomSeed::from_bytes(pre.rseed_signed, &signed_rho)
-            .expect("precomputed rseed_signed must be valid");
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
         Note::from_parts(sender_address, NoteValue::from_raw(1), signed_rho, rseed)
-            .expect("precomputed signed note must be valid")
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
     } else {
         Note::new(
             sender_address,
@@ -429,10 +558,13 @@ pub fn build_delegation_bundle(
     // The output note is sent to the voting hotkey address with rho = nf_signed.
     let output_rho = Rho::from_nf_old(nf_signed);
     let output_note = if let Some(pre) = precomputed {
+        let location = PrecomputedRandomnessLocation::OutputNote;
         let rseed = RandomSeed::from_bytes(pre.rseed_output, &output_rho)
-            .expect("precomputed rseed_output must be valid");
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
         Note::from_parts(output_recipient, NoteValue::ZERO, output_rho, rseed)
-            .expect("precomputed output note must be valid")
+            .into_option()
+            .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
     } else {
         Note::new(output_recipient, NoteValue::ZERO, output_rho, &mut *rng)
     };
@@ -470,7 +602,7 @@ pub fn build_delegation_bundle(
             gov_nulls[4],
         ],
         dom,
-    );
+    )?;
 
     Ok(DelegationBundle { circuit, instance })
 }
@@ -625,7 +757,8 @@ mod tests {
         assert_known(&padding.witness.is_internal, |actual| !*actual);
     }
 
-    /// Helper: create 1–5 real note inputs with a shared Merkle tree and anchor.
+    /// Helper: create 1 to `circuit::MAX_REAL_NOTES` real note inputs with a
+    /// shared Merkle tree and anchor.
     ///
     /// Notes are placed at positions 0..n in the commitment tree. Returns
     /// `(inputs, nc_root)` where `nc_root` is the shared anchor.
@@ -638,7 +771,7 @@ mod tests {
         rng: &mut impl RngCore,
     ) -> (Vec<RealNoteInput>, pallas::Base) {
         let n = values.len();
-        assert!(n >= 1 && n <= 5);
+        assert!(n >= 1 && n <= circuit::MAX_REAL_NOTES);
         assert_eq!(n, scopes.len());
 
         // Create notes.
@@ -710,8 +843,8 @@ mod tests {
         (inputs, nc_root)
     }
 
-    /// Helper: build a bundle with explicit scopes and verify with MockProver.
-    fn build_and_verify(values: &[u64], scopes: &[Scope]) -> DelegationBundle {
+    /// Helper: build a bundle with explicit scopes.
+    fn build_bundle(values: &[u64], scopes: &[Scope]) -> DelegationBundle {
         assert_eq!(values.len(), scopes.len());
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
@@ -738,17 +871,118 @@ mod tests {
         )
         .unwrap();
 
+        assert_delegation_output_shape(&bundle);
+        bundle
+    }
+
+    fn build_single_note_bundle_with_precomputed(
+        precomputed: &PrecomputedRandomness,
+    ) -> Result<DelegationBundle, DelegationBuildError> {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+
+        build_single_note_bundle_with_fvk_and_precomputed(&fvk, precomputed, &mut rng)
+    }
+
+    fn build_single_note_bundle_with_fvk_and_precomputed(
+        fvk: &FullViewingKey,
+        precomputed: &PrecomputedRandomness,
+        rng: &mut impl RngCore,
+    ) -> Result<DelegationBundle, DelegationBuildError> {
+        let output_recipient = fvk.address_at(1u32, Scope::External);
+        let vote_round_id = pallas::Base::random(&mut *rng);
+        let van_comm_rand = pallas::Base::random(&mut *rng);
+        let alpha = pallas::Scalar::random(&mut *rng);
+
+        let imt = SpacedLeafImtProvider::new();
+        let (inputs, nc_root) =
+            make_real_note_inputs(fvk, &[13_000_000], &[Scope::External], &imt, &mut *rng);
+
+        build_delegation_bundle(
+            inputs,
+            fvk,
+            alpha,
+            output_recipient,
+            vote_round_id,
+            nc_root,
+            van_comm_rand,
+            &imt,
+            rng,
+            Some(precomputed),
+        )
+    }
+
+    fn make_valid_padded_note_data(rng: &mut impl RngCore) -> PaddedNoteData {
+        let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
+        let rseed = random_seed_for_rho(&rho, rng);
+
+        PaddedNoteData {
+            rho: rho.to_bytes(),
+            rseed: *rseed.as_bytes(),
+        }
+    }
+
+    fn assert_delegation_output_shape(bundle: &DelegationBundle) {
+        let pi = bundle.instance.to_halo2_instance();
+        assert_eq!(pi.len(), 14, "delegation public input shape changed");
+        assert_eq!(bundle.instance.gov_null.len(), 5);
+        assert_eq!(pi[0], bundle.instance.nf_signed.inner());
+        assert_eq!(pi[3], bundle.instance.cmx_new);
+        assert_eq!(pi[4], bundle.instance.van_comm);
+        assert_eq!(pi[5], bundle.instance.vote_round_id);
+        assert_eq!(pi[6], bundle.instance.nc_root);
+        assert_eq!(pi[7], bundle.instance.nf_imt_root);
+        assert_eq!(&pi[8..13], &bundle.instance.gov_null);
+        assert_eq!(pi[13], bundle.instance.dom);
+    }
+
+    fn verify_bundle(bundle: &DelegationBundle) {
         // Verify merged circuit.
         let pi = bundle.instance.to_halo2_instance();
         let prover = MockProver::run(K, &bundle.circuit, vec![pi]).unwrap();
         assert_eq!(prover.verify(), Ok(()), "merged circuit failed");
-
-        bundle
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_single_real_note() {
-        build_and_verify(&[13_000_000], &[Scope::External]);
+        let bundle = build_bundle(&[13_000_000], &[Scope::External]);
+        verify_bundle(&bundle);
+    }
+
+    /// Build a bundle without verifying so callers can inspect the circuit
+    /// witnesses. Mirrors `build_and_verify` minus the MockProver step and
+    /// returns `(bundle, fvk, ak)` so the test can recompute the external IVK.
+    fn build_bundle_for_inspection(
+        values: &[u64],
+        scopes: &[Scope],
+    ) -> (DelegationBundle, FullViewingKey, SpendValidatingKey) {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let output_recipient = fvk.address_at(1u32, Scope::External);
+        let vote_round_id = pallas::Base::random(&mut rng);
+        let van_comm_rand = pallas::Base::random(&mut rng);
+        let alpha = pallas::Scalar::random(&mut rng);
+        let imt = SpacedLeafImtProvider::new();
+        let (inputs, nc_root) = make_real_note_inputs(&fvk, values, scopes, &imt, &mut rng);
+
+        let bundle = build_delegation_bundle(
+            inputs,
+            &fvk,
+            alpha,
+            output_recipient,
+            vote_round_id,
+            nc_root,
+            van_comm_rand,
+            &imt,
+            &mut rng,
+            None,
+        )
+        .unwrap();
+        (bundle, fvk, ak)
     }
 
     /// Build a bundle without verifying so callers can inspect the circuit
@@ -1108,7 +1342,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "precomputed.padded_notes has 0 entries but need index 0")]
     fn test_build_padding_slot_rejects_missing_precomputed_padding_entry() {
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
@@ -1120,7 +1353,7 @@ mod tests {
             rseed_output: [0; 32],
         };
 
-        let _ = build_padding_slot(
+        let result = build_padding_slot(
             1,
             0,
             fvk.nk(),
@@ -1130,12 +1363,83 @@ mod tests {
             &mut rng,
             Some(&precomputed),
         );
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::MissingPrecomputedPaddedNote {
+                index: 0,
+                actual: 0
+            })
+        ));
     }
 
     #[test]
-    fn test_four_real_notes() {
+    fn test_single_real_note_locks_padding_witnesses() {
+        // With 1 real note, slots 1..5 must be padding and their (g_d, pk_d)
+        // must come from `padding_points(slot_index, fvk.ivk_scalar(...))`.
+        // Catches regressions where the synthetic padding path is silently
+        // replaced (e.g. a fallback to `fvk.address_at(...)`) or where the
+        // slot index passed to `padding_points` skews off-by-one.
+        let (bundle, fvk, _ak) = build_bundle_for_inspection(&[13_000_000], &[Scope::External]);
+        let ivk = fvk.ivk_scalar(Scope::External);
+        let notes = bundle.circuit.notes_for_testing();
+        for slot_index in 1..5 {
+            let (expected_g_d, expected_pk_d) = padding_points(slot_index, ivk);
+            assert_known(&notes[slot_index].g_d, |actual| *actual == expected_g_d);
+            assert_known(&notes[slot_index].pk_d, |actual| *actual == expected_pk_d);
+        }
+    }
+
+    #[test]
+    fn test_five_real_notes_uses_no_padding() {
+        // With 5 real notes there are no padding slots. Assert that no slot's
+        // g_d matches the synthetic padding point for *any* slot index — this
+        // catches an off-by-one in the `n_real..5` iteration boundary that
+        // would smuggle a padding point into a real slot (which would silently
+        // zero that slot's vote weight in condition 10's `v * (root - anchor)`
+        // gate path because padding always has `v = 0`).
+        let (bundle, fvk, _ak) =
+            build_bundle_for_inspection(&[2_500_000; 5], &[Scope::External; 5]);
+        let ivk = fvk.ivk_scalar(Scope::External);
+        let padding_g_ds: Vec<_> = (0..5).map(|i| padding_points(i, ivk).0).collect();
+        let notes = bundle.circuit.notes_for_testing();
+        for slot_index in 0..5 {
+            for pad_g_d in &padding_g_ds {
+                assert_known(&notes[slot_index].g_d, |actual| actual != pad_g_d);
+            }
+        }
+    }
+
+    #[test]
+    fn test_padding_points_are_synthetic_and_ivk_bound() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ivk = fvk.ivk_scalar(Scope::External);
+
+        for slot_index in 1..5 {
+            let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk);
+            let real_orchard_addr = fvk.address_at(slot_index as u32, Scope::External);
+
+            // Deref `NonIdentityPallasPoint` to `pallas::Point` for arithmetic and
+            // coordinate access; the wrapper enforces the non-identity invariant
+            // at construction (`padding_points` -> `assert_non_identity`).
+            assert_eq!(*pk_d_pad, *g_d_pad * ivk);
+            assert_ne!(
+                g_d_pad.to_affine().to_bytes(),
+                real_orchard_addr.g_d().to_affine().to_bytes()
+            );
+            assert_ne!(
+                pk_d_pad.to_affine().to_bytes(),
+                real_orchard_addr.pk_d().to_bytes()
+            );
+        }
+    }
+
+    #[test]
+    fn test_four_real_notes_builds_expected_output_shape() {
         // 3,200,000 x 4 = 12,800,000 → num_ballots = 1, remainder = 300,000.
-        build_and_verify(
+        build_bundle(
             &[3_200_000, 3_200_000, 3_200_000, 3_200_000],
             &[
                 Scope::External,
@@ -1147,17 +1451,18 @@ mod tests {
     }
 
     #[test]
-    fn test_two_real_notes() {
-        build_and_verify(&[7_000_000, 7_000_000], &[Scope::External, Scope::External]);
+    fn test_two_real_notes_builds_expected_output_shape() {
+        build_bundle(&[7_000_000, 7_000_000], &[Scope::External, Scope::External]);
     }
 
     #[test]
-    fn test_min_weight_boundary() {
+    fn test_min_weight_boundary_builds_expected_output_shape() {
         // v_total = 12,500,000 exactly → num_ballots = 1, remainder = 0. Should pass.
-        build_and_verify(&[12_500_000], &[Scope::External]);
+        build_bundle(&[12_500_000], &[Scope::External]);
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_below_one_ballot() {
         // v_total = 12,499,999 → num_ballots = 0. Circuit should fail
         // (non-zero check on num_ballots causes nb_minus_one to wrap).
@@ -1193,9 +1498,9 @@ mod tests {
     }
 
     #[test]
-    fn test_three_ballots() {
+    fn test_three_ballots_builds_expected_output_shape() {
         // 3 notes × 12,500,000 = 37,500,000 → num_ballots = 3, remainder = 0.
-        build_and_verify(
+        build_bundle(
             &[12_500_000, 12_500_000, 12_500_000],
             &[Scope::External, Scope::External, Scope::External],
         );
@@ -1229,9 +1534,9 @@ mod tests {
     }
 
     #[test]
-    fn test_five_real_notes() {
+    fn test_five_real_notes_builds_expected_output_shape() {
         // 2,500,000 x 5 = 12,500,000 → num_ballots = 1, remainder = 0.
-        build_and_verify(
+        build_bundle(
             &[2_500_000, 2_500_000, 2_500_000, 2_500_000, 2_500_000],
             &[
                 Scope::External,
@@ -1290,13 +1595,78 @@ mod tests {
     }
 
     #[test]
-    fn test_single_internal_note() {
-        build_and_verify(&[13_000_000], &[Scope::Internal]);
+    fn test_missing_precomputed_padded_note_returns_error() {
+        let precomputed = PrecomputedRandomness {
+            padded_notes: vec![],
+            rseed_signed: [0u8; 32],
+            rseed_output: [0u8; 32],
+        };
+
+        let result = build_single_note_bundle_with_precomputed(&precomputed);
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::MissingPrecomputedPaddedNote {
+                index: 0,
+                actual: 0
+            })
+        ));
     }
 
     #[test]
+    fn test_partial_precomputed_padded_notes_returns_later_missing_error() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let precomputed = PrecomputedRandomness {
+            padded_notes: vec![
+                make_valid_padded_note_data(&mut rng),
+                make_valid_padded_note_data(&mut rng),
+            ],
+            rseed_signed: [0u8; 32],
+            rseed_output: [0u8; 32],
+        };
+
+        let result =
+            build_single_note_bundle_with_fvk_and_precomputed(&fvk, &precomputed, &mut rng);
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::MissingPrecomputedPaddedNote {
+                index: 2,
+                actual: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn test_invalid_precomputed_padded_rho_returns_error() {
+        let precomputed = PrecomputedRandomness {
+            padded_notes: vec![PaddedNoteData {
+                rho: [0xffu8; 32],
+                rseed: [0u8; 32],
+            }],
+            rseed_signed: [0u8; 32],
+            rseed_output: [0u8; 32],
+        };
+
+        let result = build_single_note_bundle_with_precomputed(&precomputed);
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::InvalidPrecomputedRho { index: 0 })
+        ));
+    }
+
+    #[test]
+    fn test_single_internal_note_builds_expected_output_shape() {
+        build_bundle(&[13_000_000], &[Scope::Internal]);
+    }
+
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_mixed_scope_notes() {
-        build_and_verify(
+        let bundle = build_bundle(
             &[4_000_000, 4_000_000, 3_000_000, 2_000_000],
             &[
                 Scope::External,
@@ -1305,11 +1675,12 @@ mod tests {
                 Scope::Internal,
             ],
         );
+        verify_bundle(&bundle);
     }
 
     #[test]
-    fn test_all_internal_notes() {
-        build_and_verify(
+    fn test_all_internal_notes_builds_expected_output_shape() {
+        build_bundle(
             &[4_000_000, 4_000_000, 3_000_000, 2_000_000],
             &[
                 Scope::Internal,

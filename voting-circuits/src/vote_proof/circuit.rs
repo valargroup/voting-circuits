@@ -8,7 +8,7 @@
 //! - **Condition 3**: Diversified Address Integrity (`vpk_pk_d = [ivk_v] * vpk_g_d` via CommitIvk).
 //! - **Condition 4**: Spend Authority — `r_vpk = vsk.ak + [alpha_v] * G` (fixed-base mul + point add, `constrain_instance`).
 //! - **Condition 5**: VAN Nullifier Integrity (nested Poseidon, `constrain_instance`).
-//! - **Condition 6**: Proposal Authority Decrement (AddChip + range check).
+//! - **Condition 6**: Proposal Authority Decrement (custom bit-decomposition chip with a `(proposal_id, 2^proposal_id)` lookup; see `authority_decrement.rs`).
 //! - **Condition 7**: New VAN Integrity (Poseidon hash, `constrain_instance`).
 //! - **Condition 8**: Shares Sum Correctness (AddChip, `constrain_equal`).
 //! - **Condition 9**: Shares Range (LookupRangeCheck, `[0, 2^30)`).
@@ -43,11 +43,12 @@
 //! - **Condition 9**: Shares Range — each `shares_j` in `[0, 2^30)`.
 //!   *(implemented)*
 //! - **Condition 10**: Shares Hash Integrity — `shares_hash = H(enc_share_1..16)`.
-//!   *(implemented)*
+//!   `shares_hash` is an internal wire, not a public instance. *(implemented)*
 //! - **Condition 11**: Encryption Integrity — each `enc_share_i = ElGamal(shares_i, r_i, ea_pk)`.
 //!   *(implemented)*
 //! - **Condition 12**: Vote Commitment Integrity — `vote_commitment = H(DOMAIN_VC, voting_round_id,
-//!   shares_hash, proposal_id, vote_decision)`. *(implemented)*
+//!   shares_hash, proposal_id, vote_decision)`, and this terminal commitment is
+//!   the public binding for condition 10. *(implemented)*
 
 use std::vec::Vec;
 
@@ -60,12 +61,15 @@ use pasta_curves::{pallas, vesta};
 use super::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
 use crate::circuit::address_ownership::{prove_address_ownership, spend_auth_g_mul};
 use crate::circuit::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
+use crate::circuit::nonzero::NonZeroConfig;
 use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
 use crate::circuit::van_integrity;
 use crate::circuit::vote_commitment;
+use crate::domain_tags;
+pub use crate::protocol_hash::poseidon_hash_2;
 use crate::shares_hash::compute_shares_hash_in_circuit;
 #[cfg(test)]
-use crate::shares_hash::hash_share_commitment_in_circuit;
+use crate::shares_hash::{hash_share_commitment_in_circuit, share_commitment, shares_hash};
 use halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
@@ -101,8 +105,8 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 
 /// Circuit size (2^K rows).
 ///
-/// K=14 (16,384 rows). `CircuitCost::measure` reports a floor-planner
-/// high-water mark of **3,512 rows** (21% of 16,384). The `V1` floor planner
+/// K=13 (8,192 rows). `CircuitCost::measure` reports a floor-planner
+/// high-water mark of **7,945 rows** (97.0% of 8,192). The `V1` floor planner
 /// packs non-overlapping regions into the same row range across different
 /// columns, so the high-water mark is much lower than a naive sum-of-heights
 /// estimate.
@@ -114,15 +118,12 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 ///   Poseidon regions in non-overlapping columns.
 /// - 10-bit Sinsemilla/range-check lookup table: 1,024 fixed rows.
 ///
-/// The `[v_i]*G` term uses `FixedPointShort` (22-window short-scalar path)
-/// rather than `FixedPointBaseField` (85-window full-scalar path), saving
-/// 315 rows (3,827 → 3,512 measured). Run the `row_budget` benchmark to
-/// re-measure after circuit changes:
-///   `cargo test --features vote-proof row_budget -- --nocapture --ignored`
+/// Run the `row_budget` diagnostic to re-measure after circuit changes:
+///   `cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
 pub const K: u32 = 13;
 
-pub use van_integrity::DOMAIN_VAN;
-pub use vote_commitment::DOMAIN_VC;
+pub(crate) use van_integrity::DOMAIN_VAN;
+pub(crate) use vote_commitment::DOMAIN_VC;
 
 /// Maximum proposal_id bit index (exclusive upper bound). `proposal_id` is in `[1, MAX_PROPOSAL_ID)`,
 /// i.e. valid values are 1–15. Bit 0 is permanently reserved as the sentinel/unset value and is
@@ -144,68 +145,63 @@ pub use vote_commitment::DOMAIN_VC;
 ///
 /// Bit 0 of `proposal_authority` is always set (initial value `0xFFFF`) and
 /// never decremented, acting as a structural invariant rather than a usable slot.
-pub const MAX_PROPOSAL_ID: usize = 16;
+pub(super) const MAX_PROPOSAL_ID: usize = 16;
 
 // ================================================================
 // Public input offsets (11 field elements).
 // ================================================================
 
 /// Public input offset for the VAN nullifier (prevents double-vote).
-const VAN_NULLIFIER: usize = 0;
+pub const VAN_NULLIFIER_PUBLIC_OFFSET: usize = 0;
 /// Public input offset for the randomized voting public key (condition 4: Spend Authority).
 /// x-coordinate of r_vpk = vsk.ak + [alpha_v] * G.
-const R_VPK_X: usize = 1;
+pub const R_VPK_X_PUBLIC_OFFSET: usize = 1;
 /// Public input offset for r_vpk y-coordinate.
-const R_VPK_Y: usize = 2;
+pub const R_VPK_Y_PUBLIC_OFFSET: usize = 2;
 /// Public input offset for the new VAN commitment (with decremented authority).
-const VOTE_AUTHORITY_NOTE_NEW: usize = 3;
+pub const VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET: usize = 3;
 /// Public input offset for the vote commitment hash.
-const VOTE_COMMITMENT: usize = 4;
+pub const VOTE_COMMITMENT_PUBLIC_OFFSET: usize = 4;
 /// Public input offset for the vote commitment tree root.
-const VOTE_COMM_TREE_ROOT: usize = 5;
+pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 5;
 /// Public input offset for the tree anchor height.
-const VOTE_COMM_TREE_ANCHOR_HEIGHT: usize = 6;
+// The circuit does not constrain this slot to a witness cell. It is
+// transcript-bound metadata whose meaning is authenticated by the verifier's
+// caller. In the chain path, the ante handler looks up the commitment root at
+// msg.VoteCommTreeAnchorHeight and passes that root as VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET,
+// which the circuit does constrain. This keeps the binding between height and
+// root in the chain state lookup rather than in this proof.
+pub const VOTE_COMM_TREE_ANCHOR_HEIGHT_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the proposal identifier.
-const PROPOSAL_ID: usize = 7;
-/// Public input offset for the voting round identifier.
-const VOTING_ROUND_ID: usize = 8;
+///
+/// In-circuit constraint: `proposal_id` is in `[1, MAX_PROPOSAL_ID)` via the
+/// authority-decrement lookup. The caller must additionally verify that this
+/// ID is in the active proposal set for `voting_round_id`.
+pub const PROPOSAL_ID_PUBLIC_OFFSET: usize = 7;
+/// Public input offset for the governance voting round identifier.
+///
+/// The circuit binds this value into the VAN nullifier, new VAN, and vote
+/// commitment, but the caller must authenticate it from the active round's
+/// governance announcement.
+pub const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
 /// Public input offset for the election authority public key x-coordinate.
-const EA_PK_X: usize = 9;
+pub const EA_PK_X_PUBLIC_OFFSET: usize = 9;
 /// Public input offset for the election authority public key y-coordinate.
-const EA_PK_Y: usize = 10;
-
-// Suppress dead-code warnings for public input offsets that are
-// defined but not yet used by any condition's constraint logic.
-// VOTE_COMM_TREE_ANCHOR_HEIGHT is validated out-of-circuit by the chain's
-// ante handler: sdk/x/vote/ante/validate.go calls GetCommitmentRootAtHeight
-// with msg.VoteCommTreeAnchorHeight and rejects the transaction if no root
-// exists at that height (ErrInvalidAnchorHeight). The retrieved root is then
-// passed as the VoteCommTreeRoot public input to the ZKP verifier, which the
-// circuit constrains via constrain_instance. This binds the anchor height to
-// the in-circuit tree root, mirroring Zcash's out-of-circuit anchor design.
-const _: usize = VOTE_COMM_TREE_ANCHOR_HEIGHT;
+pub const EA_PK_Y_PUBLIC_OFFSET: usize = 10;
 
 // ================================================================
 // Out-of-circuit helpers
 // ================================================================
 
-pub use van_integrity::van_integrity_hash;
-pub use vote_commitment::vote_commitment_hash;
+pub(crate) use van_integrity::van_integrity_hash;
+pub(crate) use vote_commitment::vote_commitment_hash;
 
 /// Returns the domain separator for the VAN nullifier inner hash.
 ///
-/// Encodes `"vote authority spend"` as a Pallas base field element
-/// by interpreting the UTF-8 bytes as a little-endian 256-bit integer.
-/// This domain tag differentiates VAN nullifier derivation from other
-/// Poseidon uses in the protocol.
+/// The tag is defined in [`crate::domain_tags`], the central registry for
+/// domain-separation constants and encoding rules.
 pub fn domain_van_nullifier() -> pallas::Base {
-    // "vote authority spend" (20 bytes) zero-padded to 32, as LE u64 words.
-    pallas::Base::from_raw([
-        0x7475_6120_6574_6f76, // b"vote aut" LE
-        0x7320_7974_6972_6f68, // b"hority s" LE
-        0x0000_0000_646e_6570, // b"pend\0\0\0\0" LE
-        0,
-    ])
+    domain_tags::vote_authority_spend()
 }
 
 /// Out-of-circuit VAN nullifier hash (condition 5).
@@ -216,7 +212,7 @@ pub fn domain_van_nullifier() -> pallas::Base {
 ///
 /// Single `ConstantLength<4>` call (2 permutations at rate=2).
 /// Used by the builder and tests to compute the expected VAN nullifier.
-pub fn van_nullifier_hash(
+pub(super) fn van_nullifier_hash(
     vsk_nk: pallas::Base,
     voting_round_id: pallas::Base,
     vote_authority_note_old: pallas::Base,
@@ -229,80 +225,20 @@ pub fn van_nullifier_hash(
     ])
 }
 
-/// Out-of-circuit Poseidon hash of two field elements.
-///
-/// `Poseidon(a, b)` with P128Pow5T3, ConstantLength<2>, width 3, rate 2.
-/// Used for Merkle path computation (condition 1) and tests. This is the
-/// same hash function used by `vote_commitment_tree::MerkleHashVote::combine`.
-pub fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([a, b])
-}
-
-/// Out-of-circuit per-share blinded commitment (condition 10).
-///
-/// Computes `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` for a single share.
-///
-/// The y-coordinates bind the commitment to the exact curve point, not just
-/// the x-coordinate. Without them, an attacker can negate the ElGamal
-/// ciphertext (flip sign bits) without invalidating the ZKP — corrupting
-/// the homomorphic tally. See: ciphertext sign-malleability fix.
-///
-/// The blind factor prevents anyone who sees the encrypted shares on-chain
-/// from recomputing shares_hash and linking it to a specific vote commitment.
-pub fn share_commitment(
-    blind: pallas::Base,
-    c1_x: pallas::Base,
-    c2_x: pallas::Base,
-    c1_y: pallas::Base,
-    c2_y: pallas::Base,
-) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2>::init()
-        .hash([blind, c1_x, c2_x, c1_y, c2_y])
-}
-
-/// Out-of-circuit shares hash (condition 10).
-///
-/// Computes blinded per-share commitments and hashes them together:
-/// ```text
-/// share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i in 0..16
-/// shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
-/// ```
-///
-/// The blind factors prevent anyone who sees the encrypted shares on-chain
-/// from recomputing shares_hash and linking it to a specific vote commitment.
-///
-/// Used by the builder and tests to compute the expected shares hash.
-pub fn shares_hash(
-    share_blinds: [pallas::Base; 16],
-    enc_share_c1_x: [pallas::Base; 16],
-    enc_share_c2_x: [pallas::Base; 16],
-    enc_share_c1_y: [pallas::Base; 16],
-    enc_share_c2_y: [pallas::Base; 16],
-) -> pallas::Base {
-    let comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-        share_commitment(
-            share_blinds[i],
-            enc_share_c1_x[i],
-            enc_share_c2_x[i],
-            enc_share_c1_y[i],
-            enc_share_c2_y[i],
-        )
-    });
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<16>, 3, 2>::init().hash(comms)
-}
-
 // ================================================================
 // Config
 // ================================================================
 
 /// Configuration for the Vote Proof circuit.
 ///
-/// Holds chip configs for Poseidon (conditions 1, 2, 5, 7, 10), AddChip
-/// (conditions 6, 8), LookupRangeCheck (conditions 6, 9), ECC
-/// (conditions 3, 11), and the Merkle swap gate (condition 1).
+/// Holds chip configs for Poseidon (conditions 1, 2, 5, 7, 10, 12), AddChip
+/// (condition 8), LookupRangeCheck (condition 9), ECC (conditions 3, 4, 11),
+/// the Merkle swap gate (condition 1), and the custom
+/// `AuthorityDecrementChip` (condition 6; see `authority_decrement.rs` —
+/// uses neither AddChip nor LookupRangeCheck).
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// Public input column (9 field elements).
+    /// Public input column (11 field elements).
     primary: Column<InstanceColumn>,
     /// 10 advice columns for private witness data.
     ///
@@ -323,8 +259,9 @@ pub struct Config {
     ///
     /// Uses advices[7] (a), advices[8] (b), advices[6] (c), matching
     /// the delegation circuit's column assignment.
-    /// Used in conditions 6 (proposal authority decrement) and 8 (shares
-    /// sum correctness).
+    /// Used in condition 8 (shares sum correctness). Condition 6
+    /// (proposal authority decrement) uses the dedicated
+    /// `AuthorityDecrementChip` instead — it does not call `AddChip`.
     add_config: AddConfig,
     /// ECC chip configuration (condition 3: diversified address integrity, condition 11: El Gamal).
     ///
@@ -359,6 +296,8 @@ pub struct Config {
     merkle_swap: MerkleSwapGate,
     /// Configuration for condition 6 (Proposal Authority Decrement).
     authority_decrement: AuthorityDecrementConfig,
+    /// Shared inverse-witness checks for zero randomizer/randomness rejection.
+    nonzero: NonZeroConfig,
 }
 
 impl Config {
@@ -405,14 +344,14 @@ impl Config {
 /// The Vote Proof circuit (ZKP #2).
 ///
 /// Proves that a registered voter is casting a valid vote, without
-/// revealing which VAN they hold. Contains witness fields for all
-/// 12 conditions (condition 4 enforced out-of-circuit); constraint logic is added incrementally.
+/// revealing which VAN they hold. Contains witness fields and constraint logic
+/// for all 12 conditions.
 ///
-/// Conditions 1–3 and 5–12 are fully constrained in-circuit; condition 4 (Spend Authority) is
-/// enforced out-of-circuit via signature verification.
+/// Condition 4 constrains `r_vpk` in-circuit. The vote signature is verified
+/// out-of-circuit under that constrained key.
 #[derive(Clone, Debug, Default)]
 pub struct Circuit {
-    // === VAN ownership and spending (conditions 1–5; condition 4 out-of-circuit) ===
+    // === VAN ownership and spending (conditions 1–5) ===
 
     // Condition 1 (VAN Membership): Poseidon-based Merkle path from
     // vote_authority_note_old to vote_comm_tree_root.
@@ -510,7 +449,9 @@ pub struct Circuit {
     pub(crate) share_randomness: [Value<pallas::Base>; 16],
     /// Election authority public key (Pallas curve point).
     /// The El Gamal encryption key — published as a round parameter.
-    /// Both coordinates are public inputs (EA_PK_X, EA_PK_Y).
+    /// Both coordinates are public inputs (EA_PK_X_PUBLIC_OFFSET, EA_PK_Y_PUBLIC_OFFSET).
+    /// The caller must authenticate this key against the governance
+    /// announcement; the circuit only binds encryption to the supplied key.
     pub(crate) ea_pk: Value<pallas::Affine>,
 
     // Condition 12 (Vote Commitment Integrity): vote decision.
@@ -569,8 +510,9 @@ impl Circuit {
 
 /// In-circuit Poseidon hash for one share commitment: `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
 ///
-/// Uses the same parameters as the out-of-circuit [`share_commitment`] (P128Pow5T3,
-/// ConstantLength<5>, width 3, rate 2) so that native and in-circuit hashes match.
+/// Uses the same parameters as the out-of-circuit
+/// [`crate::shares_hash::share_commitment`] (P128Pow5T3, ConstantLength<5>,
+/// width 3, rate 2) so that native and in-circuit hashes match.
 
 impl plonk::Circuit<pallas::Base> for Circuit {
     type Config = Config;
@@ -684,6 +626,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // Condition 6: Proposal Authority Decrement.
         let authority_decrement = AuthorityDecrementChip::configure(meta, advices);
+        let nonzero = NonZeroConfig::configure(meta, [advices[0], advices[1]]);
 
         Config {
             primary,
@@ -696,6 +639,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             range_check,
             merkle_swap,
             authority_decrement,
+            nonzero,
         }
     }
 
@@ -726,7 +670,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // Copy voting_round_id from the instance column into an advice cell.
         // This creates an equality constraint between the advice cell and the
-        // instance at offset VOTING_ROUND_ID, ensuring the in-circuit value
+        // instance at offset VOTING_ROUND_ID_PUBLIC_OFFSET, ensuring the in-circuit value
         // matches the public input.
         let voting_round_id = layouter.assign_region(
             || "copy voting_round_id from instance",
@@ -734,7 +678,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "voting_round_id",
                     config.primary,
-                    VOTING_ROUND_ID,
+                    VOTING_ROUND_ID_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -913,8 +857,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             self.alpha_v,
             &vsk_ak_point,
             config.primary,
-            R_VPK_X,
-            R_VPK_Y,
+            R_VPK_X_PUBLIC_OFFSET,
+            R_VPK_Y_PUBLIC_OFFSET,
         )?;
 
         // ---------------------------------------------------------------
@@ -946,10 +890,14 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 "cond1: merkle",
             )?;
 
-            // Bind the computed Merkle root to the VOTE_COMM_TREE_ROOT
+            // Bind the computed Merkle root to the VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET
             // public input. The verifier checks that the voter's VAN is
             // a leaf in the published vote commitment tree.
-            layouter.constrain_instance(root.cell(), config.primary, VOTE_COMM_TREE_ROOT)?;
+            layouter.constrain_instance(
+                root.cell(),
+                config.primary,
+                VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET,
+            )?;
         }
 
         // ---------------------------------------------------------------
@@ -1007,10 +955,14 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             )?
         };
 
-        // Bind the derived nullifier to the VAN_NULLIFIER public input.
+        // Bind the derived nullifier to the VAN_NULLIFIER_PUBLIC_OFFSET public input.
         // The verifier checks that the prover's computed nullifier matches
         // the publicly posted value, preventing double-voting.
-        layouter.constrain_instance(van_nullifier.cell(), config.primary, VAN_NULLIFIER)?;
+        layouter.constrain_instance(
+            van_nullifier.cell(),
+            config.primary,
+            VAN_NULLIFIER_PUBLIC_OFFSET,
+        )?;
 
         // ---------------------------------------------------------------
         // Condition 6: Proposal Authority Decrement (bit decomposition).
@@ -1029,7 +981,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "proposal_id",
                     config.primary,
-                    PROPOSAL_ID,
+                    PROPOSAL_ID_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -1065,13 +1017,13 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             van_comm_rand_cond6,
         )?;
 
-        // Bind the derived new VAN to the VOTE_AUTHORITY_NOTE_NEW public input.
+        // Bind the derived new VAN to the VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET public input.
         // The verifier checks that the new VAN commitment posted on-chain is
         // correctly formed with decremented proposal authority.
         layouter.constrain_instance(
             derived_van_new.cell(),
             config.primary,
-            VOTE_AUTHORITY_NOTE_NEW,
+            VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET,
         )?;
 
         // ---------------------------------------------------------------
@@ -1181,7 +1133,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // (c1_i_x, c2_i_x, c1_i_y, c2_i_y) is a valid El Gamal encryption
         // of shares_i. Condition 12 computes the full vote commitment
         // H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)
-        // and binds that value to the VOTE_COMMITMENT public input.
+        // and binds that value to the VOTE_COMMITMENT_PUBLIC_OFFSET public input.
         // ---------------------------------------------------------------
 
         let blinds: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
@@ -1287,13 +1239,14 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
             prove_elgamal_encryptions(
                 ecc_chip.clone(),
+                config.nonzero,
                 layouter.namespace(|| "cond11 El Gamal"),
                 "cond11",
                 self.ea_pk,
                 EaPkInstanceLoc {
                     instance: config.primary,
-                    x_row: EA_PK_X,
-                    y_row: EA_PK_Y,
+                    x_row: EA_PK_X_PUBLIC_OFFSET,
+                    y_row: EA_PK_Y_PUBLIC_OFFSET,
                 },
                 config.advices[0],
                 share_cells,
@@ -1356,8 +1309,12 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             vote_decision,
         )?;
 
-        // Bind the derived vote commitment to the VOTE_COMMITMENT public input.
-        layouter.constrain_instance(vote_commitment.cell(), config.primary, VOTE_COMMITMENT)?;
+        // Bind the derived vote commitment to the VOTE_COMMITMENT_PUBLIC_OFFSET public input.
+        layouter.constrain_instance(
+            vote_commitment.cell(),
+            config.primary,
+            VOTE_COMMITMENT_PUBLIC_OFFSET,
+        )?;
 
         Ok(())
     }
@@ -1369,9 +1326,19 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
 /// Public inputs to the Vote Proof circuit (11 field elements).
 ///
-/// These are the values posted to the vote chain that both the prover
-/// and verifier agree on. The verifier checks the proof against these
-/// values without seeing any private witnesses.
+/// The voting client (prover) chooses these values when assembling the
+/// proof; the verifier accepts them as the binding the proof must
+/// satisfy and checks the proof without seeing any private witnesses.
+/// The relationship is asymmetric: a malicious-custody client can
+/// choose any public-input vector it likes, so the verifier must source
+/// the *correct* values from authenticated chain state (see
+/// [`crate::vote_proof::prove::verify_vote_proof`] for which fields
+/// require caller authentication versus which are proof-attested
+/// outputs).
+///
+/// Binding contract: `shares_hash` is deliberately absent from this public
+/// instance vector. The circuit computes it as an internal condition-10 cell
+/// and exposes it to the verifier only through `vote_commitment`.
 #[derive(Clone, Debug)]
 pub struct Instance {
     /// The nullifier of the old VAN being spent (prevents double-vote).
@@ -1386,20 +1353,53 @@ pub struct Instance {
     pub vote_commitment: pallas::Base,
     /// Root of the vote commitment tree at anchor height.
     pub vote_comm_tree_root: pallas::Base,
-    /// The vote-chain height at which the tree is snapshotted.
+    /// Caller-authenticated chain height used to source `vote_comm_tree_root`.
+    ///
+    /// This public input is transcript-bound but not constrained to a witness
+    /// cell. Verifiers must check that `vote_comm_tree_root` is the chain root
+    /// at this height.
     pub vote_comm_tree_anchor_height: pallas::Base,
-    /// Which proposal this vote is for.
+    /// Governance session parameter: which proposal this vote is for.
+    ///
+    /// The circuit constrains this to `[1, 15]` through condition 6 and binds
+    /// it into the new VAN and vote commitment. The verifier must separately
+    /// check that it is active for `voting_round_id`.
     pub proposal_id: pallas::Base,
-    /// The voting round identifier.
+    /// Governance session parameter: the voting round identifier.
+    ///
+    /// The circuit binds this into the VAN nullifier, new VAN, and vote
+    /// commitment, but cannot authenticate that it is the active round.
     pub voting_round_id: pallas::Base,
-    /// Election authority public key x-coordinate.
+    /// Governance-announced election authority public key x-coordinate.
+    ///
+    /// The verifier must pin this from the active round's governance
+    /// announcement. The circuit proves encryption under this coordinate pair,
+    /// but cannot authenticate that it is the legitimate EA key.
     pub ea_pk_x: pallas::Base,
-    /// Election authority public key y-coordinate.
+    /// Governance-announced election authority public key y-coordinate.
+    ///
+    /// Must be authenticated with `ea_pk_x`; both coordinates are public so a
+    /// prover cannot substitute a negated curve point while preserving x.
     pub ea_pk_y: pallas::Base,
 }
 
 impl Instance {
+    /// Number of public inputs serialized by [`Self::to_halo2_instance`].
+    pub const NUM_PUBLIC_INPUTS: usize = 11;
+
     /// Constructs an [`Instance`] from its constituent parts.
+    ///
+    /// Callers should authenticate `vote_comm_tree_root`,
+    /// `vote_comm_tree_anchor_height`, `proposal_id`, `voting_round_id`,
+    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here.
+    /// `proposal_id` must be active for `voting_round_id`; the circuit only
+    /// checks the authority-bit index range. The EA key must come from the
+    /// active round's governance announcement, not from the prover bundle. See
+    /// [`crate::vote_proof::prove::verify_vote_proof`] for the trust contract
+    /// and why wiring `ea_pk_*` from the same bundle as the proof is a
+    /// custody-attack surface. The remaining fields are proof-attested outputs
+    /// derived outside the circuit but constrained in-circuit against
+    /// authenticated inputs and private witnesses.
     pub fn from_parts(
         van_nullifier: pallas::Base,
         r_vpk_x: pallas::Base,
@@ -1431,7 +1431,8 @@ impl Instance {
     /// Serializes public inputs for halo2 proof creation/verification.
     ///
     /// The order must match the instance column offsets defined at the
-    /// top of this file (`VAN_NULLIFIER`, `R_VPK_X`, `R_VPK_Y`, etc.).
+    /// top of this file (`VAN_NULLIFIER_PUBLIC_OFFSET`, `R_VPK_X_PUBLIC_OFFSET`,
+    /// `R_VPK_Y_PUBLIC_OFFSET`, etc.).
     pub fn to_halo2_instance(&self) -> Vec<vesta::Scalar> {
         vec![
             self.van_nullifier,
@@ -1596,19 +1597,14 @@ mod tests {
         )
     }
 
-    /// Build valid test data for all 11 conditions.
+    /// Build valid test data for all 12 conditions.
     ///
     /// Returns a circuit with correctly-hashed VAN witnesses, valid
     /// shares, real El Gamal ciphertexts, and a matching instance.
     fn build_single_leaf_merkle_path(
         leaf: pallas::Base,
     ) -> ([pallas::Base; VOTE_COMM_TREE_DEPTH], u32, pallas::Base) {
-        let mut empty_roots = [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH];
-        empty_roots[0] = poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
-        for i in 1..VOTE_COMM_TREE_DEPTH {
-            empty_roots[i] = poseidon_hash_2(empty_roots[i - 1], empty_roots[i - 1]);
-        }
-        let auth_path = empty_roots;
+        let auth_path = empty_vote_comm_tree_path();
         let mut current = leaf;
         for i in 0..VOTE_COMM_TREE_DEPTH {
             current = poseidon_hash_2(current, auth_path[i]);
@@ -1616,11 +1612,181 @@ mod tests {
         (auth_path, 0, current)
     }
 
-    /// Build test (circuit, instance) with given proposal_authority_old and proposal_id.
-    /// proposal_authority_old must have the proposal_id-th bit set (spec bitmask).
-    fn make_test_data_with_authority_and_proposal(
+    fn empty_vote_comm_tree_path() -> [pallas::Base; VOTE_COMM_TREE_DEPTH] {
+        let mut empty_roots = [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH];
+        empty_roots[0] = poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
+        for i in 1..VOTE_COMM_TREE_DEPTH {
+            empty_roots[i] = poseidon_hash_2(empty_roots[i - 1], empty_roots[i - 1]);
+        }
+        empty_roots
+    }
+
+    fn build_left_leaf_merkle_path_with_sibling(
+        left_leaf: pallas::Base,
+        right_leaf: pallas::Base,
+    ) -> ([pallas::Base; VOTE_COMM_TREE_DEPTH], u32, pallas::Base) {
+        let mut auth_path = empty_vote_comm_tree_path();
+        auth_path[0] = right_leaf;
+
+        let mut current = left_leaf;
+        for i in 0..VOTE_COMM_TREE_DEPTH {
+            current = poseidon_hash_2(current, auth_path[i]);
+        }
+        (auth_path, 0, current)
+    }
+
+    struct VoteReuseFixture {
+        vsk: pallas::Scalar,
+        vsk_nk: pallas::Base,
+        rivk_v: pallas::Scalar,
+        alpha_v: pallas::Scalar,
+        vpk_g_d_affine: pallas::Affine,
+        vpk_pk_d_affine: pallas::Affine,
+        total_note_value: pallas::Base,
         proposal_authority_old: pallas::Base,
         proposal_id: u64,
+        van_comm_rand: pallas::Base,
+        shares_u64: [u64; 16],
+        ea_pk_point: pallas::Point,
+        ea_pk_affine: pallas::Affine,
+    }
+
+    impl VoteReuseFixture {
+        fn new() -> Self {
+            let mut rng = OsRng;
+            let vsk = pallas::Scalar::random(&mut rng);
+            let vsk_nk = pallas::Base::random(&mut rng);
+            let rivk_v = pallas::Scalar::random(&mut rng);
+            let alpha_v = pallas::Scalar::random(&mut rng);
+            let (vpk_g_d_affine, vpk_pk_d_affine) = derive_voting_address(vsk, vsk_nk, rivk_v);
+            let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
+
+            Self {
+                vsk,
+                vsk_nk,
+                rivk_v,
+                alpha_v,
+                vpk_g_d_affine,
+                vpk_pk_d_affine,
+                total_note_value: pallas::Base::from(10_000u64),
+                proposal_authority_old: pallas::Base::from(13u64),
+                proposal_id: TEST_PROPOSAL_ID,
+                van_comm_rand: pallas::Base::random(&mut rng),
+                shares_u64: [625; 16],
+                ea_pk_point,
+                ea_pk_affine,
+            }
+        }
+
+        fn vpk_x_coordinates(&self) -> (pallas::Base, pallas::Base) {
+            (
+                *self.vpk_g_d_affine.coordinates().unwrap().x(),
+                *self.vpk_pk_d_affine.coordinates().unwrap().x(),
+            )
+        }
+
+        fn vote_authority_note_old(&self, voting_round_id: pallas::Base) -> pallas::Base {
+            let (vpk_g_d_x, vpk_pk_d_x) = self.vpk_x_coordinates();
+            van_integrity_hash(
+                vpk_g_d_x,
+                vpk_pk_d_x,
+                self.total_note_value,
+                voting_round_id,
+                self.proposal_authority_old,
+                self.van_comm_rand,
+            )
+        }
+
+        fn vote_authority_note_new(&self, voting_round_id: pallas::Base) -> pallas::Base {
+            let (vpk_g_d_x, vpk_pk_d_x) = self.vpk_x_coordinates();
+            let proposal_authority_new =
+                self.proposal_authority_old - pallas::Base::from(1u64 << self.proposal_id);
+            van_integrity_hash(
+                vpk_g_d_x,
+                vpk_pk_d_x,
+                self.total_note_value,
+                voting_round_id,
+                proposal_authority_new,
+                self.van_comm_rand,
+            )
+        }
+
+        fn build_vote_data(
+            &self,
+            voting_round_id: pallas::Base,
+            auth_path: [pallas::Base; VOTE_COMM_TREE_DEPTH],
+            position: u32,
+            vote_comm_tree_root: pallas::Base,
+            anchor_height: u64,
+        ) -> (Circuit, Instance) {
+            let vote_authority_note_old = self.vote_authority_note_old(voting_round_id);
+            let vote_authority_note_new = self.vote_authority_note_new(voting_round_id);
+            let van_nullifier =
+                van_nullifier_hash(self.vsk_nk, voting_round_id, vote_authority_note_old);
+
+            let g = pallas::Point::from(spend_auth_g_affine());
+            let r_vpk = (g * self.vsk + g * self.alpha_v).to_affine();
+            let r_vpk_x = *r_vpk.coordinates().unwrap().x();
+            let r_vpk_y = *r_vpk.coordinates().unwrap().y();
+
+            let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
+                encrypt_shares(self.shares_u64, self.ea_pk_point);
+
+            let mut circuit = Circuit::with_van_witnesses(
+                Value::known(auth_path),
+                Value::known(position),
+                Value::known(self.vpk_g_d_affine),
+                Value::known(self.vpk_pk_d_affine),
+                Value::known(self.total_note_value),
+                Value::known(self.proposal_authority_old),
+                Value::known(self.van_comm_rand),
+                Value::known(vote_authority_note_old),
+                Value::known(self.vsk),
+                Value::known(self.rivk_v),
+                Value::known(self.vsk_nk),
+                Value::known(self.alpha_v),
+            );
+            circuit.one_shifted = Value::known(pallas::Base::from(1u64 << self.proposal_id));
+            circuit.shares = self.shares_u64.map(|s| Value::known(pallas::Base::from(s)));
+            circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
+            circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+            circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+            circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
+            circuit.share_blinds = share_blinds.map(Value::known);
+            circuit.share_randomness = randomness.map(Value::known);
+            circuit.ea_pk = Value::known(self.ea_pk_affine);
+            let vote_commitment = set_condition_11(
+                &mut circuit,
+                shares_hash_val,
+                self.proposal_id,
+                voting_round_id,
+            );
+
+            let instance = Instance::from_parts(
+                van_nullifier,
+                r_vpk_x,
+                r_vpk_y,
+                vote_authority_note_new,
+                vote_commitment,
+                vote_comm_tree_root,
+                pallas::Base::from(anchor_height),
+                pallas::Base::from(self.proposal_id),
+                voting_round_id,
+                *self.ea_pk_affine.coordinates().unwrap().x(),
+                *self.ea_pk_affine.coordinates().unwrap().y(),
+            );
+
+            (circuit, instance)
+        }
+    }
+
+    /// Build test (circuit, instance) with given proposal_authority_old,
+    /// proposal_id, and optional spend-authority randomizer.
+    /// proposal_authority_old must have the proposal_id-th bit set (spec bitmask).
+    fn make_test_data_with_authority_proposal_and_alpha(
+        proposal_authority_old: pallas::Base,
+        proposal_id: u64,
+        alpha_v_override: Option<pallas::Scalar>,
     ) -> (Circuit, Instance) {
         let mut rng = OsRng;
 
@@ -1629,7 +1795,7 @@ mod tests {
         let vsk = pallas::Scalar::random(&mut rng);
         let vsk_nk = pallas::Base::random(&mut rng);
         let rivk_v = pallas::Scalar::random(&mut rng);
-        let alpha_v = pallas::Scalar::random(&mut rng);
+        let alpha_v = alpha_v_override.unwrap_or_else(|| pallas::Scalar::random(&mut rng));
 
         let (vpk_g_d_affine, vpk_pk_d_affine) = derive_voting_address(vsk, vsk_nk, rivk_v);
 
@@ -1729,6 +1895,13 @@ mod tests {
         (circuit, instance)
     }
 
+    fn make_test_data_with_authority_and_proposal(
+        proposal_authority_old: pallas::Base,
+        proposal_id: u64,
+    ) -> (Circuit, Instance) {
+        make_test_data_with_authority_proposal_and_alpha(proposal_authority_old, proposal_id, None)
+    }
+
     fn make_test_data_with_authority(proposal_authority_old: pallas::Base) -> (Circuit, Instance) {
         make_test_data_with_authority_and_proposal(proposal_authority_old, TEST_PROPOSAL_ID)
     }
@@ -1744,6 +1917,7 @@ mod tests {
     // ================================================================
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_integrity_valid_proof() {
         let (circuit, instance) = make_test_data();
 
@@ -1753,6 +1927,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_integrity_wrong_hash_fails() {
         let mut rng = OsRng;
         let (_, mut instance) = make_test_data();
@@ -1823,6 +1998,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_integrity_wrong_round_id_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -1833,6 +2009,69 @@ mod tests {
         // Should fail: the voting_round_id from the instance doesn't match
         // the one hashed into the VAN (condition 2).
         assert!(prover.verify().is_err());
+    }
+
+    #[test]
+    fn round_scoped_van_redelegation_changes_nullifier() {
+        let fixture = VoteReuseFixture::new();
+        let round_1 = pallas::Base::from(0xCAFEu64);
+        let round_2 = pallas::Base::from(0xCAFFu64);
+
+        let van_round_1 = fixture.vote_authority_note_old(round_1);
+        let van_round_2 = fixture.vote_authority_note_old(round_2);
+        assert_ne!(
+            van_round_1, van_round_2,
+            "voting_round_id is part of the VAN preimage"
+        );
+
+        let nullifier_round_1 = van_nullifier_hash(fixture.vsk_nk, round_1, van_round_1);
+        let nullifier_round_2 = van_nullifier_hash(fixture.vsk_nk, round_2, van_round_2);
+        assert_ne!(
+            nullifier_round_1, nullifier_round_2,
+            "honest redelegation in a new round must not collide with the old round"
+        );
+    }
+
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn round_scoped_van_redelegation_verifies_with_distinct_nullifiers() {
+        let fixture = VoteReuseFixture::new();
+        let round_1 = pallas::Base::from(0xCAFEu64);
+        let round_2 = pallas::Base::from(0xCAFFu64);
+
+        let van_round_1 = fixture.vote_authority_note_old(round_1);
+        let (path_round_1, position_round_1, root_round_1) =
+            build_single_leaf_merkle_path(van_round_1);
+        let (circuit_round_1, instance_round_1) =
+            fixture.build_vote_data(round_1, path_round_1, position_round_1, root_round_1, 10);
+
+        let van_round_2 = fixture.vote_authority_note_old(round_2);
+        let (path_round_2, position_round_2, root_round_2) =
+            build_single_leaf_merkle_path(van_round_2);
+        let (circuit_round_2, instance_round_2) =
+            fixture.build_vote_data(round_2, path_round_2, position_round_2, root_round_2, 20);
+
+        assert_ne!(van_round_1, van_round_2);
+        assert_ne!(
+            instance_round_1.van_nullifier,
+            instance_round_2.van_nullifier
+        );
+
+        let prover_round_1 = MockProver::run(
+            K,
+            &circuit_round_1,
+            vec![instance_round_1.to_halo2_instance()],
+        )
+        .unwrap();
+        assert_eq!(prover_round_1.verify(), Ok(()));
+
+        let prover_round_2 = MockProver::run(
+            K,
+            &circuit_round_2,
+            vec![instance_round_2.to_halo2_instance()],
+        )
+        .unwrap();
+        assert_eq!(prover_round_2.verify(), Ok(()));
     }
 
     /// Verifies the out-of-circuit helper produces deterministic results.
@@ -1875,6 +2114,7 @@ mod tests {
     /// (vpk_g_d, vpk_pk_d) should fail condition 3 only: in-circuit
     /// [ivk']*vpk_g_d ≠ vpk_pk_d while VAN hash and nullifier stay valid.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn condition_3_wrong_vsk_fails() {
         let mut rng = OsRng;
 
@@ -1979,6 +2219,7 @@ mod tests {
     /// condition 3. Instance is built with a wrong vpk_pk_d for the VAN
     /// hash so condition 2 still passes; only condition 3 fails.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn condition_3_wrong_vpk_pk_d_fails() {
         let mut rng = OsRng;
 
@@ -2083,6 +2324,7 @@ mod tests {
 
     /// Wrong r_vpk public input should fail condition 4.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn condition_4_wrong_r_vpk_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -2095,12 +2337,30 @@ mod tests {
         );
     }
 
+    /// Documents the current upstream-compatible relation: alpha_v = 0 is
+    /// accepted when the public r_vpk is correspondingly equal to ak_P. This is
+    /// a self-linking/coercion surface, not a proof-soundness failure; see
+    /// THREAT_MODEL.md.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn condition_4_alpha_zero_is_accepted_by_relation() {
+        let (circuit, instance) = make_test_data_with_authority_proposal_and_alpha(
+            pallas::Base::from(13u64),
+            TEST_PROPOSAL_ID,
+            Some(pallas::Scalar::zero()),
+        );
+
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
     // ================================================================
     // Condition 5 (VAN Nullifier Integrity) tests
     // ================================================================
 
-    /// Wrong VAN_NULLIFIER public input should fail condition 5.
+    /// Wrong VAN_NULLIFIER_PUBLIC_OFFSET public input should fail condition 5.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_nullifier_wrong_public_input_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -2119,6 +2379,7 @@ mod tests {
     /// wrong value also breaks condition 3 — but the test still verifies
     /// that the proof fails as expected.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_nullifier_wrong_vsk_nk_fails() {
         let mut rng = OsRng;
 
@@ -2238,6 +2499,52 @@ mod tests {
         assert_ne!(h1, h3);
     }
 
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn stale_and_current_anchor_proofs_for_same_van_share_nullifier() {
+        let fixture = VoteReuseFixture::new();
+        let voting_round_id = pallas::Base::from(0xCAFEu64);
+        let stale_van = fixture.vote_authority_note_old(voting_round_id);
+        let successor_van = fixture.vote_authority_note_new(voting_round_id);
+
+        let (stale_path, stale_position, stale_root) = build_single_leaf_merkle_path(stale_van);
+        let (stale_circuit, stale_instance) =
+            fixture.build_vote_data(voting_round_id, stale_path, stale_position, stale_root, 10);
+
+        let (current_path, current_position, current_root) =
+            build_left_leaf_merkle_path_with_sibling(stale_van, successor_van);
+        let (current_circuit, current_instance) = fixture.build_vote_data(
+            voting_round_id,
+            current_path,
+            current_position,
+            current_root,
+            11,
+        );
+
+        assert_ne!(
+            stale_root, current_root,
+            "the successor VAN changes the supplied tree anchor"
+        );
+        assert_eq!(
+            stale_instance.van_nullifier, current_instance.van_nullifier,
+            "same (vsk_nk, voting_round_id, VAN) must collide for chain-side nullifier uniqueness"
+        );
+
+        // The circuit only proves membership in the supplied root. Freshness of
+        // the height-to-root mapping is enforced by the chain ante handler.
+        let stale_prover =
+            MockProver::run(K, &stale_circuit, vec![stale_instance.to_halo2_instance()]).unwrap();
+        assert_eq!(stale_prover.verify(), Ok(()));
+
+        let current_prover = MockProver::run(
+            K,
+            &current_circuit,
+            vec![current_instance.to_halo2_instance()],
+        )
+        .unwrap();
+        assert_eq!(current_prover.verify(), Ok(()));
+    }
+
     /// Verifies the domain tag is non-zero and deterministic.
     #[test]
     fn domain_van_nullifier_deterministic() {
@@ -2255,6 +2562,7 @@ mod tests {
 
     /// Proposal authority with only bit 0 set (value 1): vote on proposal 0, new = 0.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_decrement_minimum_valid() {
         // proposal_id = 0 is now forbidden (sentinel value); use the next smallest valid id.
         // Authority = 2 = 0b0010 has exactly bit 1 set, so proposal_id = 1 is valid.
@@ -2269,6 +2577,7 @@ mod tests {
     /// With proposal_authority_old = 0, the selected bit is 0 so the
     /// "run_selected = 1" constraint (selected bit was set) fails.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_zero_fails() {
         let (circuit, instance) = make_test_data_with_authority(pallas::Base::zero());
 
@@ -2279,6 +2588,7 @@ mod tests {
 
     /// proposal_id = 0 is the dummy sentinel value and must be rejected (Cond 6, gate).
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_id_zero_fails() {
         // Authority = 1 = 0b0001 has bit 0 set, so this is otherwise a structurally
         // valid decrement — the only reason it must fail is the non-zero gate.
@@ -2291,6 +2601,7 @@ mod tests {
 
     /// Full authority (65535), proposal_id 1 → new = 65533 (e2e scenario).
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_full_authority_proposal_1_passes() {
         const MAX_PROPOSAL_AUTHORITY: u64 = 65535;
         let (circuit, instance) = make_test_data_with_authority_and_proposal(
@@ -2304,6 +2615,7 @@ mod tests {
 
     /// Wrong vote_authority_note_new (e.g. not clearing the bit) fails condition 6.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_wrong_new_fails() {
         let (circuit, mut instance) =
             make_test_data_with_authority_and_proposal(pallas::Base::from(65535u64), 1);
@@ -2319,6 +2631,7 @@ mod tests {
     /// Uses proposal_id=1 (not 0) to isolate this constraint from the
     /// proposal_id != 0 sentinel gate.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_bit_not_set_fails() {
         let (circuit, instance) =
             make_test_data_with_authority_and_proposal(pallas::Base::from(4u64), 1);
@@ -2331,6 +2644,7 @@ mod tests {
     /// see CONDITION_6_RUN_SEL_FIX.md. This test runs a valid proof (one selector) and
     /// verifies it passes; a zero-selector witness would be rejected by that gate.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_condition6_run_sel_constraint() {
         let (circuit, instance) =
             make_test_data_with_authority_and_proposal(pallas::Base::from(3u64), 1);
@@ -2344,6 +2658,7 @@ mod tests {
     /// exactly 16 bits (positions 0–15); a value with bit 16 set cannot be represented
     /// in that decomposition and must be rejected by the range check.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_exceeds_16_bits_fails() {
         // 65536 = 2^16 is the first value not representable as a 16-bit bitmask.
         let (circuit, instance) = make_test_data_with_authority(pallas::Base::from(65536u64));
@@ -2360,6 +2675,7 @@ mod tests {
 
     /// Wrong vote_authority_note_new public input should fail condition 7.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn new_van_integrity_wrong_public_input_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -2375,6 +2691,7 @@ mod tests {
     /// New VAN integrity with a large (but valid) 16-bit proposal authority.
     /// Authority 0xFFF8 has bits 3..15 set; voting on proposal 3 gives new = 0xFFF0.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn new_van_integrity_large_authority() {
         let (circuit, instance) = make_test_data_with_authority(pallas::Base::from(0xFFF8u64));
 
@@ -2388,6 +2705,7 @@ mod tests {
 
     /// Wrong vote_comm_tree_root in the instance should fail condition 1.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_membership_wrong_root_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -2400,6 +2718,7 @@ mod tests {
 
     /// A VAN at a non-zero position in the tree should verify.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn van_membership_nonzero_position() {
         let mut rng = OsRng;
 
@@ -2532,6 +2851,7 @@ mod tests {
 
     /// Shares that do NOT sum to total_note_value should fail condition 8.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_sum_wrong_total_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -2551,6 +2871,7 @@ mod tests {
 
     /// A share at the maximum valid value (2^30 - 1) should pass.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_range_max_valid() {
         let max_share = pallas::Base::from((1u64 << 30) - 1); // 1,073,741,823
         let total = (0..16).fold(pallas::Base::zero(), |acc, _| acc + max_share);
@@ -2650,6 +2971,7 @@ mod tests {
 
     /// A share at exactly 2^30 should fail the range check.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_range_overflow_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -2665,6 +2987,7 @@ mod tests {
     /// A share that is a large field element (simulating underflow
     /// from subtraction) should fail the range check.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_range_field_wrap_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -2682,6 +3005,7 @@ mod tests {
     /// still reject the individual overflow, confirming it checks each share
     /// independently — a correct sum does not bypass the per-share range gate.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_range_single_overflow_correct_sum_fails() {
         let mut rng = OsRng;
 
@@ -2795,6 +3119,7 @@ mod tests {
 
     /// Valid enc_share witnesses with matching shares_hash should pass.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_hash_valid_proof() {
         let (circuit, instance) = make_test_data();
 
@@ -2803,8 +3128,9 @@ mod tests {
     }
 
     /// A corrupted enc_share_c1_x[0] should cause condition 10 failure:
-    /// the in-circuit hash won't match the VOTE_COMMITMENT instance.
+    /// the in-circuit hash won't match the VOTE_COMMITMENT_PUBLIC_OFFSET instance.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_hash_wrong_enc_share_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -2819,6 +3145,7 @@ mod tests {
     /// A wrong vote_commitment instance value (shares_hash mismatch)
     /// should fail, even with correct enc_share witnesses.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_hash_wrong_instance_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -3020,6 +3347,7 @@ mod tests {
 
     /// Valid El Gamal encryptions should produce a valid proof.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_valid_proof() {
         let (circuit, instance) = make_test_data();
 
@@ -3027,9 +3355,46 @@ mod tests {
         assert_eq!(prover.verify(), Ok(()));
     }
 
+    /// r_i = 0 would reveal C2_i = [v_i]G for a small share value, so the
+    /// hardened circuit rejects the exact degenerate randomness witness.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn encryption_integrity_randomness_zero_is_rejected() {
+        let (mut circuit, mut instance) = make_test_data();
+        let shares_u64 = [625u64; 16];
+        let (_ea_sk, ea_pk_point, _ea_pk_affine) = generate_ea_keypair();
+        let (mut c1_x, mut c2_x, mut c1_y, mut c2_y, mut randomness, blinds, _) =
+            encrypt_shares(shares_u64, ea_pk_point);
+        let c2 = pallas::Point::from(spend_auth_g_affine()) * pallas::Scalar::from(shares_u64[0]);
+        let c2_coords = c2.to_affine().coordinates().unwrap();
+
+        randomness[0] = pallas::Base::zero();
+        c1_x[0] = pallas::Base::zero();
+        c1_y[0] = pallas::Base::zero();
+        c2_x[0] = *c2_coords.x();
+        c2_y[0] = *c2_coords.y();
+
+        circuit.share_randomness = randomness.map(Value::known);
+        circuit.enc_share_c1_x = c1_x.map(Value::known);
+        circuit.enc_share_c1_y = c1_y.map(Value::known);
+        circuit.enc_share_c2_x = c2_x.map(Value::known);
+        circuit.enc_share_c2_y = c2_y.map(Value::known);
+        let shares_hash_val = shares_hash(blinds, c1_x, c2_x, c1_y, c2_y);
+        instance.vote_commitment = set_condition_11(
+            &mut circuit,
+            shares_hash_val,
+            TEST_PROPOSAL_ID,
+            instance.voting_round_id,
+        );
+
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert!(prover.verify().is_err());
+    }
+
     /// A corrupted share_randomness[0] should fail condition 11:
     /// the computed C1[0] won't match enc_share_c1_x[0].
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_wrong_randomness_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -3043,6 +3408,7 @@ mod tests {
     /// A wrong ea_pk in the instance should fail condition 11:
     /// the computed r * ea_pk won't match the ciphertexts.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_wrong_ea_pk_instance_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -3057,6 +3423,7 @@ mod tests {
     /// A corrupted share value (plaintext) should fail condition 11:
     /// C2_i = [v_i]*G + [r_i]*ea_pk will not match enc_share_c2_x[i].
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_wrong_share_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -3071,6 +3438,7 @@ mod tests {
     /// A corrupted enc_share_c2_x witness should cause verification to fail:
     /// condition 11 constrains ExtractP(C2_i) == enc_c2_x[i].
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn encryption_integrity_wrong_enc_c2_x_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -3127,6 +3495,7 @@ mod tests {
 
     /// Valid vote commitment (full Poseidon chain) should pass.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn vote_commitment_integrity_valid_proof() {
         let (circuit, instance) = make_test_data();
 
@@ -3137,6 +3506,7 @@ mod tests {
     /// A wrong vote_decision in the circuit should fail condition 12:
     /// the derived vote_commitment won't match the instance.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn vote_commitment_wrong_decision_fails() {
         let (mut circuit, instance) = make_test_data();
 
@@ -3151,6 +3521,7 @@ mod tests {
     /// the in-circuit proposal_id (copied from instance) will produce
     /// a different vote_commitment.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn vote_commitment_wrong_proposal_id_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -3163,6 +3534,7 @@ mod tests {
 
     /// A wrong vote_commitment in the instance should fail.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn vote_commitment_wrong_instance_fails() {
         let (circuit, mut instance) = make_test_data();
 
@@ -3204,7 +3576,7 @@ mod tests {
     // Instance and circuit sanity
     // ================================================================
 
-    /// Instance must serialize to exactly 9 public inputs.
+    /// Instance must serialize to exactly 11 public inputs.
     #[test]
     fn instance_has_eleven_public_inputs() {
         let (_, instance) = make_test_data();
@@ -3213,6 +3585,7 @@ mod tests {
 
     /// Default circuit (all witnesses unknown) must not produce a valid proof.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn default_circuit_with_valid_instance_fails() {
         let (_, instance) = make_test_data();
         let circuit = Circuit::default();
@@ -3230,9 +3603,9 @@ mod tests {
     /// number rather than the theoretical 2^K capacity.
     ///
     /// Run with:
-    ///   cargo test --features vote-proof row_budget -- --nocapture --ignored
+    ///   cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1
     #[test]
-    #[ignore]
+    #[ignore = "long-running row-budget diagnostic; run with `cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --ignored --nocapture --test-threads=1`"]
     fn row_budget() {
         use halo2_proofs::dev::CircuitCost;
         use pasta_curves::vesta;

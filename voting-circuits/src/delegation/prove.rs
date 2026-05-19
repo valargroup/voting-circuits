@@ -8,18 +8,25 @@ use std::vec::Vec;
 
 use halo2_proofs::{
     pasta::EqAffine,
-    plonk::{self, create_proof, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
+    plonk::{self, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
     poly::commitment::Params,
-    transcript::{Blake2bRead, Blake2bWrite, Challenge255},
+    transcript::{Blake2bRead, Challenge255},
 };
-use pasta_curves::{pallas, vesta};
-use rand::rngs::OsRng;
+
+use crate::prove_error::create_proof_bytes;
+use crate::ProveError;
 
 use super::circuit::{Circuit, Instance, K};
 
 // ================================================================
 // Params / key generation
 // ================================================================
+
+static DELEGATION_PK_CACHE: std::sync::OnceLock<(
+    Params<EqAffine>,
+    plonk::ProvingKey<EqAffine>,
+    plonk::VerifyingKey<EqAffine>,
+)> = std::sync::OnceLock::new();
 
 /// Generate the IPA params (SRS) for the delegation circuit.
 /// Deterministic for a given `K`.
@@ -47,34 +54,51 @@ pub fn delegation_proving_key(
     (pk, vk)
 }
 
+/// Return cached params and proving/verifying keys for the delegation circuit.
+///
+/// Key generation is deterministic and expensive enough to dominate proof and
+/// verification latency if repeated. Compute it once per process and reuse it.
+pub fn delegation_cached_keys() -> &'static (
+    Params<EqAffine>,
+    plonk::ProvingKey<EqAffine>,
+    plonk::VerifyingKey<EqAffine>,
+) {
+    DELEGATION_PK_CACHE.get_or_init(|| {
+        let params = delegation_params();
+        let (pk, vk) = delegation_proving_key(&params);
+        (params, pk, vk)
+    })
+}
+
+/// Warm the process-lifetime delegation params/proving-key cache.
+///
+/// This lets callers pay deterministic keygen before the first user-visible
+/// proof generation or verification path needs the key.
+pub fn warm_delegation_keys() {
+    let _ = delegation_cached_keys();
+}
+
 // ================================================================
 // Prove
 // ================================================================
 
 /// Create a real Halo2 proof for the delegation circuit.
 ///
-/// Returns the serialized proof bytes. The caller must have constructed
-/// a valid `Circuit` (with all witnesses populated) and a matching
-/// `Instance` (14 public inputs).
+/// Returns the serialized proof bytes. Returns an error if the caller
+/// provides a circuit without all witnesses populated or an instance
+/// that Halo2 cannot prove against.
 ///
 /// **Expensive**: K=14 proof generation takes ~30-60 seconds in release mode.
-pub fn create_delegation_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
-    let params = delegation_params();
-    let (pk, _vk) = delegation_proving_key(&params);
+/// Params and keys are cached so only the first call pays keygen.
+pub fn create_delegation_proof(
+    circuit: Circuit,
+    instance: &Instance,
+) -> Result<Vec<u8>, ProveError> {
+    let (params, pk, _vk) = delegation_cached_keys();
 
     let public_inputs = instance.to_halo2_instance();
 
-    let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<_>>::init(vec![]);
-    create_proof(
-        &params,
-        &pk,
-        &[circuit],
-        &[&[&public_inputs]],
-        OsRng,
-        &mut transcript,
-    )
-    .expect("delegation proof generation should not fail");
-    transcript.finalize()
+    create_proof_bytes(params, pk, circuit, &public_inputs)
 }
 
 // ================================================================
@@ -85,76 +109,59 @@ pub fn create_delegation_proof(circuit: Circuit, instance: &Instance) -> Vec<u8>
 /// the 14 public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
+///
+/// # Caller-authenticated inputs
+///
+/// `constrain_instance` pins each public input to whatever value the
+/// *verifier* supplies; the protocol cannot tell whether that value was
+/// the *right* one. The following fields of `instance` MUST be sourced
+/// from their category-specific authority before calling this function.
+/// Substituting them is not detectable from the proof alone.
+///
+/// ## Ledger-state anchors
+///
+/// These roots must be retrieved from the chain state at a snapshot height
+/// that the verifier independently accepts. This crate's public-input vector
+/// does not carry that height, so a chain ante handler or off-chain verifier
+/// must validate the height-to-root lookup outside this API. Do not take these
+/// values from the prover's bundle.
+///
+/// - `instance.nc_root` — the Orchard note commitment tree root at the
+///   verifier-pinned snapshot height.
+/// - `instance.nf_imt_root` — the alternate-nullifier IMT root at the same
+///   snapshot height as `nc_root`.
+///
+/// ## Session parameters
+///
+/// - `instance.vote_round_id` — must come from the same governance
+///   announcement as the active voting session.
+///
+/// # Proof-attested outputs
+///
+/// The following public inputs are derived outside the circuit but
+/// constrained in-circuit against authenticated inputs and private witnesses:
+///
+/// - `instance.van_comm`
+/// - `instance.dom` — `Poseidon("governance authorization", vote_round_id)`.
+///
+/// The following fields are produced by the circuit from private
+/// witnesses; successful verification is itself their authentication and
+/// the caller does not need a separate trusted channel:
+///
+/// - `instance.nf_signed`
+/// - `instance.rk_x` / `instance.rk_y`
+/// - `instance.cmx_new`
+/// - `instance.gov_null[..]`
 pub fn verify_delegation_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
-    let params = delegation_params();
-    let (_pk, vk) = delegation_proving_key(&params);
+    let (params, _pk, vk) = delegation_cached_keys();
 
     let public_inputs = instance.to_halo2_instance();
 
-    let strategy = SingleVerifier::new(&params);
+    let strategy = SingleVerifier::new(params);
     let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);
 
-    verify_proof(
-        &params,
-        &vk,
-        strategy,
-        &[&[&public_inputs]],
-        &mut transcript,
-    )
-    .map_err(|e| format!("delegation verification failed: {:?}", e))
-}
-
-/// Verify a delegation circuit proof from raw field-element bytes.
-///
-/// This is the lower-level entry point used by the FFI layer. It takes
-/// the proof bytes and a flat array of 14 × 32-byte LE-encoded Pallas
-/// base field elements (the public inputs in canonical order).
-///
-/// Returns `Ok(())` if verification succeeds, or an error message.
-pub fn verify_delegation_proof_raw(proof: &[u8], public_inputs_bytes: &[u8]) -> Result<(), String> {
-    use pasta_curves::group::ff::PrimeField;
-
-    if public_inputs_bytes.len() != 14 * 32 {
-        return Err(format!(
-            "expected 448 bytes (14 × 32) for public inputs, got {}",
-            public_inputs_bytes.len()
-        ));
-    }
-
-    // Deserialize each 32-byte chunk as a Pallas Fp element.
-    // Note: the delegation circuit's public inputs live on the Vesta
-    // scalar field, which is the same as the Pallas base field.
-    let mut public_inputs: Vec<vesta::Scalar> = Vec::with_capacity(14);
-    for i in 0..14 {
-        let start = i * 32;
-        let mut repr = [0u8; 32];
-        repr.copy_from_slice(&public_inputs_bytes[start..start + 32]);
-        let fp_opt: Option<pallas::Base> = pallas::Base::from_repr(repr).into();
-        match fp_opt {
-            Some(f) => public_inputs.push(f),
-            None => {
-                return Err(format!(
-                    "public input {} is not a canonical Pallas Fp encoding",
-                    i
-                ))
-            }
-        }
-    }
-
-    let params = delegation_params();
-    let (_pk, vk) = delegation_proving_key(&params);
-
-    let strategy = SingleVerifier::new(&params);
-    let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);
-
-    verify_proof(
-        &params,
-        &vk,
-        strategy,
-        &[&[&public_inputs]],
-        &mut transcript,
-    )
-    .map_err(|e| format!("delegation verification failed: {:?}", e))
+    verify_proof(params, vk, strategy, &[&[&public_inputs]], &mut transcript)
+        .map_err(|e| format!("delegation verification failed: {:?}", e))
 }
 
 #[cfg(test)]
@@ -162,18 +169,56 @@ mod prove_tests {
     use super::*;
     use crate::delegation::builder::{build_delegation_bundle, RealNoteInput};
     use crate::delegation::imt::{ImtProvider, SpacedLeafImtProvider};
+    use crate::ProveError;
     use ff::Field;
+    use halo2_proofs::plonk;
     use incrementalmerkletree::{Hashable, Level};
     use orchard::{
-        keys::{FullViewingKey, Scope, SpendingKey},
-        note::{commitment::ExtractedNoteCommitment, Note, Rho},
+        keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
+        note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, Rho},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
     use pasta_curves::pallas;
     use rand::rngs::OsRng;
 
+    fn minimal_instance() -> Instance {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.into();
+        let rk = ak.randomize(&pallas::Scalar::from(1));
+
+        Instance::from_parts(
+            Nullifier::from_inner(pallas::Base::from(1)),
+            rk,
+            pallas::Base::from(2),
+            pallas::Base::from(3),
+            pallas::Base::from(4),
+            pallas::Base::from(5),
+            pallas::Base::from(6),
+            [pallas::Base::from(7); 5],
+            pallas::Base::from(8),
+        )
+        .expect("test rk must be non-identity")
+    }
+
     #[test]
+    fn create_delegation_proof_signature_returns_result() {
+        let _: fn(Circuit, &Instance) -> Result<Vec<u8>, ProveError> = create_delegation_proof;
+    }
+
+    #[test]
+    #[ignore = "long-running K=14 proof keygen; run when touching delegation proof creation"]
+    fn create_delegation_proof_returns_err_for_missing_witnesses() {
+        let instance = minimal_instance();
+        let err = create_delegation_proof(Circuit::default(), &instance).unwrap_err();
+
+        assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
+    }
+
+    #[test]
+    #[ignore = "long-running real proof roundtrip; run with `cargo test -- --ignored`"]
     fn real_proof_roundtrip() {
         let mut rng = OsRng;
         let sk = SpendingKey::random(&mut rng);
@@ -238,7 +283,8 @@ mod prove_tests {
         )
         .unwrap();
 
-        let proof = create_delegation_proof(bundle.circuit, &bundle.instance);
+        let proof = create_delegation_proof(bundle.circuit, &bundle.instance)
+            .expect("delegation proof creation should succeed");
         verify_delegation_proof(&proof, &bundle.instance).expect("real proof roundtrip failed");
     }
 }

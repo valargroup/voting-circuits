@@ -3,7 +3,19 @@
 A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384 rows). The circuit handles the keystone note (conditions 1–8) and five per-note slots (conditions 9–15 ×5) in one proof.
 
 **Public inputs:** 14 field elements.
-**Per-note slots:** 5 (unused slots are padded with zero-value notes).
+**Per-note slots:** 5 (`MAX_REAL_NOTES`; unused slots are padded with
+zero-value notes). The fixed width is a protocol parameter: it gives every
+delegation the same published `gov_null_1..5` shape, supports wallets with up
+to five real notes per proof, and keeps the circuit within K=14. Wallets with
+more than five notes produce multiple delegation proofs.
+
+**Note value asymmetry:** the keystone (signed) note has value `1` zatoshi (a UX concession so Keystone-class hardware wallets render the spend for user approval); the output (change) note has value `0`. See conditions 1 and 6.
+
+**Authoritative hash sources:** this README is explanatory. The in-tree source
+of truth for reusable hash preimages is the owning module:
+`crate::circuit::van_integrity` for `van_comm`, `crate::domain_tags` for
+domain-tag encoding, `rho_binding_hash` in `circuit.rs`, and `gov_null_hash`
+in `imt.rs` for delegation-only hashes.
 
 ## Inputs
 
@@ -13,10 +25,10 @@ A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384
    * **cmx_new** (offset 3): the extracted note commitment (`ExtractP(cm_new)`) of the output note.
    * **van_comm** (offset 4): the governance commitment — a Pallas base field element identifying the governance context.
    * **vote_round_id** (offset 5): the vote round identifier — prevents cross-round replay.
-   * **nc_root** (offset 6): the note commitment tree root (shared anchor for Merkle path verification).
-   * **nf_imt_root** (offset 7): the nullifier Indexed Merkle Tree root (for non-membership proofs).
+   * **nc_root** (offset 6): ledger-state anchor for the Orchard note commitment tree at the verifier-pinned snapshot height; real-note Merkle paths must resolve to this root.
+   * **nf_imt_root** (offset 7): ledger-state anchor for the alternate-nullifier Indexed Merkle Tree at the same snapshot height as `nc_root`; non-membership proofs must resolve to this root.
    * **gov_null_1..5** (offsets 8–12): per-note alternate nullifiers, one per note slot.
-   * **dom** (offset 13): the nullifier domain — derived out-of-circuit as Poseidon("governance authorization", vote_round_id).
+   * **dom** (offset 13): the nullifier domain — Poseidon("governance authorization", vote_round_id). Exposed as a public input for API compatibility; the circuit constrains it against vote_round_id rather than trusting an arbitrary value.
 
 - Private (keystone note)
    * **rho_signed** ("rho"): the nullifier of the note that was spent to create the signed note.
@@ -65,19 +77,84 @@ A single circuit proving all 15 conditions of the delegation ZKP at K=14 (16,384
    * **cmx_1..5**: produced by per-note condition 9, consumed by condition 3.
    * **v_1..5**: produced by per-note condition 9, consumed by conditions 7 and 8.
 
+## Public Input Provenance
+
+The circuit proves statements relative to the public inputs supplied by the
+verifier; it does not authenticate where those inputs came from.
+
+**Ledger-state anchors:** `nc_root` and `nf_imt_root` must come from the
+chain's state at the same verifier-pinned snapshot height. `nc_root` is the
+Orchard note commitment tree root used by condition 10. `nf_imt_root` is the
+alternate-nullifier IMT root used by condition 13. A prover bundle may carry
+copies of these values for convenience, but a verifier must not trust the
+bundle as their source of truth.
+
+**Session parameters:** `vote_round_id` is pinned by the governance session.
+`dom` is exposed for API compatibility but constrained in-circuit to
+`Poseidon("governance authorization", vote_round_id)`. `van_comm` is
+proof-attested by condition 7 and then consumed by the voting flow.
+
+## Integration: the Keystone (signed) note is synthetic
+
+The keystone (signed) note **does not exist on any chain**. It is a
+synthetic Orchard-spend shape locally constructed by the voting client
+so that:
+
+1. The Keystone hardware wallet — which only signs Orchard Actions —
+   can be coerced into producing a spend-auth signature under `rk` over
+   the wrapping Action's ZIP-244 sighash. The voting protocol piggybacks
+   on Orchard's existing wallet-UX surface rather than adding a new
+   signing protocol.
+2. The wallet's UI renders `v_signed = 1` zatoshi for user approval;
+   zero-value spends are not rendered, which is why the keystone value
+   is 1 rather than 0 (see condition 1 below).
+3. The proof's public-input layout `(nf_signed, rk, cmx_new, ...)`
+   matches what the wrapping Orchard Action expects.
+
+Unlike each of the five real-note slots, which carry a Sinsemilla
+Merkle membership proof against the public `nc_root` anchor (gated by
+`v * (root - nc_root) = 0` so that `v = 0` padding slots can skip the
+check), the keystone branch witnesses **no Merkle path** and performs
+**no anchor check**. `cm_signed` is recomputed from witnessed
+`(g_d_signed, pk_d_signed, v_signed, rho_signed, psi_signed, rcm_signed)`
+and constrained equal to a separately-witnessed `cm_signed` ECC point;
+this is a "the prover knows the opening" check, not a membership check.
+The voter does not own a 1-zatoshi keystone note that the proof spends.
+
+The keystone branch's in-circuit conditions therefore sort into three
+buckets, useful for auditing future refactors:
+
+- **Protocol-relevant.** Condition 5 (the prover knows `(ak, nk, rivk)`
+  consistent with the real-note slots' `ivk`); condition 4
+  (`rk = [α]·SpendAuthG + ak`).
+- **Wallet-authorization binding (load-bearing as a chain).** Condition
+  3 (`rho_signed = Poseidon("delegation rho binding", cmx_1..5, van_comm, vote_round_id)`) and
+  condition 2 (`nf_signed = DeriveNullifier(nk, rho_signed, psi_signed, cm_signed)`,
+  exposed as a public input). Together with the verifier-enforced
+  `proof.nf_signed == action.nullifier` check, this is the chain by
+  which the wallet's spend-auth signature cryptographically commits to
+  `van_comm` and `vote_round_id`. Remove any link in this chain and the
+  binding breaks.
+- **Orchard-Action shape mimicry.** Condition 1 (`cm_signed`
+  well-formed under the keystone diversified address) and condition 6
+  (`cmx_new` derivation from the synthetic output note). These exist to
+  make the wrapping Action's public-input layout look like a standard
+  Orchard spend; the voting protocol does not consume `cm_signed` or
+  `cmx_new` for any of its own invariants.
+
 ## 1. Signed Note Commitment Integrity
 
 Purpose: ensure that the signed note commitment is correctly constructed. Establishes the binding link between spending authority, nullifier key, and the note itself.
 
 ```
-NoteCommit_rcm_signed(repr(g_d_signed), repr(pk_d_signed), 0, rho_signed, psi_signed) = cm_signed
+NoteCommit_rcm_signed(repr(g_d_signed), repr(pk_d_signed), 1, rho_signed, psi_signed) = cm_signed
 ```
 
 Where:
 - **rcm_signed**: the note commitment randomness (trapdoor). A scalar derived from the note's `rseed` and `rho`. Blinds the commitment.
 - **repr(g_d_signed)**: the diversified base point from the recipient's payment address.
 - **repr(pk_d_signed)**: the diversified transmission key.
-- **0**: the note value is hardcoded to zero (the keystone is always a dummy/zero-value note).
+- **1**: the keystone note value is hardcoded to 1 zatoshi (a minimum-value dummy note). The value of 1 rather than 0 exists so that hardware wallets such as Keystone — which do not render zero-value spends on screen — surface the spend for user approval. Contrast condition 6, which uses value 0 for the *output* (change) note; the asymmetry is intentional. See condition 6 for the output-side commitment shape.
 - **rho_signed**: the nullifier of the note that was spent to create this note. Bound by condition 3.
 - **psi_signed**: pseudorandom field element from `rseed` and `rho`.
 - **cm_signed**: the witnessed note commitment. The circuit recomputes NoteCommit and enforces strict equality.
@@ -124,17 +201,18 @@ DeriveNullifier_nk(rho, psi, cm) = ExtractP(
 Purpose: the signed note's rho is bound to the exact notes being delegated, the governance commitment, and the round. This makes the keystone signature non-replayable and scoped.
 
 ```
-rho_signed = Poseidon(cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
+rho_signed = Poseidon("delegation rho binding", cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
 ```
 
 Where:
+- **"delegation rho binding"**: the protocol domain tag from `crate::domain_tags`, assigned as a circuit constant.
 - **cmx_1..5**: the extracted note commitments (`ExtractP(cm_i)`) of the five delegated notes. **These are internal wires** — produced by per-note condition 9 (note commitment integrity), not free witnesses. By hashing all five commitments into rho, the keystone signature is bound to the exact set of notes the delegator chose.
 - **van_comm**: the governance commitment (public input).
 - **vote_round_id**: the vote round identifier (public input).
 
-**Function:** `Poseidon` with `ConstantLength<7>`. Uses `Pow5Chip` / `P128Pow5T3` with rate 2 (4 absorption rounds for 7 inputs).
+**Function:** `Poseidon` with `ConstantLength<8>`. Uses `Pow5Chip` / `P128Pow5T3` with rate 2 (4 absorption rounds for 8 inputs).
 
-**Constraint:** The circuit computes `derived_rho = Poseidon(cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)` and enforces strict equality `derived_rho == rho_signed`. Since `rho_signed` is the same value used in both note commitment integrity (condition 1) and nullifier integrity (condition 2), this creates a three-way binding: the nullifier, the note commitment, and the delegation scope are all tied to the same rho.
+**Constraint:** The circuit computes `derived_rho = Poseidon("delegation rho binding", cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)` and enforces strict equality `derived_rho == rho_signed`. Since `rho_signed` is the same value used in both note commitment integrity (condition 1) and nullifier integrity (condition 2), this creates a three-way binding: the nullifier, the note commitment, and the delegation scope are all tied to the same rho.
 
 **Constructions:** `PoseidonChip`.
 
@@ -151,7 +229,7 @@ Where:
 - **alpha** — fresh randomness. If rk were the same across transactions, an observer could link them to the same spender.
 - **SpendAuthG** — the fixed base generator point on the Pallas curve dedicated to spend authorization.
 
-**Constructions:** Shared `shared_primitives::spend_authority::prove_spend_authority` gadget (which computes fixed-base `[alpha]*SpendAuthG`, adds `ak_P`, and constrains `rk` to the instance), plus `EccChip` operations internally.
+**Constructions:** Shared `circuit::spend_authority::prove_spend_authority` gadget (which computes fixed-base `[alpha]*SpendAuthG`, adds `ak_P`, and constrains `rk` to the instance), plus `EccChip` operations internally.
 
 ## 5. CommitIvk & Diversified Address Integrity
 
@@ -199,7 +277,7 @@ Where:
 - **psi_new**: pseudorandom field element derived from `rseed_new` and `rho_new`.
 - **cmx_new**: the public input. `ExtractP` extracts the x-coordinate of the commitment point.
 
-**Chain from condition 2**: The `nf_signed` cell computed in condition 2 is reused directly as `rho_new`. Since that cell is also constrained to the `NF_SIGNED` public input, the chain is: `nf_signed` (public) = `DeriveNullifier(nk, rho_signed, psi_signed, cm_signed)` = `rho_new` (input to output NoteCommit).
+**Chain from condition 2**: The `nf_signed` cell computed in condition 2 is reused directly as `rho_new`. Since that cell is also constrained to the `NF_SIGNED_PUBLIC_OFFSET` public input, the chain is: `nf_signed` (public) = `DeriveNullifier(nk, rho_signed, psi_signed, cm_signed)` = `rho_new` (input to output NoteCommit).
 
 **Constructions:** `SinsemillaChip` (config 2), `EccChip`, `NoteCommitChip` (new).
 
@@ -338,7 +416,9 @@ Purpose: prove the note's nullifier has NOT been spent, using a Poseidon-based I
 
 **Leaf authentication**: All three boundaries are authenticated via `Poseidon3(nf_lo, nf_mid, nf_hi) → Merkle root` — forging any boundary produces the wrong root. The strict ordering `nf_lo < nf_mid < nf_hi` is enforced by tree construction (sorted nullifier input) and locked by the Merkle commitment.
 
-**250-bit range bound assumption:** The 250-bit range check requires `nf_hi - nf_lo < 2^250`. Since the Pallas field has order `p ≈ 2^254.9`, the IMT operator must pre-populate sentinel nullifiers at intervals of at most `2^249` (so each K=2 leaf spans at most `2 * 2^249 = 2^250`). With 33 evenly-spaced sentinels at multiples of `2^249` plus `p-1` to close the tail, the entire field is covered. The `SpacedLeafImtProvider` implements this strategy.
+**Tree construction assumption:** The circuit checks only the selected authenticated leaf. Soundness also requires the committed leaves to form the canonical K=2 punctured-range tree for the nullifier set: sorted, deduplicated, padded to odd count, and non-overlapping except for shared boundary nullifiers. A nullifier must not appear as `nf_mid` in one leaf while lying inside another leaf, because the per-leaf gate cannot detect that global overlap.
+
+**250-bit range bound assumption:** The 250-bit range check requires `nf_hi - nf_lo <= 2^250` in canonical Pallas base-field ordering. Since the Pallas base field is just above `2^254`, the IMT operator must pre-populate sentinel nullifiers at intervals of at most `2^249` (so each K=2 leaf spans at most `2 * 2^249 = 2^250`). With 33 evenly-spaced sentinels at multiples of `2^249` plus `p-1` to close the remaining tail, the entire field is covered. The `SpacedLeafImtProvider` implements this strategy.
 
 **Why outer-interval + non-equality instead of two sub-interval checks:** An alternative design would check `nf_lo < value < nf_mid` OR `nf_mid < value < nf_hi` separately, which would bound each sub-span independently and allow coarser sentinel spacing. However, OR requires a witness selector bit and two MUX constraints in-circuit (5 custom constraints total), whereas the current approach checks the single outer interval `(nf_lo, nf_hi)` and patches the hole with a cheap inverse-witness non-equality `(value - nf_mid) * inv = 1` (3 custom constraints total). The trade-off is 16 extra off-chain sentinels (33 vs 17) in exchange for a simpler gate and 2 fewer constraints per note slot (10 fewer across all 5 slots).
 
@@ -349,15 +429,16 @@ Purpose: prove the note's nullifier has NOT been spent, using a Poseidon-based I
 Purpose: derive an alternate nullifier (ZIP §Alternate Nullifier Derivation) that is published as a public input. This prevents double-delegation without revealing the note's true Orchard nullifier.
 
 ```
-nf_dom = Poseidon(nk, dom, real_nf)
+nf_dom = Poseidon(DOMAIN_GOV_NULL, nk, dom, real_nf)
 ```
 
-Single Poseidon hash (`ConstantLength<3>`, 2 permutations at rate 2):
+Single Poseidon hash (`ConstantLength<4>`, 2 permutations at rate 2):
 - **nk** — the nullifier deriving key, making the result unforgeable.
-- **dom** — the nullifier domain (public input at offset 13), derived out-of-circuit as `Poseidon("governance authorization", vote_round_id)`. Scopes the alternate nullifier to this application instance and voting round.
+- **DOMAIN_GOV_NULL** — the `"governance nullifier"` domain tag, assigned as a circuit constant so governance nullifiers do not share the raw `Poseidon3` preimage shape used by IMT leaves.
+- **dom** — the nullifier domain (public input at offset 13), constrained in-circuit to `Poseidon("governance authorization", vote_round_id)`. Scopes the alternate nullifier to this application instance and voting round.
 - **real_nf** — the note's true nullifier from condition 12.
 
-The result is constrained to the public input at offset `GOV_NULL_1..5`.
+The result is constrained to the public input offsets in `GOV_NULL_PUBLIC_OFFSETS`.
 
 **Constructions:** `PoseidonChip`.
 
@@ -371,11 +452,11 @@ The result is constrained to the public input at offset `GOV_NULL_1..5`.
 
 - **"Why two Sinsemilla configs (and two NoteCommitChips)?"** — This mirrors the audited Orchard action circuit, which uses two Sinsemilla configs (one for spend-side NoteCommit, one for output-side NoteCommit) with column assignments `advices[..5]` and `advices[5..]`. Each `SinsemillaChip::configure` call creates its own selectors and gates, and each `NoteCommitChip::configure` creates decomposition/canonicity gates tied to the Sinsemilla config it receives — so two Sinsemilla configs require two NoteCommitChips. We replicate this exact layout so the delegation circuit inherits the audited chip wiring without modification. It may be possible to collapse to a single config (condition 9 already runs 5 NoteCommits on config 1 without conflict), but reusing the known-correct pattern avoids the need for a separate audit of the chip interaction.
 
-- **"Why are padding (dummy) notes bound to the real ivk, and why not a real Orchard address?"** — Padding slots must still pass condition 11 (`pk_d = [selected_ivk] * g_d`) using the ivk derived in condition 5; otherwise the circuit would need a per-slot bypass that real notes could also exploit. Instead of constructing a real Orchard address with `fvk.address_at(...)` (which would burn an otherwise-spendable diversifier index on every proof and tie padding to a real receive-capable address), the builder synthesizes a padding pair off the Orchard diversifier set:
-   - `g_d_pad = hash_to_curve("shielded-vote/padding-v1")(slot_index_le_bytes)` — domain-separated from Orchard's `DiversifyHash`, so `g_d_pad` is provably *not* a valid Orchard `g_d` and `(g_d_pad, pk_d_pad)` is intentionally not an `orchard::Address`.
+- **"Why are padding (dummy) notes bound to the real ivk, and why not a real Orchard address?"** — Padding slots must still pass condition 11 (`pk_d = [selected_ivk] * g_d`) using the ivk derived in condition 5; otherwise the circuit would need a per-slot bypass that real notes could also exploit. Instead of constructing a real Orchard address with `fvk.address_at(...)` (which would burn an otherwise-spendable diversifier index on every proof and tie padding to a real receive-capable address), the builder synthesizes a padding pair outside the Orchard address API:
+   - `g_d_pad = hash_to_curve("shielded-vote/padding-v1")(slot_index_le_bytes)` — domain-separated from Orchard's `DiversifyHash` and not derived through Orchard diversifier selection, so `(g_d_pad, pk_d_pad)` is intentionally not an `orchard::Address`.
    - `pk_d_pad = [ivk_external] * g_d_pad` — satisfies condition 11 by construction. Padding always uses the **external** ivk (`is_internal = false`), independent of the real notes' scopes, so the `q_scope_select` mux selects `ivk_external` and the equality check holds.
-   - `rho`/`rseed` are sampled fresh (or replayed from `PrecomputedRandomness.padded_notes` for ZIP-244 sighash determinism), `psi`/`rcm` are derived from `rseed` exactly as Orchard does, and the note commitment / real nullifier are computed off-circuit by builder helpers that mirror Orchard's `NoteCommit` and `DeriveNullifier` bit-for-bit.
+   - `rho`/`rseed` are sampled fresh (or replayed from `PrecomputedRandomness.padded_notes` for ZIP-244 sighash determinism), `psi`/`rcm` are derived from `rseed` exactly as Orchard does, and the note commitment / real nullifier are computed off-circuit with Orchard's exposed low-level APIs.
 
    The padding note still has `v = 0`, so condition 10 skips the Merkle root check via `v * (root - nc_root) = 0` and the auth path can be `MerklePath::dummy(...)`. Conditions 9 (note commitment integrity), 11 (address ownership against `ivk_external`), 12 (real nullifier), 13 (IMT non-membership against `nf_imt_root`), and 14 (alternate nullifier publication) all run unconditionally on the synthesized values. The published `gov_null` for a padding slot is harmless — the consuming protocol can ignore alternate nullifiers from zero-value slots or treat them as no-ops.
 
-   Because the in-circuit `NoteCommit` and `DeriveNullifier` consume the witnessed `(g_d, pk_d, v, rho, psi, rcm)` directly and re-derive the commitment / nullifier from those bits, the synthetic `g_d_pad` is opaque to the circuit — it is just two field elements that happen not to be a `DiversifyHash` image. The `NoteSlotWitness` keeps `g_d`/`pk_d` typed as `NonIdentityPallasPoint` (carrying Orchard's non-identity invariant so an accidental identity fails at the construction site rather than only at proof time via `NonIdentityPoint::new`), but `cm` is relaxed to plain `pallas::Point` because Orchard's `NoteCommitment` newtype has a private constructor and synthetic padding commitments cannot be wrapped — condition 9 re-derives and constrain-equals `cm`, so a malformed point would still be rejected at proof time.
+   Because the in-circuit `NoteCommit` and `DeriveNullifier` consume the witnessed `(g_d, pk_d, v, rho, psi, rcm)` directly and re-derive the commitment / nullifier from those bits, the synthetic `g_d_pad` is opaque to the circuit — it is just a domain-separated point chosen outside Orchard's address derivation flow. The `NoteSlotWitness` keeps `g_d`/`pk_d` typed as `NonIdentityPallasPoint` (carrying Orchard's non-identity invariant so an accidental identity fails at the construction site rather than only at proof time via `NonIdentityPoint::new`), but `cm` is relaxed to plain `pallas::Point` because the circuit consumes the underlying commitment point — condition 9 re-derives and constrain-equals `cm`, so a malformed point would still be rejected at proof time.

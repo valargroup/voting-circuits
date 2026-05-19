@@ -9,14 +9,16 @@ use halo2_proofs::{
     plonk::{self, Advice, Column},
 };
 
-/// Bakes a constant into the verifier key by assigning it to a free advice cell
-/// in a standalone region. The advice column must have constants enabled
-/// (via `Region::enable_constant`) at circuit configuration time.
+/// Assigns a circuit-known constant to an advice cell via
+/// `assign_advice_from_constant`.
 ///
-/// Counterpart of orchard's `assign_free_advice` for known-constant values:
-/// the constant ends up baked into the verifier key, so a malicious prover
-/// can't substitute a different value at proving time.
-pub fn assign_constant<F: Field>(
+/// Prerequisites: the circuit must configure a fixed constants column with
+/// `meta.enable_constant(...)`, and the advice column passed here must be
+/// equality-enabled with `meta.enable_equality(...)`. Halo2 places `constant`
+/// in that fixed column and copy-constrains the returned advice cell to it, so
+/// a malicious client driving the honest circuit cannot substitute another
+/// value.
+pub(crate) fn assign_constant<F: Field>(
     mut layouter: impl Layouter<F>,
     column: Column<Advice>,
     constant: F,

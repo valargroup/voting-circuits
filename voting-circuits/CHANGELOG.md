@@ -2,9 +2,67 @@
 
 ## Unreleased
 
-- Update delegation padding notes to use synthetic, IVK-bound padding points with custom derivation, avoiding overlap with the universe of Zcash mainnet diversified addresses.
+### Added
+
+- Declared Rust 1.86 as the minimum supported Rust version.
+- Added `vote_proof_cached_keys()` so callers can warm and reuse the vote proof
+  params, proving key, and verifying key together.
+- Added `ProveError` for typed Halo2 proof creation failures.
+- Exported delegation, vote-proof, and share-reveal public input offsets from
+  their module roots for clients that construct or inspect proof instances.
+
+### Changed
+
+- `create_delegation_proof`, `create_vote_proof`, and `create_share_reveal_proof` now return `Result<Vec<u8>, ProveError>` instead of panicking when Halo2 proof creation fails.
+- Share-reveal APIs are now always available; the `share-reveal` Cargo feature was removed.
+- Public input counts are exposed on each instance type for downstream
+  FFI/wire decoders.
+
+### Removed
+
+- Removed the `mock-prover-checks` Cargo feature and its optional vote-proof builder diagnostics.
+- Removed the raw field-byte verifier APIs for delegation, vote proof, and share reveal proofs.
+
+### Security
+
+- Add a protocol domain tag to the delegation rho binding hash.
+- Domain-separate delegation governance nullifiers from IMT leaf hashes by adding
+  a dedicated governance nullifier tag to the Poseidon preimage.
+- Bind the delegation nullifier domain to `vote_round_id` in-circuit, preventing `dom` from being used as a free public input.
+- Reject identity delegation `rk` values during public input construction instead of panicking while preparing Halo2 inputs.
+- Return typed vote-proof builder errors for identity election authority keys,
+  identity randomized voting public keys, and identity encrypted share points.
+- Return a typed vote-proof builder error for proposal IDs outside the supported
+  `[1, 15]` range instead of shifting by an unchecked caller value.
+- Reject exact zero El Gamal share randomness in vote proofs.
+
+### Changed
+
+- Narrowed internal module, gadget, and helper visibility so only curated circuit/prover APIs remain public.
+- Update delegation padding notes to use synthetic, IVK-bound padding points with direct Orchard low-level primitive calls, avoiding reuse of ordinary Zcash mainnet diversified-address indices.
+
+### Migration
+
+- Regenerate delegation proving and verifying keys, and update downstream code
+  that recomputes `gov_null_1..5`. The governance nullifier values change, but
+  the IMT leaf and root format does not.
+- Replace `delegation::builder::*` and `delegation::imt::*` imports with named `delegation::*` root exports.
+- Replace `vote_proof::builder::*` and `vote_proof::circuit::*` imports with named `vote_proof::*` root exports.
+- Replace `share_reveal::builder::*` imports with named `share_reveal::*` root exports.
+- Remove `features = ["share-reveal"]` from `voting-circuits` dependency entries and refresh downstream lockfiles.
+- Handle or propagate errors from all `create_*_proof` calls.
+- Account for the new `VoteProofBuildError::Prove` variant in exhaustive matches.
+- Shared gadget helpers such as `vote_proof::elgamal_encrypt` are no longer
+  public API. `vote_proof::spend_auth_g_affine` remains public for downstream
+  encryption code.
+- Regenerate vote-proof proving/verifying keys after the El Gamal randomness
+  hardening constraint.
 
 ## 0.4.2 - 2026-05-11
 
 - Added an explicit `mock-prover-checks` feature for vote-proof builder diagnostics.
 - Disabled runtime `MockProver` validation by default so importer builds do not pay the extra circuit synthesis and constraint-checking cost unless they opt in.
+
+## 0.4.1 and Earlier
+
+Release history was not tracked in this changelog before this point.

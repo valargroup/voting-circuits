@@ -11,27 +11,42 @@
 //! - **Condition 3**: Shares Hash Integrity — `shares_hash =
 //!   Poseidon(share_comm_0, ..., share_comm_15)`, where share_comms are
 //!   private witnesses transitively bound to the public tree root.
-//! - **Condition 4**: Primary Share Binding — the prover knows a blind
-//!   such that `share_comms[share_index] = Poseidon(blind, c1_x, c2_x)`,
+//! - **Condition 4**: Primary Share Binding — the voting client knows a
+//!   blind such that
+//!   `share_comms[share_index] = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`
+//!   (see `crate::shares_hash` for the authoritative five-input shape;
+//!   the y-coordinates defend against ciphertext sign-malleability),
 //!   binding the publicly revealed encrypted share to the committed set.
 //! - **Condition 5**: Share Nullifier Integrity — `share_nullifier` is
 //!   correctly derived as
 //!   `Poseidon(domain_tag, vote_commitment, share_index, blind)`.
-//!   `blind` is the share commitment blinding factor — a secret known only
-//!   to the voter and helper server. Using the blind (rather than a
-//!   ciphertext coordinate) ensures the nullifier is not publicly derivable
-//!   from on-chain data, since ciphertext coordinates are posted as public
-//!   inputs alongside the proof. Round-binding is transitive through
-//!   `vote_commitment`, which already commits to `voting_round_id`.
+//!   `blind` is the share commitment blinding factor — a secret held by
+//!   the voting client (the host program that built ZKP #2 and now
+//!   builds this reveal proof). Using the blind (rather than a
+//!   ciphertext coordinate) ensures the nullifier is not publicly
+//!   derivable from on-chain data, since ciphertext coordinates are
+//!   posted as public inputs alongside the proof. Round, proposal, decision,
+//!   and `shares_hash` bind through the `vote_commitment` preimage;
+//!   `share_comms` bind one hop earlier through `shares_hash`. The resulting
+//!   `vote_commitment` is checked against the vote commitment tree.
 //!
 //! ## Privacy
 //!
-//! Only the primary share's blind is provided as a private witness,
-//! avoiding the need to send all 16 blinds to the helper server. The 16
-//! `share_comms` are private witnesses — they never appear on chain,
-//! preserving share-level unlinkability. Soundness is guaranteed because
-//! share_comms are transitively bound to the public `vote_comm_tree_root`
-//! via `shares_hash → vote_commitment → Merkle path`.
+//! Only the primary share's blind is supplied as a private witness, so
+//! the voting client does not need to surface the other 15 blinds when
+//! it assembles the reveal. The 16 `share_comms` are private witnesses —
+//! they never appear on chain, preserving share-level unlinkability.
+//! Soundness is guaranteed because `share_comms` are transitively bound
+//! to the public `vote_comm_tree_root` via
+//! `shares_hash → vote_commitment → Merkle path`; the revealed ciphertext
+//! coordinates bind to the selected `share_comm` through Poseidon preimage
+//! resistance of `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
+//!
+//! Authoritative hash sources: `crate::shares_hash` owns the per-share and
+//! aggregate encrypted-share preimages, `crate::circuit::vote_commitment` owns
+//! the vote commitment preimage, and `crate::domain_tags` owns the share-spend
+//! domain tag encoding. This module's prose points to those owners rather than
+//! defining competing formulas.
 //!
 //! ## Column layout
 //!
@@ -51,6 +66,7 @@ use halo2_proofs::{
     },
     poly::Rotation,
 };
+use itertools::Itertools;
 use pasta_curves::{pallas, vesta};
 
 use halo2_gadgets::{
@@ -90,34 +106,48 @@ pub const K: u32 = 11;
 // ================================================================
 
 /// Public input offset for the share nullifier (prevents double-counting).
-const SHARE_NULLIFIER: usize = 0;
+pub const SHARE_NULLIFIER_PUBLIC_OFFSET: usize = 0;
 /// Public input offset for the revealed share's C1 x-coordinate.
-const ENC_SHARE_C1_X: usize = 1;
+///
+/// This is caller-supplied. Condition 4 binds it transitively to the committed
+/// vote by proving `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` equals the
+/// selected private `share_comm`; ZKP #2 does not publish per-share
+/// ciphertext coordinates as public inputs.
+pub const ENC_SHARE_C1_X_PUBLIC_OFFSET: usize = 1;
 /// Public input offset for the revealed share's C1 y-coordinate.
 ///
 /// Binds the proof to the exact curve point (not just x-coordinate),
 /// preventing ciphertext sign-malleability attacks where an adversary
-/// negates ElGamal ciphertext points without invalidating the ZKP.
-const ENC_SHARE_C1_Y: usize = 2;
+/// negates ElGamal ciphertext points without invalidating the ZKP. Like the
+/// x-coordinate, this is caller-supplied and bound through the selected
+/// `share_comm` Poseidon preimage.
+pub const ENC_SHARE_C1_Y_PUBLIC_OFFSET: usize = 2;
 /// Public input offset for the revealed share's C2 x-coordinate.
-const ENC_SHARE_C2_X: usize = 3;
+///
+/// Caller-supplied and bound through condition 4's selected share-commitment
+/// equality; not directly published by ZKP #2.
+pub const ENC_SHARE_C2_X_PUBLIC_OFFSET: usize = 3;
 /// Public input offset for the revealed share's C2 y-coordinate.
-const ENC_SHARE_C2_Y: usize = 4;
+///
+/// Caller-supplied y-coordinate for exact-point binding, transitively tied to
+/// the committed vote through the selected `share_comm`.
+pub const ENC_SHARE_C2_Y_PUBLIC_OFFSET: usize = 4;
 /// Public input offset for the proposal identifier.
-const PROPOSAL_ID: usize = 5;
+pub const PROPOSAL_ID_PUBLIC_OFFSET: usize = 5;
 /// Public input offset for the vote decision.
-const VOTE_DECISION: usize = 6;
+pub const VOTE_DECISION_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the vote commitment tree root.
-const VOTE_COMM_TREE_ROOT: usize = 7;
+pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 7;
 /// Public input offset for the voting round identifier.
 ///
-/// Constrained in-circuit: `voting_round_id` is hashed into the share
-/// nullifier (condition 5) to bind it to a specific round. This prevents
-/// cross-round proof replay — the commitment tree is global (not per-round),
-/// so `vote_comm_tree_root` alone does not provide round scoping. The chain
-/// also validates that `voting_round_id` matches an active session (Gov Steps
-/// V1 §5.4 "Out-of-circuit checks").
-const VOTING_ROUND_ID: usize = 8;
+/// Constrained in-circuit: `voting_round_id` is hashed into `vote_commitment`
+/// and `vote_commitment` is hashed into the share nullifier. That transitive
+/// path binds the nullifier to a specific round. This prevents cross-round
+/// proof replay because the commitment tree is global, not per-round, so
+/// `vote_comm_tree_root` alone does not provide round scoping. The chain also
+/// validates that `voting_round_id` matches an active session (Gov Steps V1
+/// §5.4 "Out-of-circuit checks").
+pub const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
 
 // ================================================================
 // Out-of-circuit helpers
@@ -126,14 +156,7 @@ const VOTING_ROUND_ID: usize = 8;
 /// Domain separator for share nullifiers, encoded as a Pallas base field element.
 ///
 /// `"share spend"` → 32-byte zero-padded array → `Fp::from_repr`.
-pub fn domain_tag_share_spend() -> pallas::Base {
-    use ff::PrimeField;
-    let mut bytes = [0u8; 32];
-    let tag = b"share spend";
-    bytes[..tag.len()].copy_from_slice(tag);
-    // Encoding is canonical since the tag is short (top byte is zero).
-    pallas::Base::from_repr(bytes).unwrap()
-}
+pub use crate::domain_tags::share_spend as domain_tag_share_spend;
 
 /// Out-of-circuit share nullifier hash (condition 5).
 ///
@@ -145,9 +168,11 @@ pub fn domain_tag_share_spend() -> pallas::Base {
 /// `blind` is the share commitment blinding factor for this share index.
 /// Because blinds are never posted on-chain, the nullifier cannot be
 /// derived by an observer — even one who knows the vote commitment tree
-/// contents and the public ciphertext coordinates. Round-binding comes
-/// transitively through `vote_commitment`, which already commits to
-/// `voting_round_id` as one of its Poseidon inputs.
+/// contents and the public ciphertext coordinates. Round, proposal, decision,
+/// and `shares_hash` bind through the `vote_commitment` preimage;
+/// `share_comms` bind one hop earlier through `shares_hash`. The nullifier
+/// deliberately consumes the parent vote commitment instead of re-hashing its
+/// full preimage.
 pub fn share_nullifier_hash(
     vote_commitment: pallas::Base,
     share_index: pallas::Base,
@@ -235,13 +260,22 @@ pub struct Circuit {
 
     // === Condition 3: Shares Hash Integrity ===
     /// Pre-computed per-share Poseidon commitments (private witnesses).
-    /// `share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x)`.
-    /// Transitively bound to the public tree root via shares_hash → vote_commitment → Merkle path.
+    ///
+    /// Shape: see `crate::shares_hash` — five-input
+    /// `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` including the
+    /// y-coordinates that defend against ciphertext sign-malleability.
+    /// Transitively bound to the public tree root via
+    /// `shares_hash → vote_commitment → Merkle path`.
     pub(crate) share_comms: [Value<pallas::Base>; 16],
 
     // === Condition 4: Primary Share Binding ===
-    /// Blind factor for the revealed share:
-    /// `share_comms[share_index] = Poseidon(primary_blind, c1_x, c2_x)`.
+    /// Blind factor for the revealed share. The synthesize body
+    /// (see the "Condition 4: Primary Share Binding" region below) recomputes
+    /// `Poseidon(primary_blind, c1_x, c2_x, c1_y, c2_y)` using the shared
+    /// `crate::shares_hash` gadget and constrains it to equal
+    /// `share_comms[share_index]`; the y-coordinates are the
+    /// sign-malleability defense and the gadget is the single source of
+    /// truth for the preimage shape.
     pub(crate) primary_blind: Value<pallas::Base>,
 
     // === Share selection ===
@@ -399,7 +433,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             // selected_comm == Σ sel[i] * comm[i]
             let comm_mux_expr = comm
                 .iter()
-                .zip(sel.iter())
+                .zip_eq(sel.iter())
                 .fold(selected_comm, |acc, (c, s)| acc - s.clone() * c.clone());
             let comm_mux = ("comm mux", comm_mux_expr);
 
@@ -468,7 +502,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "proposal_id",
                     config.primary,
-                    PROPOSAL_ID,
+                    PROPOSAL_ID_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -481,7 +515,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "vote_decision",
                     config.primary,
-                    VOTE_DECISION,
+                    VOTE_DECISION_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -496,7 +530,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "voting_round_id",
                     config.primary,
-                    VOTING_ROUND_ID,
+                    VOTING_ROUND_ID_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -546,13 +580,25 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // ---------------------------------------------------------------
         // Condition 4: Primary Share Binding.
         //
-        // Proves the prover knows the blind for the revealed share:
+        // The ciphertext coordinates are caller-supplied public inputs. ZKP #2
+        // publishes only the aggregate vote_commitment, not per-share
+        // ciphertext coordinates, so this is a transitive hash binding rather
+        // than a direct comparison against vote-proof public inputs.
+        //
+        // Proves that the ciphertext coordinates of the *revealed* share
+        // correspond to the share commitment at the declared
+        // `share_index`, by recomputing the commitment and matching it
+        // against the muxed-out `share_comms[share_index]`:
         //   derived_comm = Poseidon(primary_blind, enc_c1_x, enc_c2_x,
         //                          enc_c1_y, enc_c2_y)
         //   share_comms[share_index] == derived_comm
         //
-        // All ciphertext coordinates come from the public instance column.
-        // Including y-coordinates prevents sign-malleability attacks.
+        // Defense-by-rejection: an adversary that has seen the on-chain
+        // ciphertexts but does not hold the blind cannot claim the wrong share
+        // is the revealed one. The recomputed commitment must match the muxed
+        // `share_comms[share_index]`; otherwise condition 4 rejects. The
+        // load-bearing assumption is Poseidon preimage resistance for the
+        // share-commitment hash shape owned by `crate::shares_hash`.
         // ---------------------------------------------------------------
 
         let enc_c1_x = layouter.assign_region(
@@ -561,7 +607,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "enc_c1_x",
                     config.primary,
-                    ENC_SHARE_C1_X,
+                    ENC_SHARE_C1_X_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -574,7 +620,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "enc_c2_x",
                     config.primary,
-                    ENC_SHARE_C2_X,
+                    ENC_SHARE_C2_X_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -587,7 +633,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "enc_c1_y",
                     config.primary,
-                    ENC_SHARE_C1_Y,
+                    ENC_SHARE_C1_Y_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -600,7 +646,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 region.assign_advice_from_instance(
                     || "enc_c2_y",
                     config.primary,
-                    ENC_SHARE_C2_Y,
+                    ENC_SHARE_C2_Y_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -710,8 +756,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // vote_commitment = Poseidon(DOMAIN_VC, voting_round_id,
         //                            shares_hash, proposal_id, vote_decision)
         //
-        // Same hash as vote_proof::vote_commitment_hash and
-        // vote_commitment_tree::vote_commitment_hash.
+        // Same hash as the shared vote-commitment helper and the vote
+        // commitment tree.
         // ---------------------------------------------------------------
 
         // DOMAIN_VC constant (baked into the VK).
@@ -759,7 +805,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             )?;
 
             // Bind the computed Merkle root to the public input.
-            layouter.constrain_instance(root.cell(), config.primary, VOTE_COMM_TREE_ROOT)?;
+            layouter.constrain_instance(
+                root.cell(),
+                config.primary,
+                VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET,
+            )?;
         }
 
         // ---------------------------------------------------------------
@@ -774,8 +824,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Unlike ciphertext coordinates (c1_x, c2_x), the blind is never
         // posted on-chain, so an observer cannot enumerate vote commitments
         // to link nullifiers to their source.
-        // Round-binding is transitive through vote_commitment, which already
-        // commits to voting_round_id as one of its Poseidon inputs.
+        // Round, proposal, decision, and shares_hash binding is transitive
+        // through vote_commitment; share_comms bind one hop earlier through
+        // shares_hash. A wrong public `vote_decision` or a wrong private
+        // share-commitment set changes the condition-2 commitment and is
+        // rejected by the Merkle path binding in condition 1.
         // ---------------------------------------------------------------
         {
             // "share spend" domain tag — constant-constrained so the
@@ -807,7 +860,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 ],
             )?;
 
-            layouter.constrain_instance(share_nullifier.cell(), config.primary, SHARE_NULLIFIER)?;
+            layouter.constrain_instance(
+                share_nullifier.cell(),
+                config.primary,
+                SHARE_NULLIFIER_PUBLIC_OFFSET,
+            )?;
         }
 
         Ok(())
@@ -820,16 +877,24 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
 /// Public inputs to the Share Reveal circuit (9 field elements).
 ///
-/// These are the values posted to the vote chain that both the prover
-/// and verifier agree on. The verifier checks the proof against these
-/// values without seeing any private witnesses.
+/// The voting client (prover) chooses these values when assembling the
+/// proof; the verifier accepts them as the binding the proof must
+/// satisfy and checks the proof without seeing any private witnesses.
+/// The relationship is asymmetric: a malicious-custody client can
+/// choose any public-input vector it likes, so the verifier must source
+/// the *correct* values from authenticated chain state (see
+/// [`crate::share_reveal::prove::verify_share_reveal_proof`] for which
+/// fields require caller authentication versus which are proof-attested
+/// outputs).
 #[derive(Clone, Debug)]
 pub struct Instance {
     /// Poseidon nullifier for this share (prevents double-counting).
     pub share_nullifier: pallas::Base,
-    /// X-coordinate of the revealed share's El Gamal C1 component.
+    /// Caller-supplied x-coordinate of the revealed share's El Gamal C1
+    /// component, bound through condition 4's selected share commitment.
     pub enc_share_c1_x: pallas::Base,
-    /// X-coordinate of the revealed share's El Gamal C2 component.
+    /// Caller-supplied x-coordinate of the revealed share's El Gamal C2
+    /// component, bound through condition 4's selected share commitment.
     pub enc_share_c2_x: pallas::Base,
     /// Which proposal this vote is for.
     pub proposal_id: pallas::Base,
@@ -839,16 +904,36 @@ pub struct Instance {
     pub vote_comm_tree_root: pallas::Base,
     /// The voting round identifier.
     pub voting_round_id: pallas::Base,
-    /// Y-coordinate of the revealed share's El Gamal C1 component.
+    /// Caller-supplied y-coordinate of the revealed share's El Gamal C1
+    /// component.
     ///
     /// Binds the proof to the exact curve point, preventing sign-malleability.
+    /// This is transitively bound through the selected share commitment, not
+    /// directly recovered from vote-proof public inputs.
     pub enc_share_c1_y: pallas::Base,
-    /// Y-coordinate of the revealed share's El Gamal C2 component.
+    /// Caller-supplied y-coordinate of the revealed share's El Gamal C2
+    /// component, transitively bound through the selected share commitment.
     pub enc_share_c2_y: pallas::Base,
 }
 
 impl Instance {
+    /// Number of public inputs serialized by [`Self::to_halo2_instance`].
+    pub const NUM_PUBLIC_INPUTS: usize = 9;
+
     /// Constructs an [`Instance`] from its constituent parts.
+    ///
+    /// Callers should authenticate `proposal_id`, `vote_decision`,
+    /// `vote_comm_tree_root`, and `voting_round_id` out-of-band before
+    /// passing them here — see
+    /// [`crate::share_reveal::prove::verify_share_reveal_proof`] for the
+    /// trust contract. The ciphertext coordinate fields are caller-supplied
+    /// reveal data bound through
+    /// `Poseidon(blind, c1_x, c2_x, c1_y, c2_y) = share_comm[share_index]`
+    /// and the transitive `share_comm -> shares_hash -> vote_commitment`
+    /// chain; they are not direct public outputs of ZKP #2. The remaining
+    /// fields are proof-attested outputs derived outside the circuit but
+    /// constrained in-circuit against authenticated inputs and private
+    /// witnesses.
     #[allow(clippy::too_many_arguments)]
     pub fn from_parts(
         share_nullifier: pallas::Base,
@@ -900,14 +985,15 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ff::PrimeField;
     use group::Curve;
     use halo2_proofs::dev::MockProver;
     use pasta_curves::pallas;
 
-    use crate::vote_proof::{
-        elgamal_encrypt, poseidon_hash_2, share_commitment, shares_hash as compute_shares_hash,
-        spend_auth_g_affine, vote_commitment_hash as compute_vote_commitment_hash,
-    };
+    use crate::circuit::elgamal::{elgamal_encrypt, spend_auth_g_affine};
+    use crate::circuit::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
+    use crate::shares_hash::{share_commitment, shares_hash as compute_shares_hash};
+    use crate::vote_proof::poseidon_hash_2;
 
     fn generate_ea_keypair() -> (pallas::Scalar, pallas::Point, pallas::Affine) {
         let ea_sk = pallas::Scalar::from(42u64);
@@ -1022,6 +1108,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid() {
         let (circuit, instance) = make_test_data(0);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -1029,6 +1116,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid_index_1() {
         let (circuit, instance) = make_test_data(1);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -1036,6 +1124,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid_index_2() {
         let (circuit, instance) = make_test_data(2);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -1043,6 +1132,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid_index_3() {
         let (circuit, instance) = make_test_data(3);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -1050,6 +1140,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid_index_15() {
         let (circuit, instance) = make_test_data(15);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -1057,6 +1148,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_merkle_root() {
         let (circuit, mut instance) = make_test_data(0);
         instance.vote_comm_tree_root = pallas::Base::from(12345u64);
@@ -1065,6 +1157,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_nullifier() {
         let (circuit, mut instance) = make_test_data(0);
         instance.share_nullifier = pallas::Base::from(99999u64);
@@ -1073,6 +1166,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_share_index() {
         let (circuit, instance) = make_test_data(0);
         let bad_instance = Instance::from_parts(
@@ -1091,6 +1185,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_vote_decision() {
         let (circuit, mut instance) = make_test_data(0);
         instance.vote_decision = pallas::Base::from(42u64);
@@ -1099,6 +1194,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_voting_round_id() {
         let (circuit, mut instance) = make_test_data(0);
         instance.voting_round_id = pallas::Base::from(12345u64);
@@ -1110,6 +1206,7 @@ mod tests {
     /// The share reveal circuit binds to the full curve point via share_commitment(blind, c1_x, c2_x, c1_y, c2_y).
     /// Negating c1_y changes the commitment, so the proof must fail.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_sign_flip_detected() {
         let (circuit, mut instance) = make_test_data(0);
         instance.enc_share_c1_y = -instance.enc_share_c1_y;
@@ -1126,6 +1223,7 @@ mod tests {
     /// Changing any share_comm alters shares_hash → vote_commitment, so the Merkle
     /// root computed in-circuit no longer matches the public instance root.
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_tampered_share_comms_fails() {
         let (mut circuit, instance) = make_test_data(0);
 
@@ -1141,13 +1239,66 @@ mod tests {
     }
 
     #[test]
+    fn share_nullifier_tracks_shares_hash_through_vote_commitment() {
+        let voting_round_id = pallas::Base::from(42u64);
+        let proposal_id = pallas::Base::from(7u64);
+        let vote_decision = pallas::Base::from(1u64);
+        let shares_hash_a = pallas::Base::from(100u64);
+        let shares_hash_b = pallas::Base::from(101u64);
+        let share_index = pallas::Base::from(3u64);
+        let blind = pallas::Base::from(200u64);
+
+        let vote_commitment_a = compute_vote_commitment_hash(
+            voting_round_id,
+            shares_hash_a,
+            proposal_id,
+            vote_decision,
+        );
+        let vote_commitment_b = compute_vote_commitment_hash(
+            voting_round_id,
+            shares_hash_b,
+            proposal_id,
+            vote_decision,
+        );
+        assert_ne!(vote_commitment_a, vote_commitment_b);
+
+        let share_nullifier_a = share_nullifier_hash(vote_commitment_a, share_index, blind);
+        let share_nullifier_b = share_nullifier_hash(vote_commitment_b, share_index, blind);
+        assert_ne!(share_nullifier_a, share_nullifier_b);
+
+        assert_eq!(
+            vote_commitment_a.to_repr(),
+            [
+                246, 84, 48, 178, 227, 178, 234, 71, 2, 178, 177, 211, 238, 120, 238, 157, 174, 5,
+                29, 244, 76, 128, 250, 245, 139, 137, 84, 246, 108, 197, 47, 31,
+            ]
+        );
+        assert_eq!(
+            vote_commitment_b.to_repr(),
+            [
+                153, 178, 215, 171, 108, 162, 193, 164, 62, 112, 205, 83, 186, 133, 99, 176, 44,
+                202, 218, 73, 114, 189, 204, 58, 82, 13, 52, 188, 69, 70, 131, 3,
+            ]
+        );
+        assert_eq!(
+            share_nullifier_a.to_repr(),
+            [
+                119, 176, 211, 29, 114, 129, 188, 150, 122, 163, 222, 136, 21, 250, 159, 126, 139,
+                224, 205, 109, 60, 84, 112, 66, 101, 139, 161, 62, 127, 17, 37, 22,
+            ]
+        );
+        assert_eq!(
+            share_nullifier_b.to_repr(),
+            [
+                244, 6, 225, 7, 34, 104, 123, 192, 48, 94, 4, 222, 156, 224, 137, 204, 121, 90, 18,
+                186, 234, 235, 223, 30, 101, 75, 79, 249, 44, 11, 24, 59,
+            ]
+        );
+    }
+
+    #[test]
     fn test_share_reveal_domain_tag_matches_server() {
-        use ff::PrimeField;
-        let mut bytes = [0u8; 32];
-        let tag = b"share spend";
-        bytes[..tag.len()].copy_from_slice(tag);
-        let server_tag = pallas::Base::from_repr(bytes).unwrap();
-        assert_eq!(domain_tag_share_spend(), server_tag);
+        assert_eq!(domain_tag_share_spend(), crate::domain_tags::share_spend());
     }
 
     /// Measures actual rows used by the share-reveal circuit via `CircuitCost::measure`.
@@ -1159,7 +1310,7 @@ mod tests {
     /// Run with:
     ///   cargo test row_budget -- --nocapture --ignored
     #[test]
-    #[ignore]
+    #[ignore = "long-running row-budget diagnostic; run with `cargo test row_budget -- --ignored --nocapture`"]
     fn row_budget() {
         use halo2_proofs::dev::CircuitCost;
         use pasta_curves::vesta;

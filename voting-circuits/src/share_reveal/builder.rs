@@ -8,10 +8,9 @@
 use halo2_proofs::circuit::Value;
 use pasta_curves::pallas;
 
+use crate::circuit::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
 use crate::shares_hash::shares_hash_from_comms;
-use crate::vote_proof::{
-    poseidon_hash_2, vote_commitment_hash as compute_vote_commitment_hash, VOTE_COMM_TREE_DEPTH,
-};
+use crate::vote_proof::{poseidon_hash_2, VOTE_COMM_TREE_DEPTH};
 
 use super::circuit::{share_nullifier_hash, Circuit, Instance};
 
@@ -20,7 +19,7 @@ use super::circuit::{share_nullifier_hash, Circuit, Instance};
 pub struct ShareRevealBundle {
     /// The share reveal circuit with all witnesses populated.
     pub circuit: Circuit,
-    /// Public inputs (7 field elements).
+    /// Public inputs (9 field elements).
     pub instance: Instance,
 }
 
@@ -33,10 +32,15 @@ pub struct ShareRevealBundle {
 /// - `share_comms`: Pre-computed per-share Poseidon commitments
 ///   (`share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`).
 /// - `primary_blind`: Blind factor for the revealed share (at `share_index`).
-/// - `enc_c1_x`: X-coordinate of the revealed share's El Gamal C1.
-/// - `enc_c2_x`: X-coordinate of the revealed share's El Gamal C2.
-/// - `enc_c1_y`: Y-coordinate of the revealed share's El Gamal C1.
-/// - `enc_c2_y`: Y-coordinate of the revealed share's El Gamal C2.
+/// - `enc_c1_x`: X-coordinate of the revealed share's El Gamal C1. This is
+///   reveal data supplied by the caller and bound to `share_comms[share_index]`
+///   through the share-commitment Poseidon hash.
+/// - `enc_c2_x`: X-coordinate of the revealed share's El Gamal C2. Same
+///   transitive binding as `enc_c1_x`.
+/// - `enc_c1_y`: Y-coordinate of the revealed share's El Gamal C1. Included so
+///   the reveal binds the exact curve point, not only its x-coordinate.
+/// - `enc_c2_y`: Y-coordinate of the revealed share's El Gamal C2. Included for
+///   exact-point binding and tied through the selected share commitment.
 /// - `share_index`: Which of the 16 shares is being revealed (0..15).
 /// - `proposal_id`: Proposal identifier (as a field element).
 /// - `vote_decision`: The voter's choice (as a field element).
@@ -112,11 +116,13 @@ mod tests {
     use halo2_proofs::dev::MockProver;
     use pasta_curves::pallas;
 
-    use crate::vote_proof::{elgamal_encrypt, share_commitment, spend_auth_g_affine};
+    use crate::circuit::elgamal::{elgamal_encrypt, spend_auth_g_affine};
+    use crate::shares_hash::share_commitment;
 
     use super::super::circuit::K;
 
     #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_builder_round_trip() {
         let ea_sk = pallas::Scalar::from(42u64);
         let g = pallas::Point::from(spend_auth_g_affine());

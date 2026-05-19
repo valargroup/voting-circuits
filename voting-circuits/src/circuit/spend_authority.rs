@@ -41,7 +41,10 @@ use orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
 ///
 /// * `ecc_chip`     – The ECC chip used for curve arithmetic.
 /// * `layouter`     – Circuit layouter.
-/// * `alpha`        – The randomizer scalar witness value.
+/// * `alpha`        – The randomizer scalar witness value. This relation
+///   accepts zero, matching upstream Orchard; callers that require
+///   coercion-resistance must enforce the non-zero/randomness discipline
+///   outside this gadget or add a VK-moving constraint.
 /// * `ak_P`         – The spend validating key as a curve point.
 /// * `primary`      – The instance column for public inputs.
 /// * `rk_x_row`     – Row index in `primary` for the rk x-coordinate.
@@ -71,12 +74,12 @@ use orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
 ///     let rk = alpha_commitment.add(layouter.namespace(|| "rk"), &ak_P)?;
 ///
 ///     // Constrain rk to equal public input
-///     layouter.constrain_instance(rk.inner().x().cell(), config.primary, RK_X)?;
-///     layouter.constrain_instance(rk.inner().y().cell(), config.primary, RK_Y)?;
+///     layouter.constrain_instance(rk.inner().x().cell(), config.primary, rk_x_row)?;
+///     layouter.constrain_instance(rk.inner().y().cell(), config.primary, rk_y_row)?;
 /// }
 /// ```
 #[allow(non_snake_case)]
-pub fn prove_spend_authority(
+pub(crate) fn prove_spend_authority(
     ecc_chip: EccChip<OrchardFixedBases>,
     mut layouter: impl Layouter<pallas::Base>,
     alpha: Value<pallas::Scalar>,

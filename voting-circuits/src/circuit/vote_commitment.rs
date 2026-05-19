@@ -1,16 +1,16 @@
 //! Vote Commitment integrity gadget.
 //!
-//! Shared 5-input Poseidon hash used by both ZKP #2 (vote proof,
-//! condition 12) and ZKP #3 (share reveal, condition 2):
+//! Authoritative in-tree definition of the 5-input Poseidon hash used by both
+//! ZKP #2 (vote proof, condition 12) and ZKP #3 (share reveal, condition 2).
 //!
 //! ```text
 //! vote_commitment = Poseidon(DOMAIN_VC, voting_round_id,
 //!                            shares_hash, proposal_id, vote_decision)
 //! ```
 //!
-//! The domain tag bakes into the verification key, preventing malicious
-//! provers from substituting VAN commitments for vote commitments in the
-//! shared tree.
+//! The domain tag bakes into the verification key, preventing a
+//! client misuse driving the honest circuit from substituting VAN
+//! commitments for vote commitments in the shared tree.
 
 use pasta_curves::pallas;
 
@@ -23,15 +23,7 @@ use halo2_proofs::{
     plonk,
 };
 
-// ================================================================
-// Constants
-// ================================================================
-
-/// Domain tag for Vote Commitments.
-///
-/// Prepended as the first Poseidon input for domain separation from
-/// VANs (`DOMAIN_VAN = 0`) in the shared vote commitment tree.
-pub const DOMAIN_VC: u64 = 1;
+pub use crate::domain_tags::DOMAIN_VC;
 
 // ================================================================
 // Out-of-circuit helper
@@ -39,14 +31,15 @@ pub const DOMAIN_VC: u64 = 1;
 
 /// Out-of-circuit vote commitment hash.
 ///
-/// Computes:
+/// This is the authoritative native implementation of the vote commitment
+/// preimage shared by vote proof and share reveal:
 /// ```text
 /// Poseidon(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)
 /// ```
 ///
 /// Used by builders and tests to compute the expected vote commitment.
 /// Must produce identical output to the in-circuit gadget.
-pub fn vote_commitment_hash(
+pub(crate) fn vote_commitment_hash(
     voting_round_id: pallas::Base,
     shares_hash: pallas::Base,
     proposal_id: pallas::Base,
@@ -77,7 +70,7 @@ pub fn vote_commitment_hash(
 ///
 /// Used by ZKP #2 (vote proof, condition 12) and ZKP #3 (share reveal,
 /// condition 2).
-pub fn vote_commitment_poseidon(
+pub(crate) fn vote_commitment_poseidon(
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
     layouter: &mut impl Layouter<pallas::Base>,
     label: &str,

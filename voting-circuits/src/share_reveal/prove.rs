@@ -8,12 +8,13 @@ use std::vec::Vec;
 
 use halo2_proofs::{
     pasta::EqAffine,
-    plonk::{self, create_proof, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
+    plonk::{self, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
     poly::commitment::Params,
-    transcript::{Blake2bRead, Blake2bWrite, Challenge255},
+    transcript::{Blake2bRead, Challenge255},
 };
-use pasta_curves::{pallas, vesta};
-use rand::rngs::OsRng;
+
+use crate::prove_error::create_proof_bytes;
+use crate::ProveError;
 
 use super::circuit::{Circuit, Instance, K};
 
@@ -70,33 +71,35 @@ pub fn share_reveal_cached_keys() -> &'static (
     })
 }
 
+/// Warm the process-lifetime share reveal params/proving-key cache.
+///
+/// This lets callers pay deterministic keygen before the first user-visible
+/// proof generation or verification path needs the key.
+pub fn warm_share_reveal_keys() {
+    let _ = share_reveal_cached_keys();
+}
+
 // ================================================================
 // Prove
 // ================================================================
 
 /// Create a real Halo2 proof for the share reveal circuit.
 ///
-/// Returns the serialized proof bytes. The caller must have constructed
-/// a valid `Circuit` (with all witnesses populated) and a matching
-/// `Instance` (7 public inputs).
+/// Returns the serialized proof bytes. Returns an error if the caller
+/// provides a circuit without all witnesses populated or an instance
+/// that Halo2 cannot prove against.
 ///
 /// **Expensive**: K=11 proof generation takes ~5-15 seconds in release mode.
-pub fn create_share_reveal_proof(circuit: Circuit, instance: &Instance) -> Vec<u8> {
+/// Params and keys are cached so only the first call pays keygen.
+pub fn create_share_reveal_proof(
+    circuit: Circuit,
+    instance: &Instance,
+) -> Result<Vec<u8>, ProveError> {
     let (params, pk, _vk) = share_reveal_cached_keys();
 
     let public_inputs = instance.to_halo2_instance();
 
-    let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<_>>::init(vec![]);
-    create_proof(
-        params,
-        pk,
-        &[circuit],
-        &[&[&public_inputs]],
-        OsRng,
-        &mut transcript,
-    )
-    .expect("share_reveal proof generation should not fail");
-    transcript.finalize()
+    create_proof_bytes(params, pk, circuit, &public_inputs)
 }
 
 // ================================================================
@@ -107,6 +110,57 @@ pub fn create_share_reveal_proof(circuit: Circuit, instance: &Instance) -> Vec<u
 /// the 9 public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
+///
+/// # Caller-authenticated inputs
+///
+/// `constrain_instance` pins each public input to whatever value the
+/// *verifier* supplies; the protocol cannot tell whether that value was
+/// the *right* one. The following fields of `instance` MUST be sourced
+/// from a trusted channel (authenticated chain state, a signed
+/// governance announcement) before calling this function. Substituting
+/// them is not detectable from the proof alone:
+///
+/// - `instance.proposal_id` — must come from the active session's
+///   published proposal list (the same value bound into the matching
+///   vote-proof's `vote_commitment`).
+/// - `instance.voting_round_id` — must come from the same governance
+///   announcement as `proposal_id`.
+/// - `instance.vote_comm_tree_root` — must be the vote commitment tree
+///   root at the announced snapshot height (verifier looks it up by
+///   height, not by accepting it from the prover bundle).
+/// - `instance.vote_decision` — the on-chain reveal of the voter's
+///   choice; the caller must accept it only as part of the same chain
+///   bundle that carries the proof, not from an untrusted side channel
+///   (the proof binds it but does not assert it equals any particular
+///   value).
+///
+/// # Caller-supplied values bound transitively by the proof
+///
+/// The revealed ciphertext coordinates are public values supplied by the
+/// caller. The circuit does not recover them from ZKP #2, because vote-proof
+/// publishes only the aggregate `vote_commitment`. Instead, condition 4 binds
+/// them by proving:
+///
+/// `Poseidon(blind, c1_x, c2_x, c1_y, c2_y) = share_comms[share_index]`
+///
+/// for a private `blind` and one of the 16 private share commitments, which
+/// are then bound to `vote_comm_tree_root` through
+/// `share_comms -> shares_hash -> vote_commitment -> Merkle path`. This
+/// category is sound under the share-commitment Poseidon preimage-resistance
+/// assumption, but it is not a direct `constrain_instance` derivation from
+/// other public inputs.
+///
+/// - `instance.enc_share_c1_x`, `instance.enc_share_c1_y`
+/// - `instance.enc_share_c2_x`, `instance.enc_share_c2_y`
+///
+/// # Proof-attested outputs
+///
+/// The following public inputs are derived outside the circuit but
+/// constrained in-circuit against authenticated inputs and private witnesses;
+/// successful verification is itself their authentication and the caller does
+/// not need a separate trusted channel:
+///
+/// - `instance.share_nullifier`
 pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
     let (params, _pk, vk) = share_reveal_cached_keys();
 
@@ -119,56 +173,37 @@ pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<()
         .map_err(|e| format!("share_reveal verification failed: {:?}", e))
 }
 
-/// Verify a share reveal circuit proof from raw field-element bytes.
-///
-/// This is the lower-level entry point used by the FFI layer. It takes
-/// the proof bytes and a flat array of 9 × 32-byte LE-encoded Pallas
-/// base field elements (the public inputs in canonical order).
-///
-/// Returns `Ok(())` if verification succeeds, or an error message.
-pub fn verify_share_reveal_proof_raw(
-    proof: &[u8],
-    public_inputs_bytes: &[u8],
-) -> Result<(), String> {
-    use pasta_curves::group::ff::PrimeField;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ProveError;
+    use halo2_proofs::plonk;
+    use pasta_curves::pallas;
 
-    const NUM_PUBLIC_INPUTS: usize = 9;
-    const EXPECTED_BYTES: usize = NUM_PUBLIC_INPUTS * 32;
-
-    if public_inputs_bytes.len() != EXPECTED_BYTES {
-        return Err(format!(
-            "expected {} bytes ({} × 32) for public inputs, got {}",
-            EXPECTED_BYTES,
-            NUM_PUBLIC_INPUTS,
-            public_inputs_bytes.len()
-        ));
+    fn minimal_instance() -> Instance {
+        Instance::from_parts(
+            pallas::Base::from(1),
+            pallas::Base::from(2),
+            pallas::Base::from(3),
+            pallas::Base::from(4),
+            pallas::Base::from(5),
+            pallas::Base::from(6),
+            pallas::Base::from(7),
+            pallas::Base::from(8),
+            pallas::Base::from(9),
+        )
     }
 
-    // Deserialize each 32-byte chunk as a Pallas Fp element.
-    // Note: the share reveal circuit's public inputs live on the Vesta
-    // scalar field, which is the same as the Pallas base field.
-    let mut public_inputs: Vec<vesta::Scalar> = Vec::with_capacity(NUM_PUBLIC_INPUTS);
-    for i in 0..NUM_PUBLIC_INPUTS {
-        let start = i * 32;
-        let mut repr = [0u8; 32];
-        repr.copy_from_slice(&public_inputs_bytes[start..start + 32]);
-        let fp_opt: Option<pallas::Base> = pallas::Base::from_repr(repr).into();
-        match fp_opt {
-            Some(f) => public_inputs.push(f),
-            None => {
-                return Err(format!(
-                    "public input {} is not a canonical Pallas Fp encoding",
-                    i
-                ))
-            }
-        }
+    #[test]
+    fn create_share_reveal_proof_signature_returns_result() {
+        let _: fn(Circuit, &Instance) -> Result<Vec<u8>, ProveError> = create_share_reveal_proof;
     }
 
-    let (params, _pk, vk) = share_reveal_cached_keys();
+    #[test]
+    fn create_share_reveal_proof_returns_err_for_missing_witnesses() {
+        let instance = minimal_instance();
+        let err = create_share_reveal_proof(Circuit::default(), &instance).unwrap_err();
 
-    let strategy = SingleVerifier::new(params);
-    let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);
-
-    verify_proof(params, vk, strategy, &[&[&public_inputs]], &mut transcript)
-        .map_err(|e| format!("share_reveal verification failed: {:?}", e))
+        assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
+    }
 }

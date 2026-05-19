@@ -1,8 +1,9 @@
 //! Shared circuit gadget for the shares-hash computation used in ZKP #2 and ZKP #3.
 //!
-//! Both the vote-proof circuit (ZKP #2, condition 10) and the share-reveal
-//! circuit (ZKP #3, condition 3) compute exactly the same two-level Poseidon
-//! hash over the sixteen encrypted shares:
+//! This module is the authoritative in-tree definition of the two-level
+//! encrypted-share hash. Both the vote-proof circuit (ZKP #2, condition 10) and
+//! the share-reveal circuit (ZKP #3, condition 3) call this implementation
+//! rather than maintaining separate formula copies:
 //!
 //! ```text
 //! share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i ∈ 0..16
@@ -12,6 +13,11 @@
 //! The y-coordinates are included to bind each share commitment to the exact
 //! curve point, preventing ciphertext sign-malleability attacks where an
 //! adversary negates ElGamal ciphertext points without invalidating the ZKP.
+//!
+//! `shares_hash` is a reusable internal circuit value, not a public instance
+//! by itself. ZKP #2 binds it to the verifier only by feeding it into the
+//! public vote commitment, while ZKP #3 binds it transitively through the same
+//! vote commitment tree path.
 //!
 //! This module extracts those constraints into a single, auditable gadget so
 //! that both circuits provably execute the same hash logic.
@@ -24,7 +30,56 @@ use halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk,
 };
+use itertools::Itertools;
 use pasta_curves::pallas;
+
+/// Native per-share blinded commitment:
+///
+/// ```text
+/// share_comm = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)
+/// ```
+///
+/// The y-coordinates bind the commitment to the exact curve point, preventing
+/// ciphertext sign-malleability. The blind factor prevents anyone who sees the
+/// encrypted shares on-chain from recomputing `shares_hash` and linking it to a
+/// specific vote commitment.
+pub fn share_commitment(
+    blind: pallas::Base,
+    c1_x: pallas::Base,
+    c2_x: pallas::Base,
+    c1_y: pallas::Base,
+    c2_y: pallas::Base,
+) -> pallas::Base {
+    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2>::init()
+        .hash([blind, c1_x, c2_x, c1_y, c2_y])
+}
+
+/// Native full two-level shares hash:
+///
+/// ```text
+/// share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i ∈ 0..16
+/// shares_hash  = Poseidon(share_comm_0, …, share_comm_15)
+/// ```
+///
+/// Native counterpart of [`compute_shares_hash_in_circuit`].
+pub fn shares_hash(
+    share_blinds: [pallas::Base; 16],
+    enc_share_c1_x: [pallas::Base; 16],
+    enc_share_c2_x: [pallas::Base; 16],
+    enc_share_c1_y: [pallas::Base; 16],
+    enc_share_c2_y: [pallas::Base; 16],
+) -> pallas::Base {
+    let comms: [pallas::Base; 16] = core::array::from_fn(|i| {
+        share_commitment(
+            share_blinds[i],
+            enc_share_c1_x[i],
+            enc_share_c2_x[i],
+            enc_share_c1_y[i],
+            enc_share_c2_y[i],
+        )
+    });
+    shares_hash_from_comms(comms)
+}
 
 /// Computes a single blinded per-share commitment in-circuit:
 ///
@@ -35,7 +90,7 @@ use pasta_curves::pallas;
 /// The y-coordinates bind the commitment to the exact curve point, preventing
 /// ciphertext sign-malleability. The `index` is used only for namespace labels
 /// and has no effect on the constraint system.
-pub fn hash_share_commitment_in_circuit(
+pub(crate) fn hash_share_commitment_in_circuit(
     chip: PoseidonChip<pallas::Base, 3, 2>,
     mut layouter: impl Layouter<pallas::Base>,
     blind: AssignedCell<pallas::Base, pallas::Base>,
@@ -77,8 +132,10 @@ pub fn hash_share_commitment_in_circuit(
 /// * `enc_c1_y` — The 16 El Gamal `C1` y-coordinates.
 /// * `enc_c2_y` — The 16 El Gamal `C2` y-coordinates.
 ///
-/// Returns the `shares_hash` cell.
-pub fn compute_shares_hash_in_circuit(
+/// Returns the internal `shares_hash` cell. The caller is responsible for
+/// consuming that cell in a public binding, such as the vote commitment hash;
+/// this gadget does not constrain the result to an instance column.
+pub(crate) fn compute_shares_hash_in_circuit(
     poseidon_chip: impl Fn() -> PoseidonChip<pallas::Base, 3, 2>,
     mut layouter: impl Layouter<pallas::Base>,
     blinds: [AssignedCell<pallas::Base, pallas::Base>; 16],
@@ -88,10 +145,10 @@ pub fn compute_shares_hash_in_circuit(
     enc_c2_y: [AssignedCell<pallas::Base, pallas::Base>; 16],
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
     let share_comms: [_; 16] = IntoIterator::into_iter(blinds)
-        .zip(enc_c1_x)
-        .zip(enc_c2_x)
-        .zip(enc_c1_y)
-        .zip(enc_c2_y)
+        .zip_eq(enc_c1_x)
+        .zip_eq(enc_c2_x)
+        .zip_eq(enc_c1_y)
+        .zip_eq(enc_c2_y)
         .enumerate()
         .map(|(i, ((((blind, c1x), c2x), c1y), c2y))| {
             hash_share_commitment_in_circuit(
@@ -135,8 +192,10 @@ pub fn compute_shares_hash_in_circuit(
 ///
 /// Unlike [`compute_shares_hash_in_circuit`], this skips the per-share
 /// blind hashing (level 1) because the caller already provides the 16
-/// `share_comm` values — e.g. as public inputs copied from the instance
-/// column in ZKP #3.
+/// `share_comm` values — e.g. as private witness cells in ZKP #3.
+///
+/// Returns an internal cell; callers must bind it transitively through their
+/// own public commitment path.
 pub(crate) fn compute_shares_hash_from_comms_in_circuit(
     poseidon_chip: PoseidonChip<pallas::Base, 3, 2>,
     mut layouter: impl Layouter<pallas::Base>,
@@ -178,8 +237,6 @@ mod tests {
         plonk::{Advice, Column, ConstraintSystem, Fixed, Instance as InstanceColumn},
     };
     use rand::rngs::OsRng;
-
-    use crate::vote_proof::circuit::{share_commitment, shares_hash};
 
     // ---------------------------------------------------------------
     // Shared minimal circuit config (Poseidon only, no ECC).
@@ -525,7 +582,11 @@ mod tests {
         assert!(prover.verify().is_err());
     }
 
-    /// Every one of the 16 share positions contributes to the output hash.
+    /// Every one of the 16 share positions contributes to the native output hash.
+    ///
+    /// `compute_shares_hash_matches_native` covers the in-circuit/native
+    /// equivalence once; this test keeps the per-position coverage without
+    /// running a separate K=12 prover for every position.
     #[test]
     fn all_16_share_positions_are_hashed() {
         let mut rng = OsRng;
@@ -538,20 +599,13 @@ mod tests {
         let correct = shares_hash(blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y);
 
         for i in 0..16 {
-            let mut circuit = ComputeSharesHashCircuit {
-                blinds,
-                enc_c1_x,
-                enc_c2_x,
-                enc_c1_y,
-                enc_c2_y,
-            };
-            circuit.enc_c1_x[i] = pallas::Base::random(&mut rng);
+            let mut perturbed_enc_c1_x = enc_c1_x;
+            perturbed_enc_c1_x[i] += pallas::Base::one();
 
-            let prover = MockProver::run(12, &circuit, vec![vec![correct]])
-                .unwrap_or_else(|e| panic!("MockProver::run failed at position {i}: {e}"));
-            assert!(
-                prover.verify().is_err(),
-                "corrupting enc_c1_x[{i}] did not change the shares_hash — position is not hashed"
+            assert_ne!(
+                shares_hash(blinds, perturbed_enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y),
+                correct,
+                "perturbing enc_c1_x[{i}] did not change the shares_hash"
             );
         }
     }
@@ -638,6 +692,130 @@ mod tests {
         }
     }
 
+    /// Minimal circuit: computes both in-circuit `shares_hash` paths from the
+    /// same witness and constrains their outputs equal without a native oracle.
+    #[derive(Clone)]
+    struct SharesHashInCircuitEquivalenceCircuit {
+        blinds: [pallas::Base; 16],
+        enc_c1_x: [pallas::Base; 16],
+        enc_c2_x: [pallas::Base; 16],
+        enc_c1_y: [pallas::Base; 16],
+        enc_c2_y: [pallas::Base; 16],
+    }
+
+    impl Default for SharesHashInCircuitEquivalenceCircuit {
+        fn default() -> Self {
+            Self {
+                blinds: [pallas::Base::zero(); 16],
+                enc_c1_x: [pallas::Base::zero(); 16],
+                enc_c2_x: [pallas::Base::zero(); 16],
+                enc_c1_y: [pallas::Base::zero(); 16],
+                enc_c2_y: [pallas::Base::zero(); 16],
+            }
+        }
+    }
+
+    impl plonk::Circuit<pallas::Base> for SharesHashInCircuitEquivalenceCircuit {
+        type Config = TestConfig;
+        type FloorPlanner = floor_planner::V1;
+
+        fn without_witnesses(&self) -> Self {
+            Self::default()
+        }
+
+        fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
+            TestConfig::configure(meta)
+        }
+
+        fn synthesize(
+            &self,
+            config: Self::Config,
+            mut layouter: impl Layouter<pallas::Base>,
+        ) -> Result<(), plonk::Error> {
+            let mut blind_cells = Vec::with_capacity(16);
+            let mut c1x_cells = Vec::with_capacity(16);
+            let mut c2x_cells = Vec::with_capacity(16);
+            let mut c1y_cells = Vec::with_capacity(16);
+            let mut c2y_cells = Vec::with_capacity(16);
+            for i in 0..16 {
+                blind_cells.push(witness(
+                    layouter.namespace(|| format!("blind_{i}")),
+                    config.advice,
+                    Value::known(self.blinds[i]),
+                )?);
+                c1x_cells.push(witness(
+                    layouter.namespace(|| format!("c1x_{i}")),
+                    config.advice,
+                    Value::known(self.enc_c1_x[i]),
+                )?);
+                c2x_cells.push(witness(
+                    layouter.namespace(|| format!("c2x_{i}")),
+                    config.advice,
+                    Value::known(self.enc_c2_x[i]),
+                )?);
+                c1y_cells.push(witness(
+                    layouter.namespace(|| format!("c1y_{i}")),
+                    config.advice,
+                    Value::known(self.enc_c1_y[i]),
+                )?);
+                c2y_cells.push(witness(
+                    layouter.namespace(|| format!("c2y_{i}")),
+                    config.advice,
+                    Value::known(self.enc_c2_y[i]),
+                )?);
+            }
+
+            let blinds_full: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+                core::array::from_fn(|i| blind_cells[i].clone());
+            let enc_c1_x_full: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+                core::array::from_fn(|i| c1x_cells[i].clone());
+            let enc_c2_x_full: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+                core::array::from_fn(|i| c2x_cells[i].clone());
+            let enc_c1_y_full: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+                core::array::from_fn(|i| c1y_cells[i].clone());
+            let enc_c2_y_full: [AssignedCell<pallas::Base, pallas::Base>; 16] =
+                core::array::from_fn(|i| c2y_cells[i].clone());
+
+            let full_hash = compute_shares_hash_in_circuit(
+                || config.poseidon_chip(),
+                layouter.namespace(|| "full shares_hash path"),
+                blinds_full,
+                enc_c1_x_full,
+                enc_c2_x_full,
+                enc_c1_y_full,
+                enc_c2_y_full,
+            )?;
+
+            let share_comms: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
+                .map(|i| {
+                    hash_share_commitment_in_circuit(
+                        config.poseidon_chip(),
+                        layouter.namespace(|| format!("from-comms share_comm_{i}")),
+                        blind_cells[i].clone(),
+                        c1x_cells[i].clone(),
+                        c2x_cells[i].clone(),
+                        c1y_cells[i].clone(),
+                        c2y_cells[i].clone(),
+                        i,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .try_into()
+                .expect("always 16 elements");
+
+            let from_comms_hash = super::compute_shares_hash_from_comms_in_circuit(
+                config.poseidon_chip(),
+                layouter.namespace(|| "from-comms shares_hash path"),
+                share_comms,
+            )?;
+
+            layouter.assign_region(
+                || "full shares_hash == from-comms shares_hash",
+                |mut region| region.constrain_equal(full_hash.cell(), from_comms_hash.cell()),
+            )
+        }
+    }
+
     /// The from-comms gadget matches the two-level native computation.
     #[test]
     fn shares_hash_from_comms_matches_native() {
@@ -667,6 +845,24 @@ mod tests {
         let circuit = ComputeSharesHashFromCommsCircuit { share_comms: comms };
         let prover =
             MockProver::run(12, &circuit, vec![vec![expected]]).expect("MockProver::run failed");
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
+    /// The full two-level in-circuit path and the from-comms in-circuit path
+    /// agree on the same witnesses without relying on a native expected value.
+    #[test]
+    fn compute_shares_hash_in_circuit_matches_from_comms_in_circuit() {
+        let mut rng = OsRng;
+        let circuit = SharesHashInCircuitEquivalenceCircuit {
+            blinds: core::array::from_fn(|_| pallas::Base::random(&mut rng)),
+            enc_c1_x: core::array::from_fn(|_| pallas::Base::random(&mut rng)),
+            enc_c2_x: core::array::from_fn(|_| pallas::Base::random(&mut rng)),
+            enc_c1_y: core::array::from_fn(|_| pallas::Base::random(&mut rng)),
+            enc_c2_y: core::array::from_fn(|_| pallas::Base::random(&mut rng)),
+        };
+
+        // K=13 fits the two complete 17-Poseidon paths used by this equivalence test.
+        let prover = MockProver::run(13, &circuit, vec![vec![]]).expect("MockProver::run failed");
         assert_eq!(prover.verify(), Ok(()));
     }
 

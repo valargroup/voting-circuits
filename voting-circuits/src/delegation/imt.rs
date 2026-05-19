@@ -9,10 +9,10 @@
 //! `(nf_lo, nf_hi)` and is not equal to `nf_mid`.
 //! Used by the delegation circuit and builder.
 
-use ff::PrimeField;
-use halo2_gadgets::poseidon::primitives::{self as poseidon, ConstantLength};
 use pasta_curves::pallas;
 use std::string::String;
+
+use crate::protocol_hash::{poseidon_hash, poseidon_hash_2, poseidon_hash_3};
 
 /// Depth of the nullifier Indexed Merkle Tree Merkle path (Poseidon-based).
 /// Total Poseidon calls per proof = 2 (leaf hash, ConstantLength<3>) + 29 (path) = 31.
@@ -20,22 +20,10 @@ pub const IMT_DEPTH: usize = 29;
 
 /// Protocol identifier for governance authorization, encoded as a little-endian
 /// Pallas field element. Used to derive the nullifier domain for this application.
-pub(crate) fn gov_auth_domain_tag() -> pallas::Base {
-    let mut bytes = [0u8; 32];
-    bytes[..24].copy_from_slice(b"governance authorization");
-    pallas::Base::from_repr(bytes).unwrap()
-}
+pub(crate) use crate::domain_tags::governance_authorization as gov_auth_domain_tag;
 
-/// Compute Poseidon hash of two field elements (out of circuit).
-pub(crate) fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<2>, 3, 2>::init().hash([a, b])
-}
-
-/// Compute Poseidon hash of three field elements (out of circuit).
-/// Uses `ConstantLength<3>` (width-3 sponge, 2 absorption blocks).
-pub(crate) fn poseidon_hash_3(a: pallas::Base, b: pallas::Base, c: pallas::Base) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init().hash([a, b, c])
-}
+/// Domain tag for governance alternate nullifiers.
+pub(crate) use crate::domain_tags::governance_nullifier as gov_null_domain_tag;
 
 /// Derive the nullifier domain for a voting round (out of circuit).
 ///
@@ -50,16 +38,16 @@ pub fn derive_nullifier_domain(vote_round_id: pallas::Base) -> pallas::Base {
 
 /// Compute alternate nullifier out-of-circuit (ZIP §Alternate Nullifier Derivation).
 ///
-/// `nf_dom = Poseidon(nk, dom, nf^old)`
+/// `nf_dom = Poseidon("governance nullifier", nk, dom, nf^old)`
 ///
 /// where `dom` is the nullifier domain (see [`derive_nullifier_domain`]).
-/// Single ConstantLength<3> call (2 permutations at rate=2).
+/// Single ConstantLength<4> call (2 permutations at rate=2).
 pub(crate) fn gov_null_hash(
     nk: pallas::Base,
     dom: pallas::Base,
     real_nf: pallas::Base,
 ) -> pallas::Base {
-    poseidon_hash_3(nk, dom, real_nf)
+    poseidon_hash([gov_null_domain_tag(), nk, dom, real_nf])
 }
 
 /// IMT non-membership proof data (K=2 punctured-range leaf model).
@@ -69,6 +57,18 @@ pub(crate) fn gov_null_hash(
 /// 29-level Merkle path to the root. Non-membership is proven by showing:
 ///   1. `nf_lo < value < nf_hi` (strict interval)
 ///   2. `value != nf_mid` (non-equality with interior nullifier)
+///
+/// # Tree contract
+///
+/// Proof soundness depends on the authenticated leaves forming the canonical
+/// K=2 punctured-range tree for the nullifier set. The nullifier list must be
+/// sorted, deduplicated, padded to an odd count, and include sentinels so that
+/// adjacent leaves share only boundary nullifiers and cover every value the
+/// circuit may rule out.
+///
+/// Every returned leaf must also have outer span `nf_hi - nf_lo <= 2^250` in
+/// canonical Pallas base-field ordering. This keeps each canonical bracket
+/// within the 250-bit offset checks used by the circuit.
 #[derive(Clone, Debug)]
 pub struct ImtProofData {
     /// The Merkle root of the IMT.
@@ -95,8 +95,20 @@ impl std::error::Error for ImtError {}
 
 /// Trait for providing IMT non-membership proofs.
 ///
-/// Implementations must return proofs against a consistent root — all proofs
-/// from the same provider must share the same `root()` value.
+/// # Invariants
+///
+/// Implementations must return proofs against a consistent root. Every proof
+/// returned by [`ImtProvider::non_membership_proof`] must authenticate to the
+/// same root returned by [`ImtProvider::root`].
+///
+/// Implementations must also satisfy the [`ImtProofData`] tree contract. The
+/// leaves committed under the root must be a non-overlapping partition of the
+/// nullifier domain covered by the circuit. A provider must not return a proof
+/// against one leaf for a value that appears as `nf_mid` in another leaf, since
+/// the circuit cannot detect overlap between authenticated leaves.
+///
+/// [`SpacedLeafImtProvider`] is the in-crate implementation for proof
+/// generation and tests.
 pub trait ImtProvider {
     /// The current IMT root.
     fn root(&self) -> pallas::Base;
@@ -115,7 +127,7 @@ use std::vec::Vec;
 ///
 /// `empty[0] = Poseidon3(0, 0, 0)` (hash of an all-zero punctured-range leaf),
 /// `empty[i] = Poseidon(empty[i-1], empty[i-1])` for i >= 1.
-pub fn empty_imt_hashes() -> Vec<pallas::Base> {
+fn empty_imt_hashes() -> Vec<pallas::Base> {
     let empty_leaf = poseidon_hash_3(
         pallas::Base::zero(),
         pallas::Base::zero(),
@@ -133,11 +145,12 @@ pub fn empty_imt_hashes() -> Vec<pallas::Base> {
 /// With K=2 punctured ranges each leaf spans two consecutive intervals,
 /// giving outer span `2 * 2^249 = 2^250` — matching the circuit's 250-bit
 /// range check.
-const SENTINEL_EXPONENT: u64 = 249;
+pub const SENTINEL_EXPONENT: u64 = 249;
 
 /// Number of sentinel multiples: `0, 1*step, 2*step, ..., 32*step`.
-/// `32 * 2^249 = 2^254` covers the Pallas field (p ≈ 2^254.9).
-const SENTINEL_COUNT: u64 = 32;
+/// `32 * 2^249 = 2^254` reaches the main high bit of the Pallas base field,
+/// and the final `p - 1` sentinel closes the remaining tail.
+pub const SENTINEL_COUNT: u64 = 32;
 
 /// Build the sorted, deduplicated, odd-count sentinel list used by both
 /// [`SpacedLeafImtProvider`] and the production `prepare_nullifiers` path.
@@ -145,7 +158,7 @@ const SENTINEL_COUNT: u64 = 32;
 /// Sentinels: `k * 2^249` for `k = 0..=32`, plus `p - 1` to close the tail.
 /// If the count is even after dedup, `Fp::from(2)` is inserted after sentinel 0
 /// to make it odd (collision probability ≈ 2^{-254}).
-fn build_sentinel_list() -> Vec<pallas::Base> {
+pub fn build_sentinel_list() -> Vec<pallas::Base> {
     let step = pallas::Base::from(2u64).pow([SENTINEL_EXPONENT, 0, 0, 0]);
     let mut nfs: Vec<pallas::Base> = (0u64..=SENTINEL_COUNT)
         .map(|k| step * pallas::Base::from(k))
@@ -208,8 +221,8 @@ fn find_range_for_value(ranges: &[[pallas::Base; 3]], value: pallas::Base) -> Op
 /// Mirrors the production sentinel injection path: sentinels at `k * 2^249`
 /// for `k = 0..=32`, plus `p - 1`, sorted, deduplicated, and padded to odd
 /// count with `Fp::from(2)`. Each interior leaf spans exactly `2^250`,
-/// satisfying the circuit's 250-bit range check. The tail leaf covers
-/// `[32*step, p-1]` with span `≈ 2^126`, well under the bound.
+/// satisfying the circuit's 250-bit range check. The final leaf is
+/// `[31*step, 32*step, p-1]`, also within the bound.
 ///
 /// Used for proof generation (fixture generators) and testing.
 #[derive(Debug)]
@@ -300,5 +313,23 @@ impl ImtProvider for SpacedLeafImtProvider {
             leaf_pos,
             path,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gov_null_hash_is_domain_separated_from_imt_leaf_hash() {
+        let a = pallas::Base::from(0u64);
+        let b = pallas::Base::from(1u64);
+        let c = pallas::Base::from(2u64);
+
+        assert_ne!(
+            gov_null_hash(a, b, c),
+            poseidon_hash_3(a, b, c),
+            "governance nullifiers must not share the raw Poseidon3 preimage with IMT leaves"
+        );
     }
 }

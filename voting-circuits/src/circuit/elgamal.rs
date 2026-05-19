@@ -1,23 +1,25 @@
 //! El Gamal encryption integrity gadget for vote proof (ZKP #2).
 //!
-//! Proves that sixteen ciphertext pairs (enc_share_c1_x[i], enc_share_c2_x[i]) are
-//! valid El Gamal encryptions of the corresponding plaintext shares under the
-//! election authority public key: C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk.
+//! Proves that sixteen ciphertext pairs
+//! (enc_share_c1_x/y[i], enc_share_c2_x/y[i]) are valid El Gamal encryptions of
+//! the corresponding plaintext shares under the election authority public key:
+//! C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk.
 //!
 //! Used by the vote proof circuit (Condition 11: Encryption Integrity). The
-//! caller passes share cells, randomness cells, and enc_share x-coordinate cells;
+//! caller passes share cells, randomness cells, and enc_share coordinate cells;
 //! this gadget owns all ea_pk scaffolding (witnesses ea_pk once as a
 //! `NonIdentityPoint` and pins it to the instance column via `constrain_instance`)
 //! and handles G for C1 via `FixedPointBaseField` and for C2's [v_i]*G term
 //! via `FixedPointShort` (22-window short scalar multiplication).
 //!
-//! Also provides out-of-circuit helpers: `spend_auth_g_affine`, `base_to_scalar`,
-//! and `elgamal_encrypt` for the builder and tests.
+//! Also provides the public `spend_auth_g_affine` helper for downstream
+//! consumers and internal scalar/encryption helpers for the builder and tests.
 
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk::{Advice, Column, Error, Instance as InstanceColumn},
 };
+#[cfg(test)]
 use pasta_curves::arithmetic::CurveAffine;
 use pasta_curves::pallas;
 
@@ -26,6 +28,8 @@ use halo2_gadgets::ecc::{
     ScalarVar,
 };
 use orchard::constants::{OrchardBaseFieldBases, OrchardFixedBases, OrchardShortScalarBases};
+
+use super::nonzero::NonZeroConfig;
 
 // ================================================================
 // Instance-location descriptor
@@ -64,21 +68,23 @@ pub fn spend_auth_g_affine() -> pallas::Affine {
 
 /// Converts a `pallas::Base` field element to a `pallas::Scalar`.
 ///
-/// For small values (< 2^30) the integer representation is identical in both
-/// fields. Returns `None` if the byte representation exceeds the scalar modulus.
-pub fn base_to_scalar(b: pallas::Base) -> Option<pallas::Scalar> {
+/// Pallas's base field modulus is smaller than its scalar field modulus, so
+/// every canonical `pallas::Base` element is representable as a scalar. The
+/// `Option` return keeps that invariant explicit at the call sites.
+pub(crate) fn base_to_scalar(b: pallas::Base) -> Option<pallas::Scalar> {
     use ff::PrimeField;
     pallas::Scalar::from_repr(b.to_repr()).into()
 }
 
-/// Out-of-circuit El Gamal encryption under SpendAuthG.
+/// Test-only out-of-circuit El Gamal encryption under SpendAuthG.
 ///
 /// Computes C1 = [r]*SpendAuthG, C2 = [v]*SpendAuthG + [r]*ea_pk.
-/// Returns (c1_x, c2_x, c1_y, c2_y). Used by the builder and tests.
+/// Returns (c1_x, c2_x, c1_y, c2_y). Used by tests as a circuit oracle.
 ///
 /// Both coordinates are returned so that share commitments can bind to the
 /// full curve point, preventing ciphertext sign-malleability attacks.
-pub fn elgamal_encrypt(
+#[cfg(test)]
+pub(crate) fn elgamal_encrypt(
     share_value: pallas::Base,
     randomness: pallas::Base,
     ea_pk: pallas::Point,
@@ -106,14 +112,16 @@ pub fn elgamal_encrypt(
 // In-circuit gadget
 // ================================================================
 
-/// Proves that for each share i, (enc_c1_x[i], enc_c2_x[i]) is a valid
-/// El Gamal encryption of share_cells[i] under randomness r_cells[i] and
-/// public key ea_pk: C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk.
+/// Proves that for each share i, (enc_c1_x/y[i], enc_c2_x/y[i]) is a
+/// valid El Gamal encryption of share_cells[i] under randomness r_cells[i]
+/// and public key ea_pk: C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk.
 ///
 /// ## Generator handling
 ///
 /// - **C1 = [r_i]*G**: uses `FixedPointBaseField::mul` (85-window, full-field scalar).
-///   `r_i` is a 255-bit scalar, so the full decomposition is required.
+///   `r_i` is a 255-bit scalar, so the full decomposition is required. This
+///   crate rejects `r_i = 0` with a small inverse-witness constraint to prevent
+///   the exact degenerate self-leaking ciphertext.
 /// - **C2's [v_i]*G**: uses `FixedPointShort::mul` (22-window, 64-bit signed scalar).
 ///   `v_i` is range-checked to [0, 2^30) by condition 9; the short-scalar path
 ///   saves 63 windows per share (×16 = 1008 rows) vs the full 85-window path.
@@ -130,10 +138,13 @@ pub fn elgamal_encrypt(
 /// ## Gadget ownership
 ///
 /// The gadget witnesses ea_pk internally as a `NonIdentityPoint` and pins both
-/// coordinates to the public instance column. The caller need only supply the
-/// four varying arrays and the ea_pk value.
+/// coordinates to the public instance column. This proves encryption under the
+/// caller-supplied key, but the caller must authenticate that key against the
+/// active round's governance announcement. The caller need only supply the
+/// share, randomness, and ciphertext coordinate arrays plus the ea_pk value.
 pub(crate) fn prove_elgamal_encryptions(
     ecc_chip: EccChip<OrchardFixedBases>,
+    nonzero: NonZeroConfig,
     mut layouter: impl Layouter<pallas::Base>,
     namespace: &str,
     ea_pk: halo2_proofs::circuit::Value<pallas::Affine>,
@@ -149,8 +160,9 @@ pub(crate) fn prove_elgamal_encryptions(
     // Election Authority's public key as a Pallas curve point, wrapped in Value.
     // ea_pk must be witnessed into advice cells to compute [r_i] * ea_pk.
     // The constrain_instance calls bind those advice cells to the public instance
-    // column, giving the verifier a guarantee that the prover used the specific EA
-    // key declared publicly.
+    // column, giving the verifier a guarantee that the prover used the specific
+    // EA key declared publicly. The caller is still responsible for checking
+    // that those public coordinates are the governance-announced EA key.
 
     // Witness ea_pk once. NonIdentityPoint is Copy, so the value is cheaply
     // copied into each iteration's mul() call without re-witnessing.
@@ -183,6 +195,12 @@ pub(crate) fn prove_elgamal_encryptions(
         FixedPointShort::from_inner(ecc_chip.clone(), OrchardShortScalarBases::SpendAuthGShort);
 
     for i in 0..16 {
+        nonzero.constrain_nonzero(
+            layouter.namespace(|| format!("{namespace} r[{i}] != 0")),
+            "El Gamal randomness != 0",
+            &r_cells[i],
+        )?;
+
         // --- C1_i = [r_i] * G ---
         //
         // G is baked into the fixed-base lookup table; no NonIdentityPoint

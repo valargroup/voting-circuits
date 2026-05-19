@@ -3,6 +3,10 @@
 //! K=2 punctured-range model: each leaf stores `[nf_lo, nf_mid, nf_hi]` and
 //! the leaf hash is `Poseidon3(nf_lo, nf_mid, nf_hi)` (ConstantLength<3>).
 //!
+//! Defense-by-rejection: the client witnesses the IMT boundaries and path, but
+//! fabricated or reordered boundaries change the authenticated leaf or fail the
+//! interval/non-equality gates, so the proof rejects.
+//!
 //! Non-membership is proven by:
 //! - Strict interval: `nf_lo < value < nf_hi` (via two offset range checks)
 //! - Non-equality: `value != nf_mid` (via inverse witness)
@@ -21,10 +25,7 @@ use pasta_curves::pallas;
 use ff::Field;
 use halo2_gadgets::{
     ecc::chip::EccConfig,
-    poseidon::{
-        primitives::{self as poseidon, ConstantLength},
-        Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
-    },
+    poseidon::{Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig},
     utilities::lookup_range_check::LookupRangeCheck,
 };
 
@@ -33,6 +34,7 @@ use orchard::constants::OrchardFixedBases;
 
 use super::imt::IMT_DEPTH;
 use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
+use crate::protocol_hash::poseidon_hash_in_circuit;
 
 // ================================================================
 // PuncturedIntervalGate
@@ -55,10 +57,13 @@ use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwa
 /// Range checks on `x_lo` and `x_hi` to `[0, 2^250)` are applied by
 /// [`synthesize_imt_non_membership`] via `lookup_config.copy_check` after this gate assigns them.
 ///
-/// NOTE: The 250-bit range checks are only sound when every IMT bracket
-/// has span `nf_hi - nf_lo < 2^250`. The IMT MUST be initialized with
-/// sentinel nullifiers at multiples of 2^249 (so each K=2 leaf spans
-/// at most `2 × 2^249 = 2^250`) before any real nullifiers are inserted.
+/// NOTE: The circuit is sized for IMT brackets with span
+/// `nf_hi - nf_lo <= 2^250`. The IMT MUST be initialized with sentinel
+/// nullifiers at multiples of 2^249 (so each K=2 leaf spans at most
+/// `2 × 2^249 = 2^250`) before any real nullifiers are inserted.
+/// The authenticated leaves must also come from a non-overlapping partition of
+/// the nullifier domain. This gate checks only the selected leaf, not the global
+/// tree layout.
 #[derive(Clone, Debug)]
 pub(crate) struct PuncturedIntervalGate {
     pub(crate) q_interval: Selector,
@@ -298,17 +303,12 @@ pub(crate) fn synthesize_imt_non_membership(
     )?;
 
     // Compute leaf hash: Poseidon3(nf_lo, nf_mid, nf_hi).
-    let leaf_hash = {
-        let poseidon_hasher =
-            PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<3>, 3, 2>::init(
-                PoseidonChip::construct(poseidon_config.clone()),
-                layouter.namespace(|| format!("note {s} imt leaf hash init")),
-            )?;
-        poseidon_hasher.hash(
-            layouter.namespace(|| format!("note {s} Poseidon3(nf_lo, nf_mid, nf_hi)")),
-            [imt_nf_lo.clone(), imt_nf_mid.clone(), imt_nf_hi.clone()],
-        )?
-    };
+    let leaf_hash = poseidon_hash_in_circuit(
+        PoseidonChip::construct(poseidon_config.clone()),
+        layouter.namespace(|| format!("note {s} imt leaf hash")),
+        "Poseidon3(nf_lo, nf_mid, nf_hi)",
+        [imt_nf_lo.clone(), imt_nf_mid.clone(), imt_nf_hi.clone()],
+    )?;
 
     // 29-level Poseidon Merkle path from leaf_hash to imt_root.
     let imt_root = synthesize_poseidon_merkle_path::<IMT_DEPTH>(

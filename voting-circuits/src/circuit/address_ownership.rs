@@ -36,7 +36,7 @@ use orchard::constants::{OrchardCommitDomains, OrchardHashDomains};
 /// Used by delegation (condition 4: alpha), vote proof (condition 3: vsk).
 /// Returns the resulting curve point so the caller can e.g. add `ak_P` for rk
 /// (delegation) or call `extract_p()` for ak (vote proof).
-pub fn spend_auth_g_mul(
+pub(crate) fn spend_auth_g_mul(
     ecc_chip: EccChip<OrchardFixedBases>,
     layouter: impl Layouter<pallas::Base>,
     _label: &str,
@@ -80,7 +80,7 @@ pub fn spend_auth_g_mul(
 /// Returns the ivk cell so callers (e.g. delegation) can reuse it for per-note
 /// diversified address checks.
 #[allow(clippy::type_complexity)]
-pub fn prove_address_ownership(
+pub(crate) fn prove_address_ownership(
     sinsemilla_chip: SinsemillaChip<OrchardHashDomains, OrchardCommitDomains, OrchardFixedBases>,
     ecc_chip: EccChip<OrchardFixedBases>,
     commit_ivk_chip: CommitIvkChip,
