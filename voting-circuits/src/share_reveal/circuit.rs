@@ -959,9 +959,8 @@ mod tests {
 
     use crate::circuit::elgamal::{elgamal_encrypt, spend_auth_g_affine};
     use crate::circuit::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
-    use crate::vote_proof::{
-        poseidon_hash_2, share_commitment, shares_hash as compute_shares_hash,
-    };
+    use crate::shares_hash::{share_commitment, shares_hash as compute_shares_hash};
+    use crate::vote_proof::poseidon_hash_2;
 
     fn generate_ea_keypair() -> (pallas::Scalar, pallas::Point, pallas::Affine) {
         let ea_sk = pallas::Scalar::from(42u64);

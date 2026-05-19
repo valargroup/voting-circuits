@@ -23,11 +23,12 @@ use pasta_curves::{
 use orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
 
 use super::circuit::{
-    share_commitment, shares_hash, van_integrity_hash, van_nullifier_hash, vote_commitment_hash,
-    Circuit, Instance, MAX_PROPOSAL_ID, VOTE_COMM_TREE_DEPTH,
+    van_integrity_hash, van_nullifier_hash, vote_commitment_hash, Circuit, Instance,
+    MAX_PROPOSAL_ID, VOTE_COMM_TREE_DEPTH,
 };
 use super::prove::create_vote_proof;
 use crate::circuit::elgamal::{base_to_scalar, spend_auth_g_affine};
+use crate::shares_hash::{share_commitment, shares_hash};
 use crate::{domain_tags, ProveError};
 
 /// Ballot divisor — must match `delegation::circuit::BALLOT_DIVISOR`.
@@ -228,6 +229,8 @@ pub struct VoteProofBundle {
     /// and must be used for reveal-share payloads.
     pub encrypted_shares: [EncryptedShareOutput; 16],
     /// Poseidon hash of all blinded encrypted-share commitments.
+    /// This value is exported for reveal-share helpers, but it is not a Halo2
+    /// public input. The vote proof binds it through `instance.vote_commitment`.
     /// Intermediate value: vote_commitment = H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision).
     /// Needed by the helper server to verify share payloads.
     pub shares_hash: pallas::Base,

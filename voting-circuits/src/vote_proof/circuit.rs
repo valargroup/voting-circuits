@@ -43,11 +43,12 @@
 //! - **Condition 9**: Shares Range — each `shares_j` in `[0, 2^30)`.
 //!   *(implemented)*
 //! - **Condition 10**: Shares Hash Integrity — `shares_hash = H(enc_share_1..16)`.
-//!   *(implemented)*
+//!   `shares_hash` is an internal wire, not a public instance. *(implemented)*
 //! - **Condition 11**: Encryption Integrity — each `enc_share_i = ElGamal(shares_i, r_i, ea_pk)`.
 //!   *(implemented)*
 //! - **Condition 12**: Vote Commitment Integrity — `vote_commitment = H(DOMAIN_VC, voting_round_id,
-//!   shares_hash, proposal_id, vote_decision)`. *(implemented)*
+//!   shares_hash, proposal_id, vote_decision)`, and this terminal commitment is
+//!   the public binding for condition 10. *(implemented)*
 
 use std::vec::Vec;
 
@@ -67,7 +68,7 @@ use crate::domain_tags;
 pub use crate::protocol_hash::poseidon_hash_2;
 use crate::shares_hash::compute_shares_hash_in_circuit;
 #[cfg(test)]
-use crate::shares_hash::hash_share_commitment_in_circuit;
+use crate::shares_hash::{hash_share_commitment_in_circuit, share_commitment, shares_hash};
 use halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
@@ -213,59 +214,6 @@ pub(super) fn van_nullifier_hash(
         voting_round_id,
         vote_authority_note_old,
     ])
-}
-
-/// Out-of-circuit per-share blinded commitment (condition 10).
-///
-/// Computes `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` for a single share.
-///
-/// The y-coordinates bind the commitment to the exact curve point, not just
-/// the x-coordinate. Without them, an attacker can negate the ElGamal
-/// ciphertext (flip sign bits) without invalidating the ZKP — corrupting
-/// the homomorphic tally. See: ciphertext sign-malleability fix.
-///
-/// The blind factor prevents anyone who sees the encrypted shares on-chain
-/// from recomputing shares_hash and linking it to a specific vote commitment.
-pub fn share_commitment(
-    blind: pallas::Base,
-    c1_x: pallas::Base,
-    c2_x: pallas::Base,
-    c1_y: pallas::Base,
-    c2_y: pallas::Base,
-) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2>::init()
-        .hash([blind, c1_x, c2_x, c1_y, c2_y])
-}
-
-/// Out-of-circuit shares hash (condition 10).
-///
-/// Computes blinded per-share commitments and hashes them together:
-/// ```text
-/// share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i in 0..16
-/// shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
-/// ```
-///
-/// The blind factors prevent anyone who sees the encrypted shares on-chain
-/// from recomputing shares_hash and linking it to a specific vote commitment.
-///
-/// Used by the builder and tests to compute the expected shares hash.
-pub fn shares_hash(
-    share_blinds: [pallas::Base; 16],
-    enc_share_c1_x: [pallas::Base; 16],
-    enc_share_c2_x: [pallas::Base; 16],
-    enc_share_c1_y: [pallas::Base; 16],
-    enc_share_c2_y: [pallas::Base; 16],
-) -> pallas::Base {
-    let comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-        share_commitment(
-            share_blinds[i],
-            enc_share_c1_x[i],
-            enc_share_c2_x[i],
-            enc_share_c1_y[i],
-            enc_share_c2_y[i],
-        )
-    });
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<16>, 3, 2>::init().hash(comms)
 }
 
 // ================================================================
@@ -549,8 +497,9 @@ impl Circuit {
 
 /// In-circuit Poseidon hash for one share commitment: `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
 ///
-/// Uses the same parameters as the out-of-circuit [`share_commitment`] (P128Pow5T3,
-/// ConstantLength<5>, width 3, rate 2) so that native and in-circuit hashes match.
+/// Uses the same parameters as the out-of-circuit
+/// [`crate::shares_hash::share_commitment`] (P128Pow5T3, ConstantLength<5>,
+/// width 3, rate 2) so that native and in-circuit hashes match.
 
 impl plonk::Circuit<pallas::Base> for Circuit {
     type Config = Config;
@@ -1370,6 +1319,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 /// [`crate::vote_proof::prove::verify_vote_proof`] for which fields
 /// require caller authentication versus which are proof-attested
 /// outputs).
+///
+/// Binding contract: `shares_hash` is deliberately absent from this public
+/// instance vector. The circuit computes it as an internal condition-10 cell
+/// and exposes it to the verifier only through `vote_commitment`.
 #[derive(Clone, Debug)]
 pub struct Instance {
     /// The nullifier of the old VAN being spent (prevents double-vote).
