@@ -7,7 +7,7 @@
 //! valid IMT non-membership proofs against the real tree root.
 
 use ff::{Field, PrimeField, PrimeFieldBits};
-use group::{Curve, Group, GroupEncoding};
+use group::{Curve, GroupEncoding};
 use halo2_proofs::circuit::Value;
 use pasta_curves::{
     arithmetic::{CurveAffine, CurveExt},
@@ -108,11 +108,15 @@ pub struct DelegationBundle {
 // point. Panics on identity.
 // Note: Orchard's `spec::extract_p` is `pub(crate)`; we mirror it here.
 fn point_x(point: &pallas::Point) -> pallas::Base {
-    *point
+    point_x_opt(point).expect("ExtractP requires a non-identity Pallas point")
+}
+
+fn point_x_opt(point: &pallas::Point) -> Option<pallas::Base> {
+    point
         .to_affine()
         .coordinates()
-        .expect("ExtractP requires a non-identity Pallas point")
-        .x()
+        .into_option()
+        .map(|coords| *coords.x())
 }
 
 // Expands a 32-byte compressed encoding into a stream of little-endian bits.
@@ -163,21 +167,25 @@ pub(crate) fn external_ivk_scalar(fvk: &FullViewingKey, ak: &SpendValidatingKey)
     base_to_scalar(ivk).expect("external ivk must fit in the scalar field")
 }
 
-// Wraps a `pallas::Point` as `NonIdentityPallasPoint` after asserting non-identity.
+// Wraps a `pallas::Point` as `NonIdentityPallasPoint` without panicking on identity.
 //
 // Synthesized padding points come from `hash_to_curve` and scalar multiplication
 // by `ivk`; both are cryptographically non-identity (identity from `hash_to_curve`
 // is negligible, and `ivk = 0` is already rejected by `CommitIvk`'s ⊥ branch upstream).
-// We assert here so the invariant fails at the construction site rather than
+// We validate here so the invariant fails at the construction site rather than
 // silently flowing into the witness — the in-circuit `NonIdentityPoint::new`
-// would catch identity at proof time, but a build-time assert is cheaper to debug.
-fn assert_non_identity(point: pallas::Point) -> NonIdentityPallasPoint {
-    assert!(
-        !bool::from(point.is_identity()),
-        "padding point must not be the identity"
-    );
+// would catch identity at proof time, but a build-time error is cheaper to debug.
+fn non_identity_padding_point(
+    point: pallas::Point,
+    slot_index: usize,
+    component: &'static str,
+) -> Result<NonIdentityPallasPoint, DelegationBuildError> {
     NonIdentityPallasPoint::from_bytes(&point.to_affine().to_bytes())
-        .expect("non-identity point round-trips through canonical encoding")
+        .into_option()
+        .ok_or(DelegationBuildError::InvalidPaddingPoint {
+            slot_index,
+            component,
+        })
 }
 
 // Derives the synthetic `(g_d_pad, pk_d_pad)` pair for padding slot `slot_index`.
@@ -185,16 +193,19 @@ fn assert_non_identity(point: pallas::Point) -> NonIdentityPallasPoint {
 // intentionally not a valid `orchard::Address`. `pk_d_pad = [ivk] * g_d_pad`
 // satisfies condition 11 by construction (callers must pass the external ivk,
 // since padding pins `is_internal = false`). Both points are wrapped as
-// `NonIdentityPallasPoint` via `assert_non_identity` so the invariant fails at
+// `NonIdentityPallasPoint` via `non_identity_padding_point` so the invariant fails at
 // the builder rather than at proof time.
 pub(crate) fn padding_points(
     slot_index: usize,
     ivk: pallas::Scalar,
-) -> (NonIdentityPallasPoint, NonIdentityPallasPoint) {
+) -> Result<(NonIdentityPallasPoint, NonIdentityPallasPoint), DelegationBuildError> {
     let slot_index = u32::try_from(slot_index).expect("padding slot index fits in u32");
     let g_d_pad = pallas::Point::hash_to_curve(PADDING_PERSONALIZATION)(&slot_index.to_le_bytes());
     let pk_d_pad = g_d_pad * ivk;
-    (assert_non_identity(g_d_pad), assert_non_identity(pk_d_pad))
+    Ok((
+        non_identity_padding_point(g_d_pad, slot_index as usize, "g_d")?,
+        non_identity_padding_point(pk_d_pad, slot_index as usize, "pk_d")?,
+    ))
 }
 
 // Generates a random seed for a given rho.
@@ -217,14 +228,8 @@ fn random_seed_for_rho(rho: &Rho, rng: &mut impl RngCore) -> RandomSeed {
 // but does not expose it as a public helper. Mirror it here so padding can use
 // domain-separated synthetic (g_d, pk_d) points.
 //
-// The returned point is guaranteed non-identity: sinsemilla's `CommitDomain::commit`
-// returns `None` (handled below by `.expect`) precisely when the commitment would
-// be the identity ("bottom"), so callers may treat the result as a valid Pallas
-// curve point. The slot witness still uses `Value<pallas::Point>` for `cm` (rather
-// than `Value<NoteCommitment>`) because Orchard's `NoteCommitment` newtype has a
-// private constructor; the in-circuit `NoteCommit` (condition 9) re-derives and
-// constrain-equals the witnessed `cm`, so any drift from a real `NoteCommitment`
-// shape would be caught at proof time.
+// Sinsemilla returns `None` precisely when the commitment would be the identity
+// ("bottom"), so callers must convert that into a recoverable build error.
 fn note_commitment_point(
     g_d: pallas::Point,
     pk_d: pallas::Point,
@@ -232,10 +237,10 @@ fn note_commitment_point(
     rho: pallas::Base,
     psi: pallas::Base,
     rcm: pallas::Scalar,
-) -> pallas::Point {
+) -> Option<pallas::Point> {
     let domain = sinsemilla::CommitDomain::new(NOTE_COMMITMENT_PERSONALIZATION);
     // Mirrors Orchard NoteCommit while allowing synthetic padding points.
-    let cm = domain
+    domain
         .commit(
             iter::empty()
                 .chain(byte_bits(g_d.to_affine().to_bytes()))
@@ -245,12 +250,7 @@ fn note_commitment_point(
                 .chain(psi.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE)),
             &rcm,
         )
-        .expect("padding note commitment must not be bottom");
-    debug_assert!(
-        !bool::from(cm.is_identity()),
-        "sinsemilla::CommitDomain::commit returning Some(_) implies non-identity"
-    );
-    cm
+        .into_option()
 }
 
 // Derives the note nullifier for a given note.
@@ -262,13 +262,13 @@ fn derive_note_nullifier(
     rho: pallas::Base,
     psi: pallas::Base,
     cm: pallas::Point,
-) -> pallas::Base {
+) -> Option<pallas::Base> {
     let k = pallas::Point::hash_to_curve("z.cash:Orchard")(b"K");
     let prf_nf = poseidon_hash_2(nk, rho);
     // Pallas base elements embed directly into the larger scalar field.
     let scalar = pallas::Scalar::from_repr((prf_nf + psi).to_repr())
         .expect("Pallas base field is smaller than its scalar field");
-    point_x(&(k * scalar + cm))
+    point_x_opt(&(k * scalar + cm))
 }
 
 // A single padding note slot in the delegation.
@@ -292,7 +292,8 @@ fn build_padding_slot(
     rng: &mut impl RngCore,
     precomputed: Option<&PrecomputedRandomness>,
 ) -> Result<PaddingSlot, DelegationBuildError> {
-    let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk);
+    let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk)?;
+    let location = PrecomputedRandomnessLocation::PaddedNote(pad_idx);
 
     let (rho, rseed) = if let Some(pre) = precomputed {
         // Reuse randomness so the prover commits to the same values.
@@ -306,7 +307,6 @@ fn build_padding_slot(
         let rho = Rho::from_bytes(&pd.rho)
             .into_option()
             .ok_or(DelegationBuildError::InvalidPrecomputedRho { index: pad_idx })?;
-        let location = PrecomputedRandomnessLocation::PaddedNote(pad_idx);
         let rseed = RandomSeed::from_bytes(pd.rseed, &rho)
             .into_option()
             .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
@@ -326,10 +326,12 @@ fn build_padding_slot(
         rho.into_inner(),
         psi,
         rcm.inner(),
-    );
+    )
+    .ok_or(DelegationBuildError::InvalidPaddingNoteCommitment { location })?;
     let cmx = point_x(&cm);
 
-    let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm);
+    let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm)
+        .ok_or(DelegationBuildError::InvalidPaddingNullifier { location })?;
     let gov_null = gov_null_hash(nk, dom, real_nf);
     let imt_proof = imt_provider.non_membership_proof(real_nf)?;
 
@@ -406,6 +408,19 @@ pub enum DelegationBuildError {
     InvalidNoteCount(usize),
     /// Public input construction failed.
     Instance(circuit::InstanceError),
+    /// A synthesized padding point was the identity.
+    InvalidPaddingPoint {
+        slot_index: usize,
+        component: &'static str,
+    },
+    /// A synthesized padding note commitment bottomed out.
+    InvalidPaddingNoteCommitment {
+        location: PrecomputedRandomnessLocation,
+    },
+    /// A synthesized padding note nullifier bottomed out.
+    InvalidPaddingNullifier {
+        location: PrecomputedRandomnessLocation,
+    },
     /// A required precomputed padded note entry is missing.
     MissingPrecomputedPaddedNote { index: usize, actual: usize },
     /// A precomputed padded note rho is not a canonical field encoding.
@@ -447,6 +462,21 @@ impl std::fmt::Display for DelegationBuildError {
             }
             DelegationBuildError::Instance(e) => {
                 write!(f, "instance construction failed: {e}")
+            }
+            DelegationBuildError::InvalidPaddingPoint {
+                slot_index,
+                component,
+            } => {
+                write!(
+                    f,
+                    "invalid padding point {component} at slot {slot_index}: identity point"
+                )
+            }
+            DelegationBuildError::InvalidPaddingNoteCommitment { location } => {
+                write!(f, "invalid padding note commitment for {location}")
+            }
+            DelegationBuildError::InvalidPaddingNullifier { location } => {
+                write!(f, "invalid padding nullifier for {location}")
             }
             DelegationBuildError::MissingPrecomputedPaddedNote { index, actual } => {
                 write!(
@@ -844,7 +874,8 @@ mod tests {
         imt_proof: &ImtProofData,
         requested_nfs: &[pallas::Base],
     ) {
-        let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk);
+        let (g_d_pad, pk_d_pad) =
+            padding_points(slot_index, ivk).expect("test padding points should be valid");
         let psi = rseed.psi(&rho);
         let rcm = rseed.rcm(&rho);
         let cm = note_commitment_point(
@@ -854,8 +885,10 @@ mod tests {
             rho.into_inner(),
             psi,
             rcm.inner(),
-        );
-        let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm);
+        )
+        .expect("test padding commitment should be valid");
+        let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm)
+            .expect("test padding nullifier should be valid");
 
         assert_eq!(padding.cmx, point_x(&cm));
         assert_eq!(padding.v_raw, 0);
@@ -1120,7 +1153,8 @@ mod tests {
         let ivk = external_ivk_scalar(&fvk, &ak);
         let notes = bundle.circuit.notes_for_testing();
         for slot_index in 1..5 {
-            let (expected_g_d, expected_pk_d) = padding_points(slot_index, ivk);
+            let (expected_g_d, expected_pk_d) =
+                padding_points(slot_index, ivk).expect("test padding points should be valid");
             assert_known(&notes[slot_index].g_d, |actual| *actual == expected_g_d);
             assert_known(&notes[slot_index].pk_d, |actual| *actual == expected_pk_d);
         }
@@ -1136,7 +1170,13 @@ mod tests {
         // gate path because padding always has `v = 0`).
         let (bundle, fvk, ak) = build_bundle_for_inspection(&[2_500_000; 5], &[Scope::External; 5]);
         let ivk = external_ivk_scalar(&fvk, &ak);
-        let padding_g_ds: Vec<_> = (0..5).map(|i| padding_points(i, ivk).0).collect();
+        let padding_g_ds: Vec<_> = (0..5)
+            .map(|i| {
+                padding_points(i, ivk)
+                    .expect("test padding points should be valid")
+                    .0
+            })
+            .collect();
         let notes = bundle.circuit.notes_for_testing();
         for slot_index in 0..5 {
             for pad_g_d in &padding_g_ds {
@@ -1154,7 +1194,8 @@ mod tests {
         let ivk = external_ivk_scalar(&fvk, &ak);
 
         for slot_index in 1..5 {
-            let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk);
+            let (g_d_pad, pk_d_pad) =
+                padding_points(slot_index, ivk).expect("test padding points should be valid");
             let real_orchard_addr = fvk.address_at(slot_index as u32, Scope::External);
 
             // Deref `NonIdentityPallasPoint` to `pallas::Point` for arithmetic and
@@ -1254,7 +1295,8 @@ mod tests {
             let orchard = note.commitment().inner();
 
             assert_eq!(
-                mirrored, orchard,
+                mirrored,
+                Some(orchard),
                 "note_commitment_point drifted from Orchard NoteCommitment::derive ({scope:?})"
             );
         }
@@ -1278,7 +1320,8 @@ mod tests {
             let orchard = note.nullifier(&fvk).inner();
 
             assert_eq!(
-                mirrored, orchard,
+                mirrored,
+                Some(orchard),
                 "derive_note_nullifier drifted from Orchard Nullifier::derive ({scope:?})"
             );
         }
@@ -1334,7 +1377,8 @@ mod tests {
 
         let padding = build_padding_slot(3, 0, nk, dom, ivk, &imt, &mut rng, None).unwrap();
 
-        let (g_d_pad, pk_d_pad) = padding_points(3, ivk);
+        let (g_d_pad, pk_d_pad) =
+            padding_points(3, ivk).expect("test padding points should be valid");
         assert_known(&padding.witness.g_d, |actual| *actual == g_d_pad);
         assert_known(&padding.witness.pk_d, |actual| *actual == pk_d_pad);
         let generated_padding_values = padding
@@ -1355,8 +1399,10 @@ mod tests {
                     *rho_inner,
                     *psi,
                     rcm.inner(),
-                );
-                let real_nf = derive_note_nullifier(nk, *rho_inner, *psi, cm);
+                )
+                .expect("test padding commitment should be valid");
+                let real_nf = derive_note_nullifier(nk, *rho_inner, *psi, cm)
+                    .expect("test padding nullifier should be valid");
 
                 *cm_witness == cm
                     && padding.cmx == point_x(&cm)
