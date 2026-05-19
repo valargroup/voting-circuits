@@ -112,7 +112,7 @@ mod tests {
     use pasta_curves::pallas;
 
     use crate::circuit::elgamal::{elgamal_encrypt, spend_auth_g_affine};
-    use crate::vote_proof::share_commitment;
+    use crate::shares_hash::share_commitment;
 
     use super::super::circuit::K;
 
