@@ -493,11 +493,15 @@ impl std::fmt::Display for PrecomputedRandomnessLocation {
 /// - `alpha`: Spend auth randomizer for the keystone signature.
 /// - `output_recipient`: Address of the voting hotkey (output note recipient).
 /// - `vote_round_id`: Voting round identifier.
-/// - `nc_root`: Note commitment tree root (shared anchor).
+/// - `nc_root`: Note commitment tree root (shared ledger-state anchor).
+///   The caller must pin this from the chain's note commitment tree at the
+///   verifier-accepted snapshot height; the builder does not authenticate it.
 /// - `van_comm_rand`: Blinding factor for the governance commitment.
-/// - `imt_provider`: Provider for the bundle-wide nullifier IMT root and
-///   padded-note IMT non-membership proofs. Every real-note proof in
-///   `real_notes` must authenticate to this provider's root.
+/// - `imt_provider`: Provider for the bundle-wide alternate-nullifier IMT root
+///   and padded-note IMT non-membership proofs. Every real-note proof in
+///   `real_notes` must authenticate to this provider's root, and the caller
+///   must ensure the provider root is from the same ledger snapshot as
+///   `nc_root`.
 /// - `rng`: Random number generator.
 /// - `precomputed`: If `Some`, reuse Phase 1 randomness for padded/signed/output notes
 ///   (ZCA-74 fix). If `None`, sample fresh randomness (backward compat for tests).

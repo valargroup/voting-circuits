@@ -21,10 +21,10 @@ Domain-tag encoding is owned by `crate::domain_tags`.
    * **vote_commitment** (offset 4): the vote commitment hash `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`.
    * **vote_comm_tree_root** (offset 5): root of the Poseidon-based vote commitment tree at anchor height.
    * **vote_comm_tree_anchor_height** (offset 6): caller-authenticated chain height used to source `vote_comm_tree_root`. This slot is transcript-bound but not constrained to a circuit witness.
-   * **proposal_id** (offset 7): which proposal this vote is for.
-   * **voting_round_id** (offset 8): the voting round identifier — prevents cross-round replay.
-   * **ea_pk_x** (offset 9): x-coordinate of the election authority public key (El Gamal encryption key).
-   * **ea_pk_y** (offset 10): y-coordinate of the election authority public key. Both coordinates are public to prevent sign-ambiguity attacks (using −ea_pk would corrupt the tally).
+   * **proposal_id** (offset 7): governance session parameter identifying which proposal this vote is for. The circuit constrains it to `[1, 15]`; the verifier must check it is active for `voting_round_id`.
+   * **voting_round_id** (offset 8): governance session parameter identifying the active voting round — prevents cross-round replay when pinned by the verifier.
+   * **ea_pk_x** (offset 9): x-coordinate of the governance-announced election authority public key (El Gamal encryption key).
+   * **ea_pk_y** (offset 10): y-coordinate of the governance-announced election authority public key. Both coordinates are public to prevent sign-ambiguity attacks (using −ea_pk would corrupt the tally).
 
 - Private (VAN ownership — conditions 1–4, 5)
    * **vpk_g_d**: voting public key — diversified base point (full affine point from DiversifyHash(d)). Witnessed as `NonIdentityPoint`; x-coordinate extracted for Poseidon hashing (conditions 2, 7). This is the `vpk_d` component of the voting hotkey address. Matches ZKP 1 (delegation) VAN structure.
@@ -56,6 +56,29 @@ Domain-tag encoding is owned by `crate::domain_tags`.
    * **ea_pk_x, ea_pk_y cells**: copied from the instance column (condition 11). Each ea_pk `NonIdentityPoint` witness is constrained to match these cells.
    * **DOMAIN_VC constant**: `1`. Domain separation tag for Vote Commitments (condition 12). Baked into the verification key.
    * **proposal_id cell**: copied from the instance column (condition 12). Used in the vote commitment Poseidon hash.
+
+## Public Input Provenance
+
+The circuit proves statements relative to the public inputs supplied by the
+verifier; it does not authenticate where those inputs came from.
+
+**Ledger-state anchor:** `vote_comm_tree_root` must be looked up from chain
+state at `vote_comm_tree_anchor_height`; the height is transcript-bound
+metadata, not a circuit-derived witness.
+
+**Governance session parameters:** `voting_round_id` must come from the active
+governance session. `proposal_id` must be in that round's active proposal set.
+The circuit only proves internal consistency: `proposal_id` is an authority
+bit index in `[1, 15]`, the corresponding authority bit is decremented, and the
+same value is folded into the vote commitment. It does not authenticate the
+active-proposal registry.
+
+**Election-authority public key:** `ea_pk_x` and `ea_pk_y` must equal the EA
+public key announced by governance for the active round, or an equivalent
+long-lived governance configuration. The circuit only proves that shares were
+encrypted under the key the verifier supplied. If a verifier accepts `ea_pk`
+from the prover bundle, a wrong key makes the legitimate EA unable to decrypt,
+and a colluding key lets its holder decrypt the voter's shares.
 
 ## Condition 2: VAN Integrity ✅
 

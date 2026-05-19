@@ -173,8 +173,16 @@ pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 5;
 // root in the chain state lookup rather than in this proof.
 pub const VOTE_COMM_TREE_ANCHOR_HEIGHT_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the proposal identifier.
+///
+/// In-circuit constraint: `proposal_id` is in `[1, MAX_PROPOSAL_ID)` via the
+/// authority-decrement lookup. The caller must additionally verify that this
+/// ID is in the active proposal set for `voting_round_id`.
 pub const PROPOSAL_ID_PUBLIC_OFFSET: usize = 7;
-/// Public input offset for the voting round identifier.
+/// Public input offset for the governance voting round identifier.
+///
+/// The circuit binds this value into the VAN nullifier, new VAN, and vote
+/// commitment, but the caller must authenticate it from the active round's
+/// governance announcement.
 pub const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
 /// Public input offset for the election authority public key x-coordinate.
 pub const EA_PK_X_PUBLIC_OFFSET: usize = 9;
@@ -442,6 +450,8 @@ pub struct Circuit {
     /// Election authority public key (Pallas curve point).
     /// The El Gamal encryption key — published as a round parameter.
     /// Both coordinates are public inputs (EA_PK_X_PUBLIC_OFFSET, EA_PK_Y_PUBLIC_OFFSET).
+    /// The caller must authenticate this key against the governance
+    /// announcement; the circuit only binds encryption to the supplied key.
     pub(crate) ea_pk: Value<pallas::Affine>,
 
     // Condition 12 (Vote Commitment Integrity): vote decision.
@@ -1349,13 +1359,27 @@ pub struct Instance {
     /// cell. Verifiers must check that `vote_comm_tree_root` is the chain root
     /// at this height.
     pub vote_comm_tree_anchor_height: pallas::Base,
-    /// Which proposal this vote is for.
+    /// Governance session parameter: which proposal this vote is for.
+    ///
+    /// The circuit constrains this to `[1, 15]` through condition 6 and binds
+    /// it into the new VAN and vote commitment. The verifier must separately
+    /// check that it is active for `voting_round_id`.
     pub proposal_id: pallas::Base,
-    /// The voting round identifier.
+    /// Governance session parameter: the voting round identifier.
+    ///
+    /// The circuit binds this into the VAN nullifier, new VAN, and vote
+    /// commitment, but cannot authenticate that it is the active round.
     pub voting_round_id: pallas::Base,
-    /// Election authority public key x-coordinate.
+    /// Governance-announced election authority public key x-coordinate.
+    ///
+    /// The verifier must pin this from the active round's governance
+    /// announcement. The circuit proves encryption under this coordinate pair,
+    /// but cannot authenticate that it is the legitimate EA key.
     pub ea_pk_x: pallas::Base,
-    /// Election authority public key y-coordinate.
+    /// Governance-announced election authority public key y-coordinate.
+    ///
+    /// Must be authenticated with `ea_pk_x`; both coordinates are public so a
+    /// prover cannot substitute a negated curve point while preserving x.
     pub ea_pk_y: pallas::Base,
 }
 
@@ -1367,7 +1391,10 @@ impl Instance {
     ///
     /// Callers should authenticate `vote_comm_tree_root`,
     /// `vote_comm_tree_anchor_height`, `proposal_id`, `voting_round_id`,
-    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here. See
+    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here.
+    /// `proposal_id` must be active for `voting_round_id`; the circuit only
+    /// checks the authority-bit index range. The EA key must come from the
+    /// active round's governance announcement, not from the prover bundle. See
     /// [`crate::vote_proof::prove::verify_vote_proof`] for the trust contract
     /// and why wiring `ea_pk_*` from the same bundle as the proof is a
     /// custody-attack surface. The remaining fields are proof-attested outputs

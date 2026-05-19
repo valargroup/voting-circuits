@@ -25,8 +25,8 @@ in `imt.rs` for delegation-only hashes.
    * **cmx_new** (offset 3): the extracted note commitment (`ExtractP(cm_new)`) of the output note.
    * **van_comm** (offset 4): the governance commitment — a Pallas base field element identifying the governance context.
    * **vote_round_id** (offset 5): the vote round identifier — prevents cross-round replay.
-   * **nc_root** (offset 6): the note commitment tree root (shared anchor for Merkle path verification).
-   * **nf_imt_root** (offset 7): the nullifier Indexed Merkle Tree root (for non-membership proofs).
+   * **nc_root** (offset 6): ledger-state anchor for the Orchard note commitment tree at the verifier-pinned snapshot height; real-note Merkle paths must resolve to this root.
+   * **nf_imt_root** (offset 7): ledger-state anchor for the alternate-nullifier Indexed Merkle Tree at the same snapshot height as `nc_root`; non-membership proofs must resolve to this root.
    * **gov_null_1..5** (offsets 8–12): per-note alternate nullifiers, one per note slot.
    * **dom** (offset 13): the nullifier domain — Poseidon("governance authorization", vote_round_id). Exposed as a public input for API compatibility; the circuit constrains it against vote_round_id rather than trusting an arbitrary value.
 
@@ -76,6 +76,23 @@ in `imt.rs` for delegation-only hashes.
    * **ivk_internal**: derived in condition 5 (CommitIvk with internal `rivk_internal`), shared with condition 11.
    * **cmx_1..5**: produced by per-note condition 9, consumed by condition 3.
    * **v_1..5**: produced by per-note condition 9, consumed by conditions 7 and 8.
+
+## Public Input Provenance
+
+The circuit proves statements relative to the public inputs supplied by the
+verifier; it does not authenticate where those inputs came from.
+
+**Ledger-state anchors:** `nc_root` and `nf_imt_root` must come from the
+chain's state at the same verifier-pinned snapshot height. `nc_root` is the
+Orchard note commitment tree root used by condition 10. `nf_imt_root` is the
+alternate-nullifier IMT root used by condition 13. A prover bundle may carry
+copies of these values for convenience, but a verifier must not trust the
+bundle as their source of truth.
+
+**Session parameters:** `vote_round_id` is pinned by the governance session.
+`dom` is exposed for API compatibility but constrained in-circuit to
+`Poseidon("governance authorization", vote_round_id)`. `van_comm` is
+proof-attested by condition 7 and then consumed by the voting flow.
 
 ## Integration: the Keystone (signed) note is synthetic
 
