@@ -248,7 +248,7 @@ The builder decomposes `num_ballots` into 16 shares using a three-phase algorith
 
 **Phase 3 — Deterministic shuffle.** A [Fisher-Yates shuffle](https://en.wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle) (iterating from the last index down, swapping each position with a uniformly random earlier position) seeded by the PRF (`DOMAIN_SHUFFLE = 0x02`) randomizes all 16 slot positions. Without this, share indices would encode denomination rank (e.g. index 0 = largest denomination), leaking balance magnitude to any adversary that decrypts a single share.
 
-All PRF derivations are keyed by the spending key and bound to `(voting_round_id, proposal_id, van_commitment)`. The resulting `r_i` values are accepted by the circuit as witnesses; the relation does not enforce `r_i != 0`. Under this crate's threat model that is a documented self-leakage surface, not a proof-soundness failure. This means:
+All PRF derivations are keyed by the spending key and bound to `(voting_round_id, proposal_id, van_commitment)`. The resulting `r_i` values are deterministically remapped away from the exact zero field element before encryption, and the circuit rejects any zero witness. This means:
 - Two voters with the **same balance** produce different remainder weights and shuffle orders (different `sk`).
 - The same voter with **multiple VANs** produces different patterns per VAN (different `van_commitment`).
 - Secrets are deterministically re-derivable after a crash without persisting them.
@@ -359,7 +359,7 @@ For each share i (0..15):
 
 Where:
 - **G**: SpendAuthG, the El Gamal generator. C1's `[r_i]*G` term uses `FixedPointBaseField::from_inner(ecc_chip, SpendAuthGBase)` for full-field randomness, while C2's `[v_i]*G` term uses `FixedPointShort::from_inner(ecc_chip, SpendAuthGShort)` because shares are range-checked to fit the short-scalar path. Both route scalar multiplication through fixed lookup tables loaded by the circuit. No `NonIdentityPoint` witness or advice-from-constant assignment is needed — the generator is structurally baked into the proving key via the lookup tables, preventing a malicious prover from substituting a different base point.
-- **r_i**: El Gamal randomness for share `i` (private witness, `pallas::Base`). Used as the input to `spend_auth_g_base.clone().mul(r_cells[i])` for C1 and as `ScalarVar::from_base(r_cells[i])` for the variable-base `ea_pk` multiplication in C2. The same advice cell is cloned for both calls, ensuring the same randomness binds both ciphertext components. The circuit does not constrain `r_i != 0`; honest builders derive it by PRF, while an intentional zero witness is a documented per-share self-leak surface.
+- **r_i**: El Gamal randomness for share `i` (private witness, `pallas::Base`). Used as the input to `spend_auth_g_base.clone().mul(r_cells[i])` for C1 and as `ScalarVar::from_base(r_cells[i])` for the variable-base `ea_pk` multiplication in C2. The same advice cell is cloned for both calls, ensuring the same randomness binds both ciphertext components. The circuit constrains `r_i != 0` with an inverse-witness check, rejecting the exact ciphertext-degeneracy case `C1_i = identity, C2_i = [v_i]G`.
 - **v_i**: plaintext share value from conditions 8/9. Cell-equality-linked to the same cells used in `AddChip` (condition 8) and range check (condition 9). Wrapped as a `ScalarFixedShort` and passed to `spend_auth_g_short.clone().mul(...)` for the `[v_i]*G` component of C2.
 - **ea_pk**: election authority public key (Pallas curve point, public input at offsets 9–10). Witnessed once as a `NonIdentityPoint` (on-curve constraint included). Its x and y advice cells are immediately pinned to the instance column via `layouter.constrain_instance`, preventing a prover from using a different or negated key. The same `NonIdentityPoint` is reused (cloned) across all 16 iterations — no re-witnessing.
 - **enc_share_c1_x/y[i]**, **enc_share_c2_x/y[i]**: the coordinate cells from condition 10's witness region. These are the same cells that were hashed into `shares_hash` by condition 10's Poseidon hash. Condition 11 constrains the ECC computation output to match them via `constrain_equal`, creating a binding between the Poseidon hash (condition 10) and the actual El Gamal encryption.
@@ -368,14 +368,15 @@ Where:
 1. Witness ea_pk once as `NonIdentityPoint`; `constrain_instance` x and y to public inputs (rows `EA_PK_X_PUBLIC_OFFSET`, `EA_PK_Y_PUBLIC_OFFSET`)
 2. Construct the full `FixedPointBaseField` and short `FixedPointShort` descriptors once (hoisted above loop)
 3. For each share i (0..15):
-   a. `spend_auth_g_base.clone().mul(r_cells[i])` → C1 point (fixed-base)
-   b. `constrain_equal(C1.x/y, enc_c1_x/y[i])`
-   c. `ScalarFixedShort::new(share_cells[i])` → `spend_auth_g_short.clone().mul(...)` → vG point (short fixed-base)
-   d. `ScalarVar::from_base(r_cells[i])` → `ea_pk.mul(r_i_scalar)` → rP point (variable-base)
-   e. `vG.add(rP)` → C2 point
-   f. `constrain_equal(C2.x/y, enc_c2_x/y[i])`
+   a. `r_i * r_i_inv = 1` rejects exact zero randomness
+   b. `spend_auth_g_base.clone().mul(r_cells[i])` → C1 point (fixed-base)
+   c. `constrain_equal(C1.x/y, enc_c1_x/y[i])`
+   d. `ScalarFixedShort::new(share_cells[i])` → `spend_auth_g_short.clone().mul(...)` → vG point (short fixed-base)
+   e. `ScalarVar::from_base(r_cells[i])` → `ea_pk.mul(r_i_scalar)` → rP point (variable-base)
+   f. `vG.add(rP)` → C2 point
+   g. `constrain_equal(C2.x/y, enc_c2_x/y[i])`
 
-Total: 32 fixed-base scalar multiplications, 16 variable-base scalar multiplications (ea_pk), 16 point additions, 1 `NonIdentityPoint` witness (ea_pk, reused), 64 `constrain_equal` constraints.
+Total: 16 non-zero checks, 32 fixed-base scalar multiplications, 16 variable-base scalar multiplications (ea_pk), 16 point additions, 1 `NonIdentityPoint` witness (ea_pk, reused), 64 `constrain_equal` constraints.
 
 **Scalar field handling:** All scalars (r_i, v_i) are base field elements. C1's `[r_i]*G` fixed-base path passes the randomness cell directly as a `BaseFieldElem` input to `FixedPointBaseField::mul`. C2's `[v_i]*G` path wraps the range-checked share cell as a `ScalarFixedShort`, which is valid because condition 9 proves shares are below 2^30. For the variable-base path (`[r_i]*ea_pk`), `ScalarVar::from_base` decomposes the randomness cell into a running-sum `ScalarVar`. Every canonical Pallas base field element fits in the scalar field because the base field modulus is smaller than the scalar field modulus.
 

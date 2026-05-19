@@ -34,6 +34,7 @@
   identity randomized voting public keys, and identity encrypted share points.
 - Return a typed vote-proof builder error for proposal IDs outside the supported
   `[1, 15]` range instead of shifting by an unchecked caller value.
+- Reject exact zero El Gamal share randomness in vote proofs.
 
 ### Changed
 
@@ -54,6 +55,8 @@
 - Shared gadget helpers such as `vote_proof::elgamal_encrypt` are no longer
   public API. `vote_proof::spend_auth_g_affine` remains public for downstream
   encryption code.
+- Regenerate vote-proof proving/verifying keys after the El Gamal randomness
+  hardening constraint.
 
 ## 0.4.2 - 2026-05-11
 

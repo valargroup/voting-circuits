@@ -61,6 +61,7 @@ use pasta_curves::{pallas, vesta};
 use super::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
 use crate::circuit::address_ownership::{prove_address_ownership, spend_auth_g_mul};
 use crate::circuit::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
+use crate::circuit::nonzero::NonZeroConfig;
 use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
 use crate::circuit::van_integrity;
 use crate::circuit::vote_commitment;
@@ -287,6 +288,8 @@ pub struct Config {
     merkle_swap: MerkleSwapGate,
     /// Configuration for condition 6 (Proposal Authority Decrement).
     authority_decrement: AuthorityDecrementConfig,
+    /// Shared inverse-witness checks for zero randomizer/randomness rejection.
+    nonzero: NonZeroConfig,
 }
 
 impl Config {
@@ -613,6 +616,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // Condition 6: Proposal Authority Decrement.
         let authority_decrement = AuthorityDecrementChip::configure(meta, advices);
+        let nonzero = NonZeroConfig::configure(meta, [advices[0], advices[1]]);
 
         Config {
             primary,
@@ -625,6 +629,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             range_check,
             merkle_swap,
             authority_decrement,
+            nonzero,
         }
     }
 
@@ -1224,6 +1229,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
             prove_elgamal_encryptions(
                 ecc_chip.clone(),
+                config.nonzero,
                 layouter.namespace(|| "cond11 El Gamal"),
                 "cond11",
                 self.ea_pk,
@@ -3050,13 +3056,11 @@ mod tests {
         assert_eq!(prover.verify(), Ok(()));
     }
 
-    /// Documents the current ElGamal relation: r_i = 0 is accepted when the
-    /// public ciphertext is correspondingly `(C1 = identity, C2 = [v_i]G)`.
-    /// This is a per-share self-leakage/coercion surface, not a
-    /// proof-soundness failure; see THREAT_MODEL.md.
+    /// r_i = 0 would reveal C2_i = [v_i]G for a small share value, so the
+    /// hardened circuit rejects the exact degenerate randomness witness.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn encryption_integrity_randomness_zero_is_accepted_by_relation() {
+    fn encryption_integrity_randomness_zero_is_rejected() {
         let (mut circuit, mut instance) = make_test_data();
         let shares_u64 = [625u64; 16];
         let (_ea_sk, ea_pk_point, _ea_pk_affine) = generate_ea_keypair();
@@ -3085,7 +3089,7 @@ mod tests {
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
-        assert_eq!(prover.verify(), Ok(()));
+        assert!(prover.verify().is_err());
     }
 
     /// A corrupted share_randomness[0] should fail condition 11:

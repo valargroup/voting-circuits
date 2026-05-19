@@ -12,7 +12,7 @@
 use std::string::String;
 use std::vec::Vec;
 
-use ff::{FromUniformBytes, PrimeField};
+use ff::{Field, FromUniformBytes, PrimeField};
 use group::{Curve, GroupEncoding};
 use halo2_proofs::circuit::Value;
 use pasta_curves::{
@@ -385,7 +385,7 @@ fn vote_share_prf(
 
 /// Derive deterministic El Gamal randomness `r_i` for a share.
 ///
-/// Returns a `pallas::Base` element that is also a valid `pallas::Scalar`.
+/// Returns a non-zero `pallas::Base` element that is also a valid `pallas::Scalar`.
 /// We reduce mod p_base first; since p_base < q_scalar on the Pallas curve,
 /// every Base element is representable as a Scalar.
 fn derive_share_randomness(
@@ -404,6 +404,11 @@ fn derive_share_randomness(
         share_index,
     );
     let r = pallas::Base::from_uniform_bytes(&hash);
+    if bool::from(r.is_zero()) {
+        // Preserve deterministic derivation while satisfying the circuit's
+        // non-zero randomness gate in the negligible exact-zero case.
+        return pallas::Base::one();
+    }
     debug_assert!(base_to_scalar(r).is_some(), "p < q guarantees Base→Scalar");
     r
 }
@@ -698,7 +703,8 @@ pub fn build_vote_proof_from_delegation(
             i as u8,
         );
         share_randomness[i] = r;
-        let r_scalar = base_to_scalar(r).expect("derive_share_randomness guarantees scalar-range");
+        let r_scalar =
+            base_to_scalar(r).expect("derive_share_randomness guarantees nonzero scalar-range");
         let v_scalar = base_to_scalar(shares_base[i]).expect("share value in range");
 
         let c1_point = (g * r_scalar).to_affine();
@@ -1054,12 +1060,17 @@ mod tests {
     }
 
     #[test]
-    fn derive_share_randomness_is_valid_scalar() {
+    fn derive_share_randomness_is_nonzero_valid_scalar() {
         let sk = test_sk();
         let round_id = test_round_id();
         let van = test_van();
         for i in 0..16u8 {
             let r = derive_share_randomness(&sk, round_id, 1, van, i);
+            assert!(
+                bool::from(!r.is_zero()),
+                "r_{} must be non-zero for the circuit hardening gate",
+                i
+            );
             assert!(
                 base_to_scalar(r).is_some(),
                 "r_{} must be convertible to scalar",

@@ -212,7 +212,7 @@ Where:
 - **alpha** — fresh randomness. If rk were the same across transactions, an observer could link them to the same spender.
 - **SpendAuthG** — the fixed base generator point on the Pallas curve dedicated to spend authorization.
 
-**Constructions:** Shared `shared_primitives::spend_authority::prove_spend_authority` gadget (which computes fixed-base `[alpha]*SpendAuthG`, adds `ak_P`, and constrains `rk` to the instance), plus `EccChip` operations internally.
+**Constructions:** Shared `circuit::spend_authority::prove_spend_authority` gadget (which computes fixed-base `[alpha]*SpendAuthG`, adds `ak_P`, and constrains `rk` to the instance), plus `EccChip` operations internally.
 
 ## 5. CommitIvk & Diversified Address Integrity
 
