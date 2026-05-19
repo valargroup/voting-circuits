@@ -150,7 +150,8 @@ mod tests {
         let mut c2_y = [pallas::Base::zero(); 16];
         for i in 0..16 {
             let (cx1, cx2, cy1, cy2) =
-                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk);
+                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk)
+                    .expect("test encryption inputs should be valid");
             c1_x[i] = cx1;
             c2_x[i] = cx2;
             c1_y[i] = cy1;
