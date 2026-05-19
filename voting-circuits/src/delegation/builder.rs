@@ -1046,6 +1046,19 @@ mod tests {
         assert_eq!(pi[13], bundle.instance.dom);
     }
 
+    fn duplicate_first_real_note_input(inputs: &mut Vec<RealNoteInput>) {
+        let original = inputs.remove(0);
+        let duplicate = RealNoteInput {
+            note: original.note.clone(),
+            fvk: original.fvk.clone(),
+            merkle_path: original.merkle_path.clone(),
+            imt_proof: original.imt_proof.clone(),
+            scope: original.scope,
+        };
+        inputs.push(original);
+        inputs.push(duplicate);
+    }
+
     fn verify_bundle(bundle: &DelegationBundle) {
         // Verify merged circuit.
         let pi = bundle.instance.to_halo2_instance();
@@ -1478,6 +1491,75 @@ mod tests {
     #[test]
     fn test_two_real_notes_builds_expected_output_shape() {
         build_bundle(&[7_000_000, 7_000_000], &[Scope::External, Scope::External]);
+    }
+
+    #[test]
+    fn test_duplicate_real_note_input_is_rejected() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let output_recipient = fvk.address_at(1u32, Scope::External);
+        let imt = SpacedLeafImtProvider::new();
+        let (mut inputs, nc_root) =
+            make_real_note_inputs(&fvk, &[13_000_000], &[Scope::External], &imt, &mut rng);
+        duplicate_first_real_note_input(&mut inputs);
+
+        let result = build_delegation_bundle(
+            inputs,
+            &fvk,
+            pallas::Scalar::random(&mut rng),
+            output_recipient,
+            pallas::Base::random(&mut rng),
+            nc_root,
+            pallas::Base::random(&mut rng),
+            &imt,
+            &mut rng,
+            None,
+        );
+
+        assert!(result.is_err(), "duplicate real notes must be rejected");
+    }
+
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn test_duplicate_real_note_slots_fail_verification() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let output_recipient = fvk.address_at(1u32, Scope::External);
+        let vote_round_id = pallas::Base::random(&mut rng);
+        let van_comm_rand = pallas::Base::random(&mut rng);
+        let alpha = pallas::Scalar::random(&mut rng);
+
+        let imt = SpacedLeafImtProvider::new();
+        let (mut inputs, nc_root) =
+            make_real_note_inputs(&fvk, &[13_000_000], &[Scope::External], &imt, &mut rng);
+        duplicate_first_real_note_input(&mut inputs);
+
+        let bundle = build_delegation_bundle(
+            inputs,
+            &fvk,
+            alpha,
+            output_recipient,
+            vote_round_id,
+            nc_root,
+            van_comm_rand,
+            &imt,
+            &mut rng,
+            None,
+        )
+        .expect("builder currently accepts duplicate note inputs");
+        assert_eq!(
+            bundle.instance.gov_null[0], bundle.instance.gov_null[1],
+            "duplicating a note exposes the same governance nullifier twice"
+        );
+
+        let pi = bundle.instance.to_halo2_instance();
+        let prover = MockProver::run(K, &bundle.circuit, vec![pi]).unwrap();
+        assert!(
+            prover.verify().is_err(),
+            "duplicate note slots must fail circuit verification"
+        );
     }
 
     #[test]
