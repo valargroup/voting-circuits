@@ -232,14 +232,13 @@ pub struct VoteProofBundle {
     /// Needed by the helper server to verify share payloads.
     pub shares_hash: pallas::Base,
     /// Per-share blind factors for blinded commitments.
-    /// See `crate::shares_hash` for the authoritative five-coordinate
-    /// commitment shape.
+    /// See `crate::shares_hash` for the authoritative indexed commitment shape.
     /// Deterministically derived from (sk, round_id, proposal_id, van_commitment, share_index).
     pub share_blinds: [pallas::Base; 16],
     /// Pre-computed per-share Poseidon commitments.
-    /// Each commitment binds the blind and both coordinates of both El Gamal
-    /// ciphertext points; `crate::shares_hash` is the source of truth for the
-    /// preimage order.
+    /// Each commitment binds the share-commitment domain tag, the share index,
+    /// the blind, and both coordinates of both El Gamal ciphertext points;
+    /// `crate::shares_hash` is the source of truth for the preimage order.
     /// Provided as private witness inputs to the ZKP #3 builder. The reveal
     /// circuit binds them transitively through `shares_hash`, so the helper
     /// server only needs the primary share's blind, not all 16.
@@ -508,7 +507,7 @@ fn deterministic_shuffle(
 /// This allows the client to re-derive the same secrets after a crash without
 /// persisting them.
 ///
-/// **Expensive**: K=13 proof generation takes ~30-60 seconds in release mode.
+/// **Expensive**: K=14 proof generation takes ~30-60 seconds in release mode.
 #[allow(clippy::too_many_arguments)]
 pub fn build_vote_proof_from_delegation(
     sk: &SpendingKey,
@@ -731,6 +730,7 @@ pub fn build_vote_proof_from_delegation(
     });
     let share_comms: [pallas::Base; 16] = core::array::from_fn(|i| {
         share_commitment(
+            i as u32,
             share_blinds[i],
             enc_c1_x[i],
             enc_c2_x[i],

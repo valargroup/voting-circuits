@@ -42,7 +42,9 @@
 //!   *(implemented)*
 //! - **Condition 9**: Shares Range — each `shares_j` in `[0, 2^30)`.
 //!   *(implemented)*
-//! - **Condition 10**: Shares Hash Integrity — `shares_hash = H(enc_share_1..16)`.
+//! - **Condition 10**: Shares Hash Integrity — `shares_hash = H(share_comm_0..15)`,
+//!   where each `share_comm_i` binds `DOMAIN_SHARE_COMM`, `i`, the blind, and
+//!   both ciphertext point coordinates.
 //!   *(implemented)*
 //! - **Condition 11**: Encryption Integrity — each `enc_share_i = ElGamal(shares_i, r_i, ea_pk)`.
 //!   *(implemented)*
@@ -103,8 +105,8 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 
 /// Circuit size (2^K rows).
 ///
-/// K=13 (8,192 rows). `CircuitCost::measure` reports a floor-planner
-/// high-water mark of **7,945 rows** (97.0% of 8,192). The `V1` floor planner
+/// K=14 (16,384 rows). `CircuitCost::measure` reports a floor-planner
+/// high-water mark of **8,537 rows** (52.1% of 16,384). The `V1` floor planner
 /// packs non-overlapping regions into the same row range across different
 /// columns, so the high-water mark is much lower than a naive sum-of-heights
 /// estimate.
@@ -116,9 +118,12 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 ///   Poseidon regions in non-overlapping columns.
 /// - 10-bit Sinsemilla/range-check lookup table: 1,024 fixed rows.
 ///
-/// Run the `row_budget` diagnostic to re-measure after circuit changes:
+/// The `[v_i]*G` term uses `FixedPointShort` (22-window short-scalar path)
+/// rather than `FixedPointBaseField` (85-window full-scalar path), keeping the
+/// circuit within K=14. Run the `row_budget` benchmark to re-measure after
+/// circuit changes:
 ///   `cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
-pub const K: u32 = 13;
+pub const K: u32 = 14;
 
 pub(crate) use van_integrity::DOMAIN_VAN;
 pub(crate) use vote_commitment::DOMAIN_VC;
@@ -217,31 +222,42 @@ pub(super) fn van_nullifier_hash(
 
 /// Out-of-circuit per-share blinded commitment (condition 10).
 ///
-/// Computes `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` for a single share.
+/// Computes `Poseidon(DOMAIN_SHARE_COMM, share_index, blind, c1_x,
+/// c2_x, c1_y, c2_y)` for a single share.
 ///
 /// The y-coordinates bind the commitment to the exact curve point, not just
 /// the x-coordinate. Without them, an attacker can negate the ElGamal
 /// ciphertext (flip sign bits) without invalidating the ZKP — corrupting
 /// the homomorphic tally. See: ciphertext sign-malleability fix.
 ///
+/// `share_index` binds the commitment to its slot in the 16-share array.
 /// The blind factor prevents anyone who sees the encrypted shares on-chain
 /// from recomputing shares_hash and linking it to a specific vote commitment.
 pub fn share_commitment(
+    share_index: u32,
     blind: pallas::Base,
     c1_x: pallas::Base,
     c2_x: pallas::Base,
     c1_y: pallas::Base,
     c2_y: pallas::Base,
 ) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2>::init()
-        .hash([blind, c1_x, c2_x, c1_y, c2_y])
+    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<7>, 3, 2>::init().hash([
+        domain_tags::share_commitment(),
+        pallas::Base::from(share_index as u64),
+        blind,
+        c1_x,
+        c2_x,
+        c1_y,
+        c2_y,
+    ])
 }
 
 /// Out-of-circuit shares hash (condition 10).
 ///
 /// Computes blinded per-share commitments and hashes them together:
 /// ```text
-/// share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i in 0..16
+/// share_comm_i = Poseidon(DOMAIN_SHARE_COMM, i, blind_i, c1_i_x,
+///                         c2_i_x, c1_i_y, c2_i_y)   for i in 0..16
 /// shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
 /// ```
 ///
@@ -258,6 +274,7 @@ pub fn shares_hash(
 ) -> pallas::Base {
     let comms: [pallas::Base; 16] = core::array::from_fn(|i| {
         share_commitment(
+            i as u32,
             share_blinds[i],
             enc_share_c1_x[i],
             enc_share_c2_x[i],
@@ -481,7 +498,7 @@ pub struct Circuit {
     pub(crate) enc_share_c2_y: [Value<pallas::Base>; 16],
 
     // Condition 10 (Shares Hash Integrity): per-share blind factors for blinded commitments.
-    /// Random blind factors: share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y).
+    /// Random blind factors for indexed, domain-separated share commitments.
     pub(crate) share_blinds: [Value<pallas::Base>; 16],
 
     // Condition 11 (Encryption Integrity): El Gamal randomness and public key.
@@ -547,10 +564,10 @@ impl Circuit {
     }
 }
 
-/// In-circuit Poseidon hash for one share commitment: `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
+/// In-circuit Poseidon hash for one indexed share commitment.
 ///
-/// Uses the same parameters as the out-of-circuit [`share_commitment`] (P128Pow5T3,
-/// ConstantLength<5>, width 3, rate 2) so that native and in-circuit hashes match.
+/// Uses the same parameters as the out-of-circuit [`share_commitment`] so that
+/// native and in-circuit hashes match.
 
 impl plonk::Circuit<pallas::Base> for Circuit {
     type Config = Config;
@@ -1158,7 +1175,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // ---------------------------------------------------------------
         // Condition 10: Shares Hash Integrity (blinded commitments).
         //
-        // share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)
+        // share_comm_i = Poseidon(DOMAIN_SHARE_COMM, i, blind_i,
+        //                         c1_i_x, c2_i_x, c1_i_y, c2_i_y)
         // shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
         //
         // The y-coordinates bind each share commitment to the exact curve
@@ -1245,6 +1263,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let shares_hash = compute_shares_hash_in_circuit(
             || config.poseidon_chip(),
             layouter.namespace(|| "cond10: shares hash"),
+            config.advices[0],
             blinds,
             enc_c1,
             enc_c2,
@@ -2931,8 +2950,7 @@ mod tests {
     }
 
     /// Verifies the out-of-circuit share_commitment helper is deterministic
-    /// and that input order matters (Poseidon(blind, c1_x, c2_x, c1_y, c2_y) ≠
-    /// Poseidon(blind, c2_x, c1_x, c2_y, c1_y)).
+    /// and that input order and share index matter.
     #[test]
     fn share_commitment_deterministic() {
         let mut rng = OsRng;
@@ -2942,18 +2960,46 @@ mod tests {
         let c1_y = pallas::Base::random(&mut rng);
         let c2_y = pallas::Base::random(&mut rng);
 
-        let h1 = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
-        let h2 = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
+        let h1 = share_commitment(0, blind, c1_x, c2_x, c1_y, c2_y);
+        let h2 = share_commitment(0, blind, c1_x, c2_x, c1_y, c2_y);
         assert_eq!(h1, h2);
 
+        let manual = poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<7>, 3, 2>::init()
+            .hash([
+                domain_tags::share_commitment(),
+                pallas::Base::ZERO,
+                blind,
+                c1_x,
+                c2_x,
+                c1_y,
+                c2_y,
+            ]);
+        assert_eq!(h1, manual);
+
+        let wrong_domain =
+            poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<7>, 3, 2>::init().hash([
+                pallas::Base::from(domain_tags::DOMAIN_VC),
+                pallas::Base::ZERO,
+                blind,
+                c1_x,
+                c2_x,
+                c1_y,
+                c2_y,
+            ]);
+        assert_ne!(h1, wrong_domain);
+
         // Swapping c1 and c2 changes the hash.
-        let h3 = share_commitment(blind, c2_x, c1_x, c2_y, c1_y);
+        let h3 = share_commitment(0, blind, c2_x, c1_x, c2_y, c1_y);
         assert_ne!(h1, h3);
 
         // Different blind changes the hash.
         let blind_alt = pallas::Base::random(&mut rng);
-        let h4 = share_commitment(blind_alt, c1_x, c2_x, c1_y, c2_y);
+        let h4 = share_commitment(0, blind_alt, c1_x, c2_x, c1_y, c2_y);
         assert_ne!(h1, h4);
+
+        // Different share index changes the hash.
+        let h5 = share_commitment(1, blind, c1_x, c2_x, c1_y, c2_y);
+        assert_ne!(h1, h5);
     }
 
     /// Minimal circuit that computes one share commitment in-circuit and constrains
@@ -2961,6 +3007,7 @@ mod tests {
     /// the native share_commitment.
     #[derive(Clone, Default)]
     struct ShareCommitmentTestCircuit {
+        share_index: u32,
         blind: pallas::Base,
         c1_x: pallas::Base,
         c2_x: pallas::Base,
@@ -3019,6 +3066,11 @@ mod tests {
                 config.advices[0],
                 Value::known(self.blind),
             )?;
+            let share_index_cell = crate::circuit::gadget::assign_constant(
+                layouter.namespace(|| "share_index"),
+                config.advices[0],
+                pallas::Base::from(self.share_index as u64),
+            )?;
             let c1_x_cell = assign_free_advice(
                 layouter.namespace(|| "c1_x"),
                 config.advices[0],
@@ -3043,12 +3095,14 @@ mod tests {
             let result = hash_share_commitment_in_circuit(
                 chip,
                 layouter.namespace(|| "share_comm"),
+                config.advices[0],
+                share_index_cell,
                 blind_cell,
                 c1_x_cell,
                 c2_x_cell,
                 c1_y_cell,
                 c2_y_cell,
-                0,
+                self.share_index as usize,
             )?;
             layouter.constrain_instance(result.cell(), config.primary, 0)?;
             Ok(())
@@ -3056,7 +3110,7 @@ mod tests {
     }
 
     /// Verifies that the in-circuit share commitment hash matches the native
-    /// share_commitment(blind, c1_x, c2_x, c1_y, c2_y). The test builds a minimal circuit
+    /// share_commitment(index, blind, c1_x, c2_x, c1_y, c2_y). The test builds a minimal circuit
     /// that computes the hash and constrains it to the instance column, then
     /// runs MockProver with the native hash as the public input.
     #[test]
@@ -3068,8 +3122,9 @@ mod tests {
         let c1_y = pallas::Base::random(&mut rng);
         let c2_y = pallas::Base::random(&mut rng);
 
-        let expected = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
+        let expected = share_commitment(0, blind, c1_x, c2_x, c1_y, c2_y);
         let circuit = ShareCommitmentTestCircuit {
+            share_index: 0,
             blind,
             c1_x,
             c2_x,

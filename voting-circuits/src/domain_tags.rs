@@ -63,6 +63,11 @@ pub fn share_spend() -> pallas::Base {
     string_domain_tag(b"share spend")
 }
 
+/// Domain tag for per-share encrypted-share commitments.
+pub(crate) fn share_commitment() -> pallas::Base {
+    string_domain_tag(b"share commitment")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +82,7 @@ mod tests {
             ("delegation rho binding", delegation_rho_binding()),
             ("governance nullifier", governance_nullifier()),
             ("share spend", share_spend()),
+            ("share commitment", share_commitment()),
         ];
 
         for (i, (left_name, left)) in tags.iter().enumerate() {

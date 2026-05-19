@@ -1,7 +1,7 @@
 //! Real Halo2 prove/verify for the vote proof circuit (ZKP #2).
 //!
 //! Follows the same pattern as `delegation/prove.rs` but for the
-//! 12-condition vote proof circuit at K=13.
+//! 12-condition vote proof circuit at K=14.
 
 use std::string::String;
 use std::vec::Vec;
@@ -89,7 +89,7 @@ pub fn vote_proof_proving_key(
 /// provides a circuit without all witnesses populated or an instance
 /// that Halo2 cannot prove against.
 ///
-/// **Expensive**: K=13 proof generation takes ~30-60 seconds in release mode.
+/// **Expensive**: K=14 proof generation takes ~30-60 seconds in release mode.
 /// Params and keys are cached so only the first call pays keygen.
 pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8>, ProveError> {
     let (params, pk, _vk) = vote_proof_cached_keys();
@@ -196,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "long-running K=13 proof keygen; run when touching vote proof creation"]
+    #[ignore = "long-running K=14 proof keygen; run when touching vote proof creation"]
     fn create_vote_proof_returns_err_for_missing_witnesses() {
         let instance = minimal_instance();
         let err = create_vote_proof(Circuit::default(), &instance).unwrap_err();

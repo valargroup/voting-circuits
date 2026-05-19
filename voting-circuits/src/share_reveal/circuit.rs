@@ -13,13 +13,16 @@
 //!   private witnesses transitively bound to the public tree root.
 //! - **Condition 4**: Primary Share Binding — the voting client knows a
 //!   blind such that
-//!   `share_comms[share_index] = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`
-//!   (see `crate::shares_hash` for the authoritative five-input shape;
+//!   `share_comms[share_index] = Poseidon(DOMAIN_SHARE_COMM, share_index,
+//!   blind, c1_x, c2_x, c1_y, c2_y)`
+//!   (see `crate::shares_hash` for the authoritative shape;
 //!   the y-coordinates defend against ciphertext sign-malleability),
 //!   binding the publicly revealed encrypted share to the committed set.
 //! - **Condition 5**: Share Nullifier Integrity — `share_nullifier` is
 //!   correctly derived as
 //!   `Poseidon(domain_tag, vote_commitment, share_index, blind)`.
+//!   `share_index` is a public input so verifiers can bind the proof to the
+//!   revealed slot carried by the external payload.
 //!   `blind` is the share commitment blinding factor — a secret held by
 //!   the voting client (the host program that built ZKP #2 and now
 //!   builds this reveal proof). Using the blind (rather than a
@@ -51,7 +54,7 @@
 //! - 9 advice columns: advices\[0..4\] general + Merkle swap, \[5\] Poseidon partial
 //!   S-box, \[6..8\] Poseidon state.
 //! - 8 fixed columns for Poseidon round constants + constants.
-//! - 1 instance column (9 public inputs).
+//! - 1 instance column (10 public inputs).
 //! - K = 11 (2,048 rows).
 
 use std::vec::Vec;
@@ -91,7 +94,7 @@ use crate::vote_proof::VOTE_COMM_TREE_DEPTH;
 /// Circuit size (2^K rows).
 ///
 /// K=11 (2,048 rows). `CircuitCost::measure` reports a floor-planner
-/// high-water mark of ~1,592 rows (78% of 2,048). The `V1` floor
+/// high-water mark of 1,672 rows (81.6% of 2,048). The `V1` floor
 /// planner packs non-overlapping regions into the same row range across
 /// different columns.
 ///
@@ -100,7 +103,7 @@ use crate::vote_proof::VOTE_COMM_TREE_DEPTH;
 pub const K: u32 = 11;
 
 // ================================================================
-// Public input offsets (9 field elements).
+// Public input offsets (10 field elements).
 // ================================================================
 
 /// Public input offset for the share nullifier (prevents double-counting).
@@ -133,6 +136,11 @@ pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 7;
 /// validates that `voting_round_id` matches an active session (Gov Steps V1
 /// §5.4 "Out-of-circuit checks").
 pub const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
+/// Public input offset for the revealed share index.
+///
+/// Copied into advice and used by both the share-commitment mux and the
+/// share-nullifier hash. This binds the proof to the caller-declared slot.
+pub const SHARE_INDEX_PUBLIC_OFFSET: usize = 9;
 
 // ================================================================
 // Out-of-circuit helpers
@@ -181,7 +189,7 @@ pub fn share_nullifier_hash(
 /// and the share commitment multiplexer gate selector.
 #[derive(Clone, Debug)]
 pub struct Config {
-    /// Public input column (9 field elements).
+    /// Public input column (10 field elements).
     primary: Column<InstanceColumn>,
     /// 9 advice columns for private witness data.
     advices: [Column<Advice>; 9],
@@ -192,10 +200,10 @@ pub struct Config {
     /// Selector for the share commitment multiplexer gate (condition 4).
     ///
     /// Fires on a 4-row block (9 advice columns, Rotation 0..3):
-    ///   Row 0: sel_0..sel_8     (advices[0..9])
-    ///   Row 1: sel_9..sel_15    (advices[0..7]),  comm_0..comm_1  (advices[7..9])
-    ///   Row 2: comm_2..comm_10  (advices[0..9])
-    ///   Row 3: comm_11..comm_15 (advices[0..5]),  selected_comm   (advices[5]),
+    ///   Row 0: sel_0..sel_8     (advices[0]..[8])
+    ///   Row 1: sel_9..sel_15    (advices[0]..[6]),  comm_0..comm_1  (advices[7]..[8])
+    ///   Row 2: comm_2..comm_10  (advices[0]..[8])
+    ///   Row 3: comm_11..comm_15 (advices[0]..[4]),  selected_comm   (advices[5]),
     ///          share_index      (advices[6])
     ///
     /// Constraints:
@@ -246,9 +254,8 @@ pub struct Circuit {
     // === Condition 3: Shares Hash Integrity ===
     /// Pre-computed per-share Poseidon commitments (private witnesses).
     ///
-    /// Shape: see `crate::shares_hash` — five-input
-    /// `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` including the
-    /// y-coordinates that defend against ciphertext sign-malleability.
+    /// Shape: see `crate::shares_hash`. Each commitment binds its domain,
+    /// share index, blind, and both ciphertext point coordinates.
     /// Transitively bound to the public tree root via
     /// `shares_hash → vote_commitment → Merkle path`.
     pub(crate) share_comms: [Value<pallas::Base>; 16],
@@ -256,7 +263,7 @@ pub struct Circuit {
     // === Condition 4: Primary Share Binding ===
     /// Blind factor for the revealed share. The synthesize body
     /// (see the "Condition 4: Primary Share Binding" region below) recomputes
-    /// `Poseidon(primary_blind, c1_x, c2_x, c1_y, c2_y)` using the shared
+    /// the indexed share commitment using the shared
     /// `crate::shares_hash` gadget and constrains it to equal
     /// `share_comms[share_index]`; the y-coordinates are the
     /// sign-malleability defense and the gadget is the single source of
@@ -264,7 +271,10 @@ pub struct Circuit {
     pub(crate) primary_blind: Value<pallas::Base>,
 
     // === Share selection ===
-    /// Which of the 16 shares is being revealed (0..15).
+    /// Selector witness for which of the 16 shares is being revealed (0..15).
+    ///
+    /// The actual share-index cell is copied from the public instance. The
+    /// mux gate forces this selector witness to reconstruct that public value.
     pub(crate) share_index: Value<pallas::Base>,
 
     // === Condition 5: Share Nullifier Integrity ===
@@ -340,7 +350,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // ------+---------+---------+----------+----------+----------+----------+---------+---------+---------
         // Row 0 | sel[0]  | sel[1]  | sel[2]   | sel[3]   | sel[4]   | sel[5]   | sel[6]  | sel[7]  | sel[8]
         // Row 1 | sel[9]  | sel[10] | sel[11]  | sel[12]  | sel[13]  | sel[14]  | sel[15] | comm[0] | comm[1]
-        // Row 2 | comm[2] | comm[3] | comm[4]  | comm[5]  | comm[6]  | comm[7]  | comm[8] | comm[9] |comm[10]
+        // Row 2 | comm[2] | comm[3] | comm[4]  | comm[5]  | comm[6]  | comm[7]  | comm[8] | comm[9] | comm[10]
         // Row 3 | comm[11]| comm[12]| comm[13] | comm[14] | comm[15] | sel_comm | share_idx| —      | —
         let q_share_comm_mux = meta.selector();
         meta.create_gate("share commitment multiplexer", |meta| {
@@ -453,7 +463,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         mut layouter: impl Layouter<pallas::Base>,
     ) -> Result<(), plonk::Error> {
         // ---------------------------------------------------------------
-        // Witness private inputs.
+        // Witness private inputs and copy the public share index.
         // ---------------------------------------------------------------
 
         let vote_commitment = assign_free_advice(
@@ -466,10 +476,17 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let vote_commitment_cond2 = vote_commitment.clone();
         let vote_commitment_cond5 = vote_commitment.clone();
 
-        let share_index = assign_free_advice(
-            layouter.namespace(|| "witness share_index"),
-            config.advices[0],
-            self.share_index,
+        let share_index = layouter.assign_region(
+            || "copy share_index from instance",
+            |mut region| {
+                region.assign_advice_from_instance(
+                    || "share_index",
+                    config.primary,
+                    SHARE_INDEX_PUBLIC_OFFSET,
+                    config.advices[0],
+                    0,
+                )
+            },
         )?;
         let share_index_cond5 = share_index.clone();
 
@@ -569,8 +586,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // correspond to the share commitment at the declared
         // `share_index`, by recomputing the commitment and matching it
         // against the muxed-out `share_comms[share_index]`:
-        //   derived_comm = Poseidon(primary_blind, enc_c1_x, enc_c2_x,
-        //                          enc_c1_y, enc_c2_y)
+        //   derived_comm = Poseidon(DOMAIN_SHARE_COMM, share_index,
+        //                           primary_blind, enc_c1_x, enc_c2_x,
+        //                           enc_c1_y, enc_c2_y)
         //   share_comms[share_index] == derived_comm
         //
         // Defense-by-rejection: an adversary that has seen the on-chain
@@ -633,7 +651,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         let derived_comm = hash_share_commitment_in_circuit(
             config.poseidon_chip(),
-            layouter.namespace(|| "cond4: Poseidon(blind, c1_x, c2_x, c1_y, c2_y)"),
+            layouter.namespace(|| "cond4: Poseidon(domain, index, blind, c1_x, c2_x, c1_y, c2_y)"),
+            config.advices[0],
+            share_index.clone(),
             primary_blind,
             enc_c1_x,
             enc_c2_x,
@@ -644,12 +664,12 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // Mux share_comms by share_index → selected_comm.
         //
-        // Col →  [0]       [1]       [2]        [3]        [4]        [5]        [6]       [7]       [8]       [9]
-        // ------+---------+---------+----------+----------+----------+----------+---------+---------+---------+---------
-        // Row 0 | sel[0]  | sel[1]  | sel[2]   | sel[3]   | sel[4]   | sel[5]   | sel[6]  | sel[7]  | sel[8]  | sel[9]
-        // Row 1 | sel[10] | sel[11] | sel[12]  | sel[13]  | sel[14]  | sel[15]  | comm[0] | comm[1] | comm[2] | comm[3]
-        // Row 2 | comm[4] | comm[5] | comm[6]  | comm[7]  | comm[8]  | comm[9]  | comm[10]| comm[11]| comm[12]| comm[13]
-        // Row 3 | comm[14]| comm[15]| sel_comm | share_idx| —        | —        | —       | —       | —       | —
+        // Col →  [0]       [1]       [2]        [3]        [4]        [5]        [6]       [7]       [8]
+        // ------+---------+---------+----------+----------+----------+----------+---------+---------+---------
+        // Row 0 | sel[0]  | sel[1]  | sel[2]   | sel[3]   | sel[4]   | sel[5]   | sel[6]  | sel[7]  | sel[8]
+        // Row 1 | sel[9]  | sel[10] | sel[11]  | sel[12]  | sel[13]  | sel[14]  | sel[15] | comm[0] | comm[1]
+        // Row 2 | comm[2] | comm[3] | comm[4]  | comm[5]  | comm[6]  | comm[7]  | comm[8] | comm[9] | comm[10]
+        // Row 3 | comm[11]| comm[12]| comm[13] | comm[14] | comm[15] | sel_comm | share_idx| —       | —
         let selected_comm = layouter.assign_region(
             || "cond4: share commitment mux",
             |mut region| {
@@ -853,7 +873,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 // Instance (public inputs)
 // ================================================================
 
-/// Public inputs to the Share Reveal circuit (9 field elements).
+/// Public inputs to the Share Reveal circuit (10 field elements).
 ///
 /// The voting client (prover) chooses these values when assembling the
 /// proof; the verifier accepts them as the binding the proof must
@@ -870,8 +890,14 @@ pub struct Instance {
     pub share_nullifier: pallas::Base,
     /// X-coordinate of the revealed share's El Gamal C1 component.
     pub enc_share_c1_x: pallas::Base,
+    /// Y-coordinate of the revealed share's El Gamal C1 component.
+    ///
+    /// Binds the proof to the exact curve point, preventing sign-malleability.
+    pub enc_share_c1_y: pallas::Base,
     /// X-coordinate of the revealed share's El Gamal C2 component.
     pub enc_share_c2_x: pallas::Base,
+    /// Y-coordinate of the revealed share's El Gamal C2 component.
+    pub enc_share_c2_y: pallas::Base,
     /// Which proposal this vote is for.
     pub proposal_id: pallas::Base,
     /// The voter's choice.
@@ -880,22 +906,25 @@ pub struct Instance {
     pub vote_comm_tree_root: pallas::Base,
     /// The voting round identifier.
     pub voting_round_id: pallas::Base,
-    /// Y-coordinate of the revealed share's El Gamal C1 component.
+    /// Which of the 16 committed shares is being revealed.
     ///
-    /// Binds the proof to the exact curve point, preventing sign-malleability.
-    pub enc_share_c1_y: pallas::Base,
-    /// Y-coordinate of the revealed share's El Gamal C2 component.
-    pub enc_share_c2_y: pallas::Base,
+    /// Bound publicly so the verifier can compare the proof to the declared
+    /// reveal slot instead of accepting an arbitrary private index.
+    pub share_index: pallas::Base,
 }
 
 impl Instance {
     /// Number of public inputs serialized by [`Self::to_halo2_instance`].
-    pub const NUM_PUBLIC_INPUTS: usize = 9;
+    pub const NUM_PUBLIC_INPUTS: usize = 10;
 
     /// Constructs an [`Instance`] from its constituent parts.
     ///
+    /// Argument order matches the public input offsets and
+    /// [`Self::to_halo2_instance`].
+    ///
     /// Callers should authenticate `proposal_id`, `vote_decision`,
-    /// `vote_comm_tree_root`, and `voting_round_id` out-of-band before
+    /// `vote_comm_tree_root`, `voting_round_id`, and `share_index`
+    /// out-of-band before
     /// passing them here — see
     /// [`crate::share_reveal::prove::verify_share_reveal_proof`] for the
     /// trust contract. The remaining fields are proof-attested outputs
@@ -905,24 +934,26 @@ impl Instance {
     pub fn from_parts(
         share_nullifier: pallas::Base,
         enc_share_c1_x: pallas::Base,
+        enc_share_c1_y: pallas::Base,
         enc_share_c2_x: pallas::Base,
+        enc_share_c2_y: pallas::Base,
         proposal_id: pallas::Base,
         vote_decision: pallas::Base,
         vote_comm_tree_root: pallas::Base,
         voting_round_id: pallas::Base,
-        enc_share_c1_y: pallas::Base,
-        enc_share_c2_y: pallas::Base,
+        share_index: pallas::Base,
     ) -> Self {
         Instance {
             share_nullifier,
             enc_share_c1_x,
+            enc_share_c1_y,
             enc_share_c2_x,
+            enc_share_c2_y,
             proposal_id,
             vote_decision,
             vote_comm_tree_root,
             voting_round_id,
-            enc_share_c1_y,
-            enc_share_c2_y,
+            share_index,
         }
     }
 
@@ -941,6 +972,7 @@ impl Instance {
             self.vote_decision,
             self.vote_comm_tree_root,
             self.voting_round_id,
+            self.share_index,
         ]
     }
 }
@@ -1001,13 +1033,22 @@ mod tests {
             c2_y[i] = cy2;
         }
         let comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-            share_commitment(share_blinds[i], c1_x[i], c2_x[i], c1_y[i], c2_y[i])
+            share_commitment(
+                i as u32,
+                share_blinds[i],
+                c1_x[i],
+                c2_x[i],
+                c1_y[i],
+                c2_y[i],
+            )
         });
         let hash = compute_shares_hash(share_blinds, c1_x, c2_x, c1_y, c2_y);
         (c1_x, c2_x, c1_y, c2_y, share_blinds, comms, hash)
     }
 
-    fn make_test_data(share_idx: u32) -> (Circuit, Instance) {
+    fn make_test_data_with_metadata(
+        share_idx: u32,
+    ) -> (Circuit, Instance, pallas::Base, pallas::Base) {
         let proposal_id = pallas::Base::from(3u64);
         let vote_decision = pallas::Base::from(1u64);
         let voting_round_id = pallas::Base::from(999u64);
@@ -1046,15 +1087,26 @@ mod tests {
         let instance = Instance::from_parts(
             share_nullifier,
             enc_c1_x[share_idx as usize],
+            enc_c1_y[share_idx as usize],
             enc_c2_x[share_idx as usize],
+            enc_c2_y[share_idx as usize],
             proposal_id,
             vote_decision,
             vote_comm_tree_root,
             voting_round_id,
-            enc_c1_y[share_idx as usize],
-            enc_c2_y[share_idx as usize],
+            share_index_fp,
         );
 
+        (
+            circuit,
+            instance,
+            vote_commitment,
+            share_blinds[share_idx as usize],
+        )
+    }
+
+    fn make_test_data(share_idx: u32) -> (Circuit, Instance) {
+        let (circuit, instance, _, _) = make_test_data_with_metadata(share_idx);
         (circuit, instance)
     }
 
@@ -1136,20 +1188,35 @@ mod tests {
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_share_index() {
-        let (circuit, instance) = make_test_data(0);
-        let bad_instance = Instance::from_parts(
-            instance.share_nullifier,
-            pallas::Base::from(999u64),
-            pallas::Base::from(888u64),
-            instance.proposal_id,
-            instance.vote_decision,
-            instance.vote_comm_tree_root,
-            instance.voting_round_id,
-            instance.enc_share_c1_y,
-            instance.enc_share_c2_y,
-        );
-        let prover = MockProver::run(K, &circuit, vec![bad_instance.to_halo2_instance()]).unwrap();
+        let (circuit, mut instance) = make_test_data(0);
+        instance.share_index = pallas::Base::from(1u64);
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
+    }
+
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn test_share_reveal_public_share_index_binds_commitment_mux() {
+        let (circuit, mut instance, vote_commitment, primary_blind) =
+            make_test_data_with_metadata(0);
+        let wrong_public_index = pallas::Base::from(1u64);
+
+        instance.share_index = wrong_public_index;
+        instance.share_nullifier =
+            share_nullifier_hash(vote_commitment, wrong_public_index, primary_blind);
+
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert!(prover.verify().is_err());
+    }
+
+    #[test]
+    fn instance_has_ten_public_inputs() {
+        let (_, instance) = make_test_data(0);
+        assert_eq!(
+            instance.to_halo2_instance().len(),
+            Instance::NUM_PUBLIC_INPUTS
+        );
+        assert_eq!(Instance::NUM_PUBLIC_INPUTS, 10);
     }
 
     #[test]
@@ -1171,7 +1238,7 @@ mod tests {
     }
 
     /// Proves that flipping c1_y to -c1_y (sign malleability) is detected.
-    /// The share reveal circuit binds to the full curve point via share_commitment(blind, c1_x, c2_x, c1_y, c2_y).
+    /// The share reveal circuit binds to the full curve point via the indexed share commitment.
     /// Negating c1_y changes the commitment, so the proof must fail.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]

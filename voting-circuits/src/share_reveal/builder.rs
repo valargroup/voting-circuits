@@ -19,7 +19,7 @@ use super::circuit::{share_nullifier_hash, Circuit, Instance};
 pub struct ShareRevealBundle {
     /// The share reveal circuit with all witnesses populated.
     pub circuit: Circuit,
-    /// Public inputs (9 field elements).
+    /// Public inputs (10 field elements).
     pub instance: Instance,
 }
 
@@ -30,7 +30,8 @@ pub struct ShareRevealBundle {
 /// - `merkle_auth_path`: The 24 sibling hashes from the vote commitment tree.
 /// - `merkle_position`: Leaf position in the vote commitment tree.
 /// - `share_comms`: Pre-computed per-share Poseidon commitments
-///   (`share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`).
+///   (`share_comm_i = Poseidon(DOMAIN_SHARE_COMM, i, blind_i,
+///   c1_i_x, c2_i_x, c1_i_y, c2_i_y)`).
 /// - `primary_blind`: Blind factor for the revealed share (at `share_index`).
 /// - `enc_c1_x`: X-coordinate of the revealed share's El Gamal C1.
 /// - `enc_c2_x`: X-coordinate of the revealed share's El Gamal C2.
@@ -93,13 +94,14 @@ pub fn build_share_reveal(
     let instance = Instance::from_parts(
         share_nullifier,
         enc_c1_x,
+        enc_c1_y,
         enc_c2_x,
+        enc_c2_y,
         proposal_id,
         vote_decision,
         vote_comm_tree_root,
         voting_round_id,
-        enc_c1_y,
-        enc_c2_y,
+        share_index_fp,
     );
 
     ShareRevealBundle { circuit, instance }
@@ -142,7 +144,14 @@ mod tests {
         }
 
         let share_comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-            share_commitment(share_blinds[i], c1_x[i], c2_x[i], c1_y[i], c2_y[i])
+            share_commitment(
+                i as u32,
+                share_blinds[i],
+                c1_x[i],
+                c2_x[i],
+                c1_y[i],
+                c2_y[i],
+            )
         });
 
         let mut empty_roots = [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH];

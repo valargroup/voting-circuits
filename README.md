@@ -41,7 +41,7 @@ src/
 │   ├── imt_circuit.rs            #   IMT non-membership proof gadget
 │   └── README.md                 #   Detailed specification
 │
-├── vote_proof/                   # ZKP #2 — Vote Proof circuit (K=13)
+├── vote_proof/                   # ZKP #2 — Vote Proof circuit (K=14)
 │   ├── circuit.rs                #   12-condition halo2 circuit
 │   ├── builder.rs                #   Builder producing VoteProofBundle
 │   ├── prove.rs                  #   Prove / verify helpers
@@ -76,7 +76,7 @@ Reusable halo2 gadgets that appear in more than one circuit:
 | Circuit | K | Rows | Conditions | Spec |
 |---------|---|------|------------|------|
 | Delegation | 14 | 16 384 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) |
-| Vote Proof | 13 | 8 192 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
+| Vote Proof | 14 | 16 384 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
 | Share Reveal | 11 | 2 048 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
 
 ## Companion crate

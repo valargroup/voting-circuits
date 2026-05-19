@@ -58,10 +58,9 @@ cargo test cost_breakdown -- --ignored --nocapture
 
 The long tests are slow because they synthesize Halo 2 circuits and run
 `MockProver` verification over the configured `K` domain (`delegation` uses
-K=14, `vote_proof` K=13, and `share_reveal` K=11). Some gadget stress tests are
-also long-running because they repeat many `MockProver` checks, for example one
-K=12 shares-hash test runs 16 separate prover checks. The real proof roundtrip
-also performs proving-key/proof generation and verification, so it is
+K=14, `vote_proof` K=14, and `share_reveal` K=11). Some gadget stress tests are
+also long-running because they repeat `MockProver` checks. The real proof
+roundtrip also performs proving-key/proof generation and verification, so it is
 intentionally outside the default unit-test path.
 
 ## License

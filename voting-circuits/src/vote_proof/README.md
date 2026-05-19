@@ -3,7 +3,7 @@
 Proves that a registered voter is casting a valid vote, without revealing which VAN they hold. The structure follows the delegation circuit's pattern (ZKP 1). Numbering matches Gov Steps V1 (ZKP #2): 12 conditions total; all conditions 1–12 are fully constrained in-circuit (condition 4 enforces spend authority `r_vpk = vsk.ak + [alpha_v]*G` in-circuit; the vote signature is verified out-of-circuit under `r_vpk`).
 
 **Public inputs:** 11 field elements.
-**Current K:** 13 (8,192 rows) — accommodates conditions 1–4 and 5–12, including the El Gamal integrity gadget, two-level shares hash, and the 10-bit lookup table. High-water mark is 7,945 rows (97.0% utilization).
+**Current K:** 14 (16,384 rows) — accommodates conditions 1–4 and 5–12, including 16 indexed share-commitment Poseidon hashes, 16 variable-base ECC scalar multiplications (condition 11), and the 10-bit lookup table. High-water mark is 8,537 rows (52.1% utilization).
 
 **Authoritative hash sources:** this README is explanatory. Reusable hash
 preimages are owned by `crate::circuit::van_integrity` (VAN integrity),
@@ -41,8 +41,11 @@ Domain-tag encoding is owned by `crate::domain_tags`.
 
 - Private (vote commitment — conditions 8–12)
    * **shares_1..16**: the voting share vector (each in `[0, 2^30)`).
-   * **enc_share_c1_x/y[0..15]**: coordinates of C1_i = r_i * G (El Gamal first component).
-   * **enc_share_c2_x/y[0..15]**: coordinates of C2_i = shares_i * G + r_i * ea_pk (El Gamal second component).
+   * **enc_share_c1_x[0..15]**: x-coordinates of C1_i = r_i * G (El Gamal first component, via ExtractP).
+   * **enc_share_c1_y[0..15]**: y-coordinates of C1_i, bound into the indexed share commitments to prevent sign-malleability.
+   * **enc_share_c2_x[0..15]**: x-coordinates of C2_i = shares_i * G + r_i * ea_pk (El Gamal second component, via ExtractP).
+   * **enc_share_c2_y[0..15]**: y-coordinates of C2_i, bound into the indexed share commitments to prevent sign-malleability.
+   * **share_blinds[0..15]**: blind factors for the indexed, domain-separated per-share commitments.
    * **share_randomness[0..15]**: El Gamal encryption randomness per share (base field elements, converted to scalars via `ScalarVar::from_base` in-circuit).
    * **ea_pk**: election authority public key as a Pallas affine point (witnessed as `NonIdentityPoint`, constrained to public inputs at offsets 9–10).
    * **vote_decision**: the voter's choice.
@@ -313,7 +316,8 @@ If a share exceeds `2^30` or is a wrapped large field element (e.g. `p - k` from
 Purpose: commit to the 16 El Gamal ciphertext pairs so they can be verified in conditions 11 and 12 without re-witnessing.
 
 ```
-share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i in 0..16
+share_comm_i = Poseidon(DOMAIN_SHARE_COMM, i, blind_i, c1_i_x,
+                        c2_i_x, c1_i_y, c2_i_y)   for i in 0..16
 shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
 ```
 
@@ -323,17 +327,9 @@ Where:
 - **c1_i_x**, **c1_i_y**: coordinates of `C1_i = r_i * G` (the El Gamal randomness point for share `i`). The x-coordinate is taken via `ExtractP`; the y-coordinate comes from the inner point. Private witness fields `enc_share_c1_x[i]`, `enc_share_c1_y[i]`.
 - **c2_i_x**, **c2_i_y**: coordinates of `C2_i = shares_i * G + r_i * ea_pk` (the El Gamal ciphertext point for share `i`). The x-coordinate is taken via `ExtractP`; the y-coordinate comes from the inner point. Private witness fields `enc_share_c2_x[i]`, `enc_share_c2_y[i]`.
 
-The circuit first computes each blinded share commitment
-`share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`, then
-hashes the 16 `share_comm_i` values together. The y-coordinates bind each
-commitment to the exact curve point — without them an adversary could negate
-ElGamal ciphertext points (sign-malleability) without invalidating the ZKP.
-ZKP 3 (vote reveal proof) uses the same commitment shape: it recomputes
-`shares_hash` from private `share_comms`, then binds the selected public
-ciphertext coordinates by recomputing the primary share commitment from that
-share's blind and coordinates.
+The blinded share commitments are hashed together. `DOMAIN_SHARE_COMM` separates this hash from other protocol Poseidon hashes, and `i` binds each commitment to its share position. The y-coordinates bind each commitment to the exact curve point — without them an adversary could negate ElGamal ciphertext points (sign-malleability) without invalidating the ZKP. ZKP 3 takes the 16 share commitments as private witnesses, recomputes only the selected revealed share commitment from the public ciphertext coordinates and public share index, and matches it against `share_comms[share_index]`.
 
-**Function:** 16 per-share `Poseidon` commitments, followed by an outer `Poseidon` with `ConstantLength<16>` over those 16 blinded share commitments. Uses `Pow5Chip` / `P128Pow5T3` with rate 2.
+**Function:** Each inner share commitment uses `Poseidon` with `ConstantLength<7>`. The outer `shares_hash` uses `ConstantLength<16>` over the 16 blinded share commitments. Both use `Pow5Chip` / `P128Pow5T3` with rate 2.
 
 **Constraint:** The circuit computes the two-level Poseidon hash over all 16 blinded share commitments. The resulting `shares_hash` cell is an internal wire — it is not directly bound to any public input. Instead, condition 12 consumes it as an input to `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`, which IS bound to `VOTE_COMMITMENT_PUBLIC_OFFSET`.
 
@@ -409,11 +405,11 @@ Where:
 **Data flow (conditions 8–12):**
 ```
 shares (8: sum, 9: range) ──┐
-                             ├─ enc_shares (11: El Gamal) ──→ shares_hash (10: Poseidon<16>)
-randomness ──────────────────┘                                       │
-                                                                     ├─ vote_commitment (12: Poseidon<5>) ──→ VOTE_COMMITMENT_PUBLIC_OFFSET
-proposal_id ─────────────────────────────────────────────────────────┤
-vote_decision ───────────────────────────────────────────────────────┘
+                             ├─ enc_shares (11: El Gamal) ──→ share_comm_i (10: Poseidon<7>) ──→ shares_hash (10: Poseidon<16>)
+randomness ──────────────────┘                                                                                       │
+                                                                                                                     ├─ vote_commitment (12: Poseidon<5>) ──→ VOTE_COMMITMENT_PUBLIC_OFFSET
+proposal_id ─────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+vote_decision ───────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Out-of-circuit helper:** `vote_commitment_hash()` computes the same Poseidon hash outside the circuit for builder and test use.

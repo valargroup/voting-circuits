@@ -107,7 +107,7 @@ pub fn create_share_reveal_proof(
 // ================================================================
 
 /// Verify a share reveal circuit proof given serialized proof bytes and
-/// the 9 public inputs.
+/// the [`Instance::NUM_PUBLIC_INPUTS`] public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
 ///
@@ -133,6 +133,9 @@ pub fn create_share_reveal_proof(
 ///   bundle that carries the proof, not from an untrusted side channel
 ///   (the proof binds it but does not assert it equals any particular
 ///   value).
+/// - `instance.share_index` — the on-chain revealed slot; the proof binds it
+///   to the selected share commitment, but the caller must pass the same value
+///   carried by the external reveal payload.
 ///
 /// # Proof-attested outputs
 ///
@@ -159,8 +162,12 @@ pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::circuit::elgamal::{elgamal_encrypt, spend_auth_g_affine};
+    use crate::share_reveal::{build_share_reveal, ShareRevealBundle};
+    use crate::vote_proof::{poseidon_hash_2, share_commitment, VOTE_COMM_TREE_DEPTH};
     use crate::ProveError;
     use halo2_proofs::plonk;
+    use pasta_curves::group::ff::PrimeField;
     use pasta_curves::pallas;
 
     fn minimal_instance() -> Instance {
@@ -174,6 +181,70 @@ mod tests {
             pallas::Base::from(7),
             pallas::Base::from(8),
             pallas::Base::from(9),
+            pallas::Base::from(10),
+        )
+    }
+
+    fn serialize_instance(instance: &Instance) -> Vec<u8> {
+        instance
+            .to_halo2_instance()
+            .into_iter()
+            .flat_map(|input| input.to_repr())
+            .collect()
+    }
+
+    fn make_share_reveal_bundle() -> ShareRevealBundle {
+        let ea_pk = pallas::Point::from(spend_auth_g_affine()) * pallas::Scalar::from(42u64);
+
+        let shares: [u64; 16] = [625; 16];
+        let randomness: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from((i as u64 + 1) * 101));
+        let share_blinds: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(1001u64 + i as u64));
+        let mut c1_x = [pallas::Base::zero(); 16];
+        let mut c2_x = [pallas::Base::zero(); 16];
+        let mut c1_y = [pallas::Base::zero(); 16];
+        let mut c2_y = [pallas::Base::zero(); 16];
+        for i in 0..16 {
+            let (cx1, cx2, cy1, cy2) =
+                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk);
+            c1_x[i] = cx1;
+            c2_x[i] = cx2;
+            c1_y[i] = cy1;
+            c2_y[i] = cy2;
+        }
+
+        let share_comms: [pallas::Base; 16] = core::array::from_fn(|i| {
+            share_commitment(
+                i as u32,
+                share_blinds[i],
+                c1_x[i],
+                c2_x[i],
+                c1_y[i],
+                c2_y[i],
+            )
+        });
+
+        let mut empty_roots = [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH];
+        empty_roots[0] = poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
+        for i in 1..VOTE_COMM_TREE_DEPTH {
+            empty_roots[i] = poseidon_hash_2(empty_roots[i - 1], empty_roots[i - 1]);
+        }
+
+        let share_idx: u32 = 2;
+        build_share_reveal(
+            empty_roots,
+            0,
+            share_comms,
+            share_blinds[share_idx as usize],
+            c1_x[share_idx as usize],
+            c2_x[share_idx as usize],
+            c1_y[share_idx as usize],
+            c2_y[share_idx as usize],
+            share_idx,
+            pallas::Base::from(3u64),
+            pallas::Base::from(1u64),
+            pallas::Base::from(999u64),
         )
     }
 
@@ -188,5 +259,60 @@ mod tests {
         let err = create_share_reveal_proof(Circuit::default(), &instance).unwrap_err();
 
         assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
+    }
+
+    #[test]
+    fn public_input_count_matches_instance_layout() {
+        let instance = minimal_instance();
+
+        assert_eq!(
+            instance.to_halo2_instance().len(),
+            Instance::NUM_PUBLIC_INPUTS
+        );
+        assert_eq!(
+            serialize_instance(&instance).len(),
+            Instance::NUM_PUBLIC_INPUTS * 32
+        );
+    }
+
+    #[test]
+    fn from_parts_matches_public_input_order() {
+        let expected = vec![
+            pallas::Base::from(1),
+            pallas::Base::from(2),
+            pallas::Base::from(3),
+            pallas::Base::from(4),
+            pallas::Base::from(5),
+            pallas::Base::from(6),
+            pallas::Base::from(7),
+            pallas::Base::from(8),
+            pallas::Base::from(9),
+            pallas::Base::from(10),
+        ];
+        let instance = Instance::from_parts(
+            expected[0],
+            expected[1],
+            expected[2],
+            expected[3],
+            expected[4],
+            expected[5],
+            expected[6],
+            expected[7],
+            expected[8],
+            expected[9],
+        );
+
+        assert_eq!(instance.to_halo2_instance(), expected);
+    }
+
+    #[test]
+    #[ignore = "expensive end-to-end proof generation; run with --ignored when touching share reveal verification"]
+    fn typed_verify_accepts_proof_created_by_typed_builder() {
+        let bundle = make_share_reveal_bundle();
+        let proof = create_share_reveal_proof(bundle.circuit.clone(), &bundle.instance)
+            .expect("share reveal proof generation should succeed");
+
+        verify_share_reveal_proof(&proof, &bundle.instance)
+            .expect("typed verifier should accept the builder's proof and public inputs");
     }
 }
