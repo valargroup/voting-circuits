@@ -15,6 +15,8 @@
 //! Also provides the public `spend_auth_g_affine` helper for downstream
 //! consumers and internal scalar/encryption helpers for the builder and tests.
 
+#[cfg(test)]
+use ff::Field;
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk::{Advice, Column, Error, Instance as InstanceColumn},
@@ -76,6 +78,43 @@ pub(crate) fn base_to_scalar(b: pallas::Base) -> Option<pallas::Scalar> {
     pallas::Scalar::from_repr(b.to_repr()).into()
 }
 
+/// Errors from out-of-circuit El Gamal encryption helpers.
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ElGamalEncryptError {
+    /// The randomness is zero, which would make C1 the identity.
+    ZeroRandomness,
+    /// The share value could not be represented as a scalar.
+    InvalidShareValue,
+    /// The randomness could not be represented as a scalar.
+    InvalidRandomness,
+    /// A derived ciphertext component was the identity point.
+    IdentityCiphertext { component: &'static str },
+}
+
+#[cfg(test)]
+impl core::fmt::Display for ElGamalEncryptError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ElGamalEncryptError::ZeroRandomness => {
+                write!(f, "El Gamal randomness must be non-zero")
+            }
+            ElGamalEncryptError::InvalidShareValue => {
+                write!(f, "share value is not representable as a scalar")
+            }
+            ElGamalEncryptError::InvalidRandomness => {
+                write!(f, "randomness is not representable as a scalar")
+            }
+            ElGamalEncryptError::IdentityCiphertext { component } => {
+                write!(f, "El Gamal {component} point is the identity")
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl std::error::Error for ElGamalEncryptError {}
+
 /// Test-only out-of-circuit El Gamal encryption under SpendAuthG.
 ///
 /// Computes C1 = [r]*SpendAuthG, C2 = [v]*SpendAuthG + [r]*ea_pk.
@@ -88,24 +127,35 @@ pub(crate) fn elgamal_encrypt(
     share_value: pallas::Base,
     randomness: pallas::Base,
     ea_pk: pallas::Point,
-) -> (pallas::Base, pallas::Base, pallas::Base, pallas::Base) {
+) -> Result<(pallas::Base, pallas::Base, pallas::Base, pallas::Base), ElGamalEncryptError> {
     use group::Curve;
 
     let g = pallas::Point::from(spend_auth_g_affine());
-    let r_scalar = base_to_scalar(randomness).expect("randomness must be < scalar field modulus");
-    let v_scalar = base_to_scalar(share_value).expect("share value must be < scalar field modulus");
+    if bool::from(randomness.is_zero()) {
+        return Err(ElGamalEncryptError::ZeroRandomness);
+    }
+    let r_scalar = base_to_scalar(randomness).ok_or(ElGamalEncryptError::InvalidRandomness)?;
+    let v_scalar = base_to_scalar(share_value).ok_or(ElGamalEncryptError::InvalidShareValue)?;
 
     let c1 = g * r_scalar;
     let c2 = g * v_scalar + ea_pk * r_scalar;
 
-    let c1_coords = c1.to_affine().coordinates().unwrap();
-    let c2_coords = c2.to_affine().coordinates().unwrap();
-    (
+    let c1_affine = c1.to_affine();
+    let c2_affine = c2.to_affine();
+    let c1_coords = c1_affine
+        .coordinates()
+        .into_option()
+        .ok_or(ElGamalEncryptError::IdentityCiphertext { component: "C1" })?;
+    let c2_coords = c2_affine
+        .coordinates()
+        .into_option()
+        .ok_or(ElGamalEncryptError::IdentityCiphertext { component: "C2" })?;
+    Ok((
         *c1_coords.x(),
         *c2_coords.x(),
         *c1_coords.y(),
         *c2_coords.y(),
-    )
+    ))
 }
 
 // ================================================================
@@ -283,4 +333,34 @@ pub(crate) fn prove_elgamal_encryptions(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use group::Group;
+
+    #[test]
+    fn elgamal_encrypt_rejects_zero_randomness() {
+        let ea_pk = pallas::Point::from(spend_auth_g_affine());
+        let err = elgamal_encrypt(pallas::Base::from(1), pallas::Base::zero(), ea_pk)
+            .expect_err("zero randomness should be rejected without panicking");
+
+        assert_eq!(err, ElGamalEncryptError::ZeroRandomness);
+    }
+
+    #[test]
+    fn elgamal_encrypt_rejects_identity_c2() {
+        let err = elgamal_encrypt(
+            pallas::Base::zero(),
+            pallas::Base::from(1),
+            pallas::Point::identity(),
+        )
+        .expect_err("zero share under identity key should produce identity C2");
+
+        assert_eq!(
+            err,
+            ElGamalEncryptError::IdentityCiphertext { component: "C2" }
+        );
+    }
 }

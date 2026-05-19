@@ -1512,7 +1512,8 @@ mod tests {
             core::array::from_fn(|i| pallas::Base::from(1001u64 + i as u64));
         for i in 0..16 {
             let (cx1, cx2, cy1, cy2) =
-                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk);
+                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk)
+                    .expect("test encryption inputs should be valid");
             c1_x[i] = cx1;
             c2_x[i] = cx2;
             c1_y[i] = cy1;
@@ -3459,13 +3460,16 @@ mod tests {
         let v = pallas::Base::from(1000u64);
         let r = pallas::Base::from(42u64);
 
-        let (c1_a, c2_a, _, _) = elgamal_encrypt(v, r, ea_pk_point);
-        let (c1_b, c2_b, _, _) = elgamal_encrypt(v, r, ea_pk_point);
+        let (c1_a, c2_a, _, _) =
+            elgamal_encrypt(v, r, ea_pk_point).expect("test encryption inputs should be valid");
+        let (c1_b, c2_b, _, _) =
+            elgamal_encrypt(v, r, ea_pk_point).expect("test encryption inputs should be valid");
         assert_eq!(c1_a, c1_b);
         assert_eq!(c2_a, c2_b);
 
         // Different randomness → different C1.
-        let (c1_c, _, _, _) = elgamal_encrypt(v, pallas::Base::from(99u64), ea_pk_point);
+        let (c1_c, _, _, _) = elgamal_encrypt(v, pallas::Base::from(99u64), ea_pk_point)
+            .expect("test encryption inputs should be valid");
         assert_ne!(c1_a, c1_c);
     }
 
