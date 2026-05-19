@@ -173,9 +173,33 @@ pub fn build_sentinel_list() -> Vec<pallas::Base> {
     nfs
 }
 
+/// Build the sorted, deduplicated, odd-count nullifier list after merging
+/// real nullifiers into the sentinel skeleton.
+///
+/// This is the shared input-preparation step for the in-tree fixture provider
+/// and the `imt-tree` reference adapter used by integration tests.
+pub fn build_nullifier_list(extra_nfs: &[pallas::Base]) -> Vec<pallas::Base> {
+    let mut nfs = build_sentinel_list();
+    nfs.extend_from_slice(extra_nfs);
+    nfs.sort();
+    nfs.dedup();
+    if nfs.len() % 2 == 0 {
+        let padding = std::iter::once(2u64)
+            .chain(1u64..)
+            .map(pallas::Base::from)
+            .find(|candidate| nfs.binary_search(candidate).is_err())
+            .expect("small field-element padding candidate should exist");
+        let insert_at = nfs.binary_search(&padding).unwrap_err();
+        nfs.insert(insert_at, padding);
+    }
+    nfs
+}
+
 /// Build punctured-range triples from a sorted, deduplicated, odd-count
 /// nullifier list. Mirrors `imt_tree::tree::build_punctured_ranges` so the
 /// test fixture is protected by the same ordering invariant as production.
+/// See `imt_circuit_integration::spaced_leaf_and_production_sentinel_providers_agree`
+/// for the runtime cross-check against the `imt-tree` reference path.
 fn build_punctured_ranges_local(sorted_nfs: &[pallas::Base]) -> Vec<[pallas::Base; 3]> {
     let n = sorted_nfs.len();
     assert!(n >= 3, "need at least 3 sorted nullifiers, got {n}");
@@ -197,7 +221,8 @@ fn build_punctured_ranges_local(sorted_nfs: &[pallas::Base]) -> Vec<[pallas::Bas
 }
 
 /// Find the punctured-range index containing `value`. Mirrors
-/// `imt_tree::tree::find_punctured_range_for_value`.
+/// `imt_tree::tree::find_punctured_range_for_value`; the integration tests
+/// cross-check both implementations on the same roots and proof witnesses.
 fn find_range_for_value(ranges: &[[pallas::Base; 3]], value: pallas::Base) -> Option<usize> {
     let i = ranges.partition_point(|[nf_lo, _, _]| *nf_lo < value);
     if i == 0 {
@@ -244,8 +269,22 @@ impl SpacedLeafImtProvider {
     /// path: sorted, deduplicated, padded to odd count, then grouped into
     /// punctured-range triples with strict ordering validation.
     pub fn new() -> Self {
-        let sorted_nfs = build_sentinel_list();
+        Self::with_extra_nullifiers(&[])
+    }
+
+    /// Create a spaced-leaf IMT provider after merging extra real nullifiers
+    /// into the sentinel skeleton.
+    ///
+    /// This mirrors the production `prepare_nullifiers` shape used by the
+    /// `imt-tree` reference adapter in integration tests.
+    pub fn with_extra_nullifiers(extra_nfs: &[pallas::Base]) -> Self {
+        let sorted_nfs = build_nullifier_list(extra_nfs);
         let leaves = build_punctured_ranges_local(&sorted_nfs);
+        assert!(
+            leaves.len() <= 32,
+            "spaced-leaf fixture supports at most 32 leaves, got {}",
+            leaves.len()
+        );
         let empty = empty_imt_hashes();
 
         let empty_leaf_hash = poseidon_hash_3(

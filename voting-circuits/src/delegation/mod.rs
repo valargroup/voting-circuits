@@ -23,8 +23,8 @@ pub use circuit::{
     VAN_COMM_PUBLIC_OFFSET, VOTE_ROUND_ID_PUBLIC_OFFSET,
 };
 pub use imt::{
-    build_sentinel_list, derive_nullifier_domain, ImtError, ImtProofData, ImtProvider,
-    SpacedLeafImtProvider, IMT_DEPTH,
+    build_nullifier_list, build_sentinel_list, derive_nullifier_domain, ImtError, ImtProofData,
+    ImtProvider, SpacedLeafImtProvider, IMT_DEPTH,
 };
 pub use prove::{
     create_delegation_proof, delegation_cached_keys, delegation_params, delegation_proving_key,
