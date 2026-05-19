@@ -498,7 +498,9 @@ fn deterministic_shuffle(
 ///   as a public input but does not derive or constrain the height itself.
 /// * `proposal_id` - Which proposal to vote on (1-indexed, must be in [1, 15]).
 /// * `vote_decision` - The voter's choice.
-/// * `ea_pk` - Election authority public key (Pallas affine point from session).
+/// * `ea_pk` - Election authority public key (Pallas affine point). The caller
+///   must authenticate this against the active round's governance announcement;
+///   the builder and circuit only prove encryption under the supplied key.
 /// * `alpha_v` - Spend auth randomizer for the voting hotkey. The caller
 ///   retains this to sign the sighash with `rsk_v = ask_v.randomize(&alpha_v)`.
 ///

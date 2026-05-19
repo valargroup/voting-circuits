@@ -138,7 +138,9 @@ pub(crate) fn elgamal_encrypt(
 /// ## Gadget ownership
 ///
 /// The gadget witnesses ea_pk internally as a `NonIdentityPoint` and pins both
-/// coordinates to the public instance column. The caller need only supply the
+/// coordinates to the public instance column. This proves encryption under the
+/// caller-supplied key, but the caller must authenticate that key against the
+/// active round's governance announcement. The caller need only supply the
 /// share, randomness, and ciphertext coordinate arrays plus the ea_pk value.
 pub(crate) fn prove_elgamal_encryptions(
     ecc_chip: EccChip<OrchardFixedBases>,
@@ -158,8 +160,9 @@ pub(crate) fn prove_elgamal_encryptions(
     // Election Authority's public key as a Pallas curve point, wrapped in Value.
     // ea_pk must be witnessed into advice cells to compute [r_i] * ea_pk.
     // The constrain_instance calls bind those advice cells to the public instance
-    // column, giving the verifier a guarantee that the prover used the specific EA
-    // key declared publicly.
+    // column, giving the verifier a guarantee that the prover used the specific
+    // EA key declared publicly. The caller is still responsible for checking
+    // that those public coordinates are the governance-announced EA key.
 
     // Witness ea_pk once. NonIdentityPoint is Copy, so the value is cheaply
     // copied into each iteration's mul() call without re-witnessing.

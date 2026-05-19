@@ -442,6 +442,8 @@ pub struct Circuit {
     /// Election authority public key (Pallas curve point).
     /// The El Gamal encryption key — published as a round parameter.
     /// Both coordinates are public inputs (EA_PK_X_PUBLIC_OFFSET, EA_PK_Y_PUBLIC_OFFSET).
+    /// The caller must authenticate this key against the governance
+    /// announcement; the circuit only binds encryption to the supplied key.
     pub(crate) ea_pk: Value<pallas::Affine>,
 
     // Condition 12 (Vote Commitment Integrity): vote decision.
@@ -1353,9 +1355,16 @@ pub struct Instance {
     pub proposal_id: pallas::Base,
     /// The voting round identifier.
     pub voting_round_id: pallas::Base,
-    /// Election authority public key x-coordinate.
+    /// Governance-announced election authority public key x-coordinate.
+    ///
+    /// The verifier must pin this from the active round's governance
+    /// announcement. The circuit proves encryption under this coordinate pair,
+    /// but cannot authenticate that it is the legitimate EA key.
     pub ea_pk_x: pallas::Base,
-    /// Election authority public key y-coordinate.
+    /// Governance-announced election authority public key y-coordinate.
+    ///
+    /// Must be authenticated with `ea_pk_x`; both coordinates are public so a
+    /// prover cannot substitute a negated curve point while preserving x.
     pub ea_pk_y: pallas::Base,
 }
 
@@ -1367,12 +1376,13 @@ impl Instance {
     ///
     /// Callers should authenticate `vote_comm_tree_root`,
     /// `vote_comm_tree_anchor_height`, `proposal_id`, `voting_round_id`,
-    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here. See
-    /// [`crate::vote_proof::prove::verify_vote_proof`] for the trust contract
-    /// and why wiring `ea_pk_*` from the same bundle as the proof is a
-    /// custody-attack surface. The remaining fields are proof-attested outputs
-    /// derived outside the circuit but constrained in-circuit against
-    /// authenticated inputs and private witnesses.
+    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here. The EA
+    /// key must come from the active round's governance announcement, not from
+    /// the prover bundle. See [`crate::vote_proof::prove::verify_vote_proof`]
+    /// for the trust contract and why wiring `ea_pk_*` from the same bundle as
+    /// the proof is a custody-attack surface. The remaining fields are
+    /// proof-attested outputs derived outside the circuit but constrained
+    /// in-circuit against authenticated inputs and private witnesses.
     pub fn from_parts(
         van_nullifier: pallas::Base,
         r_vpk_x: pallas::Base,

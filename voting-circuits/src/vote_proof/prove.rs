@@ -113,27 +113,38 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8
 /// Some public inputs are constrained to witness-derived cells, and every
 /// public input is bound into the proof transcript. Neither property tells the
 /// verifier whether caller-provided governance or chain values are the right
-/// ones. The following fields of `instance` MUST be sourced from a trusted
-/// channel (a signed governance announcement, a signed chain head) before
-/// calling this function. Substituting them is not detectable from the proof
-/// alone. Most notably, an attacker can pick their own `ea_pk` (`= sk*G` for
-/// an `sk` they know) and decrypt all posted shares, with the proof still
-/// verifying:
+/// ones. The following fields of `instance` MUST be sourced from their
+/// category-specific authority before calling this function. Substituting them
+/// is not detectable from the proof alone.
 ///
-/// - `instance.proposal_id` — must come from the active session's
-///   published proposal list.
-/// - `instance.voting_round_id` — must come from the same governance
-///   announcement as `proposal_id`.
+/// ## Ledger-state anchor
+///
 /// - `instance.vote_comm_tree_root` - must be the vote commitment tree
 ///   root at `vote_comm_tree_anchor_height` (verifier looks it up by
 ///   height, not by accepting it from the prover bundle).
 /// - `instance.vote_comm_tree_anchor_height` - must be a valid chain
 ///   height accepted by the consuming chain's anchor-validity check. This
 ///   slot is transcript-bound but not constrained to any circuit witness.
+///
+/// ## Governance session parameters
+///
+/// - `instance.proposal_id` — must come from the active session's
+///   published proposal list.
+/// - `instance.voting_round_id` — must come from the same governance
+///   announcement as `proposal_id`.
+///
+/// ## Election-authority public key
+///
 /// - `instance.ea_pk_x`, `instance.ea_pk_y` — must come from the
 ///   election authority's published session key for `voting_round_id`.
-///   Wiring `ea_pk` from the same bundle that carries the proof lets a
-///   malicious client choose a key it controls.
+///   The circuit only proves that the shares were encrypted under the
+///   caller-supplied key. Wiring `ea_pk` from the same bundle that carries
+///   the proof lets a malicious client choose a key it controls.
+///
+/// Wrong-key substitution causes either liveness loss (the legitimate election
+/// authority cannot decrypt the shares) or secrecy loss (a colluding party
+/// supplies a key whose secret scalar it knows and decrypts the shares). The
+/// latter is irreversible once the proof and ciphertexts are posted.
 ///
 /// # Proof-attested outputs
 ///
