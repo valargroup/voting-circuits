@@ -22,11 +22,14 @@ use super::circuit::{Circuit, Instance, K};
 // Params / key generation
 // ================================================================
 
-static DELEGATION_PK_CACHE: std::sync::OnceLock<(
+pub type DelegationKeys = (
     Params<EqAffine>,
     plonk::ProvingKey<EqAffine>,
     plonk::VerifyingKey<EqAffine>,
-)> = std::sync::OnceLock::new();
+);
+
+static DELEGATION_PK_CACHE: std::sync::OnceLock<Result<DelegationKeys, String>> =
+    std::sync::OnceLock::new();
 
 /// Generate the IPA params (SRS) for the delegation circuit.
 /// Deterministic for a given `K`.
@@ -46,36 +49,35 @@ pub fn delegation_params() -> Params<EqAffine> {
 /// cache the result alongside the params.
 pub fn delegation_proving_key(
     params: &Params<EqAffine>,
-) -> (plonk::ProvingKey<EqAffine>, plonk::VerifyingKey<EqAffine>) {
+) -> Result<(plonk::ProvingKey<EqAffine>, plonk::VerifyingKey<EqAffine>), ProveError> {
     let empty_circuit = Circuit::default();
-    let vk = keygen_vk(params, &empty_circuit).expect("delegation keygen_vk should not fail");
-    let pk = keygen_pk(params, vk.clone(), &empty_circuit)
-        .expect("delegation keygen_pk should not fail");
-    (pk, vk)
+    let vk = keygen_vk(params, &empty_circuit).map_err(ProveError::KeygenVk)?;
+    let pk = keygen_pk(params, vk.clone(), &empty_circuit).map_err(ProveError::KeygenPk)?;
+    Ok((pk, vk))
 }
 
 /// Return cached params and proving/verifying keys for the delegation circuit.
 ///
 /// Key generation is deterministic and expensive enough to dominate proof and
 /// verification latency if repeated. Compute it once per process and reuse it.
-pub fn delegation_cached_keys() -> &'static (
-    Params<EqAffine>,
-    plonk::ProvingKey<EqAffine>,
-    plonk::VerifyingKey<EqAffine>,
-) {
-    DELEGATION_PK_CACHE.get_or_init(|| {
+pub fn delegation_cached_keys() -> Result<&'static DelegationKeys, ProveError> {
+    match DELEGATION_PK_CACHE.get_or_init(|| {
         let params = delegation_params();
-        let (pk, vk) = delegation_proving_key(&params);
-        (params, pk, vk)
-    })
+        delegation_proving_key(&params)
+            .map(|(pk, vk)| (params, pk, vk))
+            .map_err(|error| error.to_string())
+    }) {
+        Ok(keys) => Ok(keys),
+        Err(error) => Err(ProveError::CachedKeygen(error.clone())),
+    }
 }
 
 /// Warm the process-lifetime delegation params/proving-key cache.
 ///
 /// This lets callers pay deterministic keygen before the first user-visible
 /// proof generation or verification path needs the key.
-pub fn warm_delegation_keys() {
-    let _ = delegation_cached_keys();
+pub fn warm_delegation_keys() -> Result<(), ProveError> {
+    delegation_cached_keys().map(|_| ())
 }
 
 // ================================================================
@@ -94,7 +96,7 @@ pub fn create_delegation_proof(
     circuit: Circuit,
     instance: &Instance,
 ) -> Result<Vec<u8>, ProveError> {
-    let (params, pk, _vk) = delegation_cached_keys();
+    let (params, pk, _vk) = delegation_cached_keys()?;
 
     let public_inputs = instance.to_halo2_instance();
 
@@ -153,7 +155,7 @@ pub fn create_delegation_proof(
 /// - `instance.cmx_new`
 /// - `instance.gov_null[..]`
 pub fn verify_delegation_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
-    let (params, _pk, vk) = delegation_cached_keys();
+    let (params, _pk, vk) = delegation_cached_keys().map_err(|error| error.to_string())?;
 
     let public_inputs = instance.to_halo2_instance();
 

@@ -22,11 +22,14 @@ use super::circuit::{Circuit, Instance, K};
 // Params / key generation
 // ================================================================
 
-static SHARE_REVEAL_PK_CACHE: std::sync::OnceLock<(
+pub type ShareRevealKeys = (
     Params<EqAffine>,
     plonk::ProvingKey<EqAffine>,
     plonk::VerifyingKey<EqAffine>,
-)> = std::sync::OnceLock::new();
+);
+
+static SHARE_REVEAL_PK_CACHE: std::sync::OnceLock<Result<ShareRevealKeys, String>> =
+    std::sync::OnceLock::new();
 
 /// Generate the IPA params (SRS) for the share reveal circuit.
 /// Deterministic for a given `K`.
@@ -46,12 +49,11 @@ pub fn share_reveal_params() -> Params<EqAffine> {
 /// cache the result alongside the params.
 pub fn share_reveal_proving_key(
     params: &Params<EqAffine>,
-) -> (plonk::ProvingKey<EqAffine>, plonk::VerifyingKey<EqAffine>) {
+) -> Result<(plonk::ProvingKey<EqAffine>, plonk::VerifyingKey<EqAffine>), ProveError> {
     let empty_circuit = Circuit::default();
-    let vk = keygen_vk(params, &empty_circuit).expect("share_reveal keygen_vk should not fail");
-    let pk = keygen_pk(params, vk.clone(), &empty_circuit)
-        .expect("share_reveal keygen_pk should not fail");
-    (pk, vk)
+    let vk = keygen_vk(params, &empty_circuit).map_err(ProveError::KeygenVk)?;
+    let pk = keygen_pk(params, vk.clone(), &empty_circuit).map_err(ProveError::KeygenPk)?;
+    Ok((pk, vk))
 }
 
 /// Return cached params and proving/verifying keys for the share reveal circuit.
@@ -59,24 +61,24 @@ pub fn share_reveal_proving_key(
 /// Key generation is deterministic and expensive enough to dominate helper
 /// proving latency if repeated for every revealed share. Compute it once per
 /// process and reuse it for both proving and verification.
-pub fn share_reveal_cached_keys() -> &'static (
-    Params<EqAffine>,
-    plonk::ProvingKey<EqAffine>,
-    plonk::VerifyingKey<EqAffine>,
-) {
-    SHARE_REVEAL_PK_CACHE.get_or_init(|| {
+pub fn share_reveal_cached_keys() -> Result<&'static ShareRevealKeys, ProveError> {
+    match SHARE_REVEAL_PK_CACHE.get_or_init(|| {
         let params = share_reveal_params();
-        let (pk, vk) = share_reveal_proving_key(&params);
-        (params, pk, vk)
-    })
+        share_reveal_proving_key(&params)
+            .map(|(pk, vk)| (params, pk, vk))
+            .map_err(|error| error.to_string())
+    }) {
+        Ok(keys) => Ok(keys),
+        Err(error) => Err(ProveError::CachedKeygen(error.clone())),
+    }
 }
 
 /// Warm the process-lifetime share reveal params/proving-key cache.
 ///
 /// This lets callers pay deterministic keygen before the first user-visible
 /// proof generation or verification path needs the key.
-pub fn warm_share_reveal_keys() {
-    let _ = share_reveal_cached_keys();
+pub fn warm_share_reveal_keys() -> Result<(), ProveError> {
+    share_reveal_cached_keys().map(|_| ())
 }
 
 // ================================================================
@@ -95,7 +97,7 @@ pub fn create_share_reveal_proof(
     circuit: Circuit,
     instance: &Instance,
 ) -> Result<Vec<u8>, ProveError> {
-    let (params, pk, _vk) = share_reveal_cached_keys();
+    let (params, pk, _vk) = share_reveal_cached_keys()?;
 
     let public_inputs = instance.to_halo2_instance();
 
@@ -162,7 +164,7 @@ pub fn create_share_reveal_proof(
 ///
 /// - `instance.share_nullifier`
 pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
-    let (params, _pk, vk) = share_reveal_cached_keys();
+    let (params, _pk, vk) = share_reveal_cached_keys().map_err(|error| error.to_string())?;
 
     let public_inputs = instance.to_halo2_instance();
 

@@ -33,6 +33,12 @@ where
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ProveError {
+    /// Halo2 failed while generating a verifying key.
+    KeygenVk(plonk::Error),
+    /// Halo2 failed while generating a proving key.
+    KeygenPk(plonk::Error),
+    /// Cached key generation previously failed.
+    CachedKeygen(String),
     /// Halo2 rejected the proof inputs or failed during synthesis.
     Halo2(plonk::Error),
 }
@@ -46,6 +52,13 @@ impl From<plonk::Error> for ProveError {
 impl core::fmt::Display for ProveError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            ProveError::KeygenVk(error) => {
+                write!(f, "Halo2 verifying key generation failed: {error}")
+            }
+            ProveError::KeygenPk(error) => {
+                write!(f, "Halo2 proving key generation failed: {error}")
+            }
+            ProveError::CachedKeygen(error) => write!(f, "Halo2 key generation failed: {error}"),
             ProveError::Halo2(error) => write!(f, "Halo2 proof creation failed: {error}"),
         }
     }
@@ -54,6 +67,9 @@ impl core::fmt::Display for ProveError {
 impl std::error::Error for ProveError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            ProveError::KeygenVk(error) => Some(error),
+            ProveError::KeygenPk(error) => Some(error),
+            ProveError::CachedKeygen(_) => None,
             ProveError::Halo2(error) => Some(error),
         }
     }
