@@ -128,10 +128,13 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8
 ///
 /// ## Governance session parameters
 ///
-/// - `instance.proposal_id` — must come from the active session's
-///   published proposal list.
+/// - `instance.proposal_id` — must be in the active proposal set for
+///   `voting_round_id`. The circuit only constrains this to the authority
+///   bit-index range `[1, 15]`; it does not know whether the proposal exists
+///   or is open.
 /// - `instance.voting_round_id` — must come from the same governance
-///   announcement as `proposal_id`.
+///   announcement as `proposal_id`, and must identify the active voting round
+///   the verifier is accepting.
 ///
 /// ## Election-authority public key
 ///

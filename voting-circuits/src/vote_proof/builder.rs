@@ -489,7 +489,9 @@ fn deterministic_shuffle(
 /// * `total_note_value` - Sum of delegated note values in raw zatoshi (e.g. 15_000_000).
 ///   Internally converted to ballot count via floor-division by BALLOT_DIVISOR.
 /// * `van_comm_rand` - The blinding factor used for the VAN in delegation.
-/// * `voting_round_id` - The vote round identifier (Pallas base field element).
+/// * `voting_round_id` - The active governance round identifier (Pallas base
+///   field element). The caller must authenticate it from the round
+///   announcement.
 /// * `vote_comm_tree_path` - Merkle authentication path (24 siblings) for
 ///   the VAN in the vote commitment tree.
 /// * `vote_comm_tree_position` - Leaf position of the VAN in the tree.
@@ -497,6 +499,8 @@ fn deterministic_shuffle(
 ///   or chain to source the vote commitment tree root. The circuit carries this
 ///   as a public input but does not derive or constrain the height itself.
 /// * `proposal_id` - Which proposal to vote on (1-indexed, must be in [1, 15]).
+///   The builder checks only this circuit-supported range; the caller must
+///   ensure the proposal is active for `voting_round_id`.
 /// * `vote_decision` - The voter's choice.
 /// * `ea_pk` - Election authority public key (Pallas affine point). The caller
 ///   must authenticate this against the active round's governance announcement;

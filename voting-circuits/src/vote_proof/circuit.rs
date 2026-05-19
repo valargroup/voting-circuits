@@ -173,8 +173,16 @@ pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 5;
 // root in the chain state lookup rather than in this proof.
 pub const VOTE_COMM_TREE_ANCHOR_HEIGHT_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the proposal identifier.
+///
+/// In-circuit constraint: `proposal_id` is in `[1, MAX_PROPOSAL_ID)` via the
+/// authority-decrement lookup. The caller must additionally verify that this
+/// ID is in the active proposal set for `voting_round_id`.
 pub const PROPOSAL_ID_PUBLIC_OFFSET: usize = 7;
-/// Public input offset for the voting round identifier.
+/// Public input offset for the governance voting round identifier.
+///
+/// The circuit binds this value into the VAN nullifier, new VAN, and vote
+/// commitment, but the caller must authenticate it from the active round's
+/// governance announcement.
 pub const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
 /// Public input offset for the election authority public key x-coordinate.
 pub const EA_PK_X_PUBLIC_OFFSET: usize = 9;
@@ -1351,9 +1359,16 @@ pub struct Instance {
     /// cell. Verifiers must check that `vote_comm_tree_root` is the chain root
     /// at this height.
     pub vote_comm_tree_anchor_height: pallas::Base,
-    /// Which proposal this vote is for.
+    /// Governance session parameter: which proposal this vote is for.
+    ///
+    /// The circuit constrains this to `[1, 15]` through condition 6 and binds
+    /// it into the new VAN and vote commitment. The verifier must separately
+    /// check that it is active for `voting_round_id`.
     pub proposal_id: pallas::Base,
-    /// The voting round identifier.
+    /// Governance session parameter: the voting round identifier.
+    ///
+    /// The circuit binds this into the VAN nullifier, new VAN, and vote
+    /// commitment, but cannot authenticate that it is the active round.
     pub voting_round_id: pallas::Base,
     /// Governance-announced election authority public key x-coordinate.
     ///
@@ -1376,13 +1391,15 @@ impl Instance {
     ///
     /// Callers should authenticate `vote_comm_tree_root`,
     /// `vote_comm_tree_anchor_height`, `proposal_id`, `voting_round_id`,
-    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here. The EA
-    /// key must come from the active round's governance announcement, not from
-    /// the prover bundle. See [`crate::vote_proof::prove::verify_vote_proof`]
-    /// for the trust contract and why wiring `ea_pk_*` from the same bundle as
-    /// the proof is a custody-attack surface. The remaining fields are
-    /// proof-attested outputs derived outside the circuit but constrained
-    /// in-circuit against authenticated inputs and private witnesses.
+    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here.
+    /// `proposal_id` must be active for `voting_round_id`; the circuit only
+    /// checks the authority-bit index range. The EA key must come from the
+    /// active round's governance announcement, not from the prover bundle. See
+    /// [`crate::vote_proof::prove::verify_vote_proof`] for the trust contract
+    /// and why wiring `ea_pk_*` from the same bundle as the proof is a
+    /// custody-attack surface. The remaining fields are proof-attested outputs
+    /// derived outside the circuit but constrained in-circuit against
+    /// authenticated inputs and private witnesses.
     pub fn from_parts(
         van_nullifier: pallas::Base,
         r_vpk_x: pallas::Base,
