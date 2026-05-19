@@ -87,7 +87,7 @@ and a colluding key lets its holder decrypt the voter's shares.
 Purpose: prove that the old VAN commitment is correctly constructed from its components. Uses the **same two-layer hash structure as ZKP 1 (delegation)** so that a VAN created by the delegation circuit can be spent (opened) by the vote proof circuit.
 
 ```
-van_comm_core = Poseidon(DOMAIN_VAN, vpk_g_d, vpk_pk_d, total_note_value,
+van_comm_core = Poseidon(DOMAIN_VAN, vpk_g_d_x, vpk_pk_d_x, total_note_value,
                          voting_round_id, proposal_authority_old)
 vote_authority_note_old = Poseidon(van_comm_core, van_comm_rand)
 ```
@@ -101,13 +101,15 @@ Where:
 - **van_comm_rand**: random blinding factor. Prevents observers from brute-forcing the address or weight from the public VAN commitment.
 - **vote_authority_note_old**: the witnessed VAN commitment. Constrained to equal the two-layer Poseidon output via `constrain_equal`.
 
+Address encoding note: the VAN hash binds only the x-coordinates of `vpk_g_d` and `vpk_pk_d`. A coordinated negation of both address points leaves the condition 2 and condition 7 VAN hash inputs unchanged. The vote proof remains sound because condition 3 constrains the witnessed full points to the voting key hierarchy, and condition 5 derives the public nullifier from the same `vsk_nk`, `voting_round_id`, and `vote_authority_note_old`, so both y-sign variants converge to the same spend nullifier. Future code must not use `van_integrity_hash` as a standalone full-address commitment unless it adds equivalent full-point and nullifier constraints or changes the hash preimage.
+
 **Function:** Two Poseidon invocations: first `ConstantLength<6>` (core), then `ConstantLength<2>` (core, van_comm_rand). Uses `Pow5Chip` / `P128Pow5T3` with rate 2. Matches delegation circuit condition 7 (van_comm) structure.
 
 **Constraint:** The circuit computes the two-layer hash and enforces strict equality with `vote_authority_note_old`. Since `vote_authority_note_old` will also be used as the Merkle leaf in condition 1, this creates a binding: the VAN membership proof and the VAN integrity check are tied to the same commitment.
 
 **Condition 4: Spend Authority** — enforced in-circuit. The spec requires `r_vpk = vsk.ak + [alpha_v] * G`. The circuit witnesses `alpha_v`, computes `[alpha_v]*SpendAuthG` via fixed-base mul, adds it to `vsk_ak_point` (from condition 3), and constrains the result to the instance column at `R_VPK_X_PUBLIC_OFFSET` and `R_VPK_Y_PUBLIC_OFFSET` (public input offsets 1 and 2). The vote signature is verified out-of-circuit under `r_vpk` over the transaction sighash.
 
-**Out-of-circuit helper:** `van_integrity::van_integrity_hash(vpk_g_d, vpk_pk_d, total_note_value, voting_round_id, proposal_authority_old, van_comm_rand)` from the shared `circuit::van_integrity` module computes the same two-layer hash outside the circuit for builder and test use. (Note: the shared module's parameter names are `g_d_x`/`pk_d_x`.)
+**Out-of-circuit helper:** `van_integrity::van_integrity_hash(vpk_g_d_x, vpk_pk_d_x, total_note_value, voting_round_id, proposal_authority_old, van_comm_rand)` from the shared `circuit::van_integrity` module computes the same two-layer hash outside the circuit for builder and test use.
 
 **Constructions:** `van_integrity::van_integrity_poseidon` (shared gadget from `circuit::van_integrity`).
 
@@ -249,7 +251,7 @@ No diff/gap or strict range-check chip; the 16-bit decomposition implies `propos
 
 Purpose: the new VAN has the same structure as the old (ZKP 1–compatible two-layer hash) except with decremented authority.
 
-Same two-layer formula as condition 2: `van_comm_core = Poseidon(DOMAIN_VAN, vpk_g_d, vpk_pk_d, total_note_value, voting_round_id, proposal_authority_new)` then `vote_authority_note_new = Poseidon(van_comm_core, van_comm_rand)`.
+Same x-coordinate-only two-layer formula as condition 2: `van_comm_core = Poseidon(DOMAIN_VAN, vpk_g_d_x, vpk_pk_d_x, total_note_value, voting_round_id, proposal_authority_new)` then `vote_authority_note_new = Poseidon(van_comm_core, van_comm_rand)`.
 
 Where:
 - **vpk_g_d**, **vpk_pk_d**, **total_note_value**, **voting_round_id**, **van_comm_rand** are cell-equality-linked to the same witness cells used in condition 2.

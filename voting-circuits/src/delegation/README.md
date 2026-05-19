@@ -283,12 +283,14 @@ Where:
 
 ## 7. Gov Commitment Integrity
 
-Purpose: prove that the governance commitment (a public input) is correctly derived from the domain tag, the output note's diversified address components (`g_d_new_x`, `pk_d_new_x`), the ballot count, the vote round identifier, a blinding factor, and the proposal authority bitmask. Binds the delegated weight, output address coordinates, and authority scope into a single public commitment that ZKP #2 (vote proof) can open. The output address is hashed as data here; this circuit does not separately enforce output-address ownership against `ivk` in condition 6. The domain tag provides domain separation from Vote Commitments in the shared vote commitment tree.
+Purpose: prove that the governance commitment (a public input) is correctly derived from the domain tag, the output note's diversified address x-coordinates (`g_d_new_x`, `pk_d_new_x`), the ballot count, the vote round identifier, a blinding factor, and the proposal authority bitmask. Binds the delegated weight, output address coordinates, and authority scope into a single public commitment that the vote proof can open. The output address is hashed as data here; this circuit does not separately enforce output-address ownership against `ivk` in condition 6. The domain tag provides domain separation from Vote Commitments in the shared vote commitment tree.
 
 ```
 van_comm_core = Poseidon(DOMAIN_VAN, g_d_new_x, pk_d_new_x, num_ballots, vote_round_id, MAX_PROPOSAL_AUTHORITY)
 van_comm = Poseidon(van_comm_core, van_comm_rand)
 ```
+
+Address encoding note: `g_d_new_x` and `pk_d_new_x` are x-coordinates only. Negating both output address points preserves this VAN hash, so `van_comm` is not a standalone commitment to unique full points. The current protocol still carries the needed full-point information because condition 6 feeds `g_d_new` and `pk_d_new` into NoteCommit's point encoding, which distinguishes the y-sign in `cmx_new`, and the vote proof spends the VAN through its full-point address ownership check and per-VAN nullifier.
 
 Where:
 - **DOMAIN_VAN**: `0`. Domain separation tag for Vote Authority Notes (vs `DOMAIN_VC = 1` for Vote Commitments). Assigned via `assign_constant` so the value is baked into the verification key.
@@ -303,7 +305,7 @@ Where:
 - `van_comm_core` uses `ConstantLength<6>` over the structural fields.
 - `van_comm` finalizes with `ConstantLength<2>` over `(van_comm_core, van_comm_rand)`.
 
-The same two-layer hash structure is used by ZKP #2 (vote proof, conditions 2 and 6) for cross-circuit interoperability — a VAN created here can be opened by the vote proof circuit.
+The same two-layer hash structure is used by ZKP #2 (vote proof, conditions 2 and 7) for cross-circuit interoperability — a VAN created here can be opened by the vote proof circuit.
 
 **Out-of-circuit helper:** `van_commitment_hash()` delegates to `van_integrity::van_integrity_hash()` with `MAX_PROPOSAL_AUTHORITY` as the proposal authority.
 
