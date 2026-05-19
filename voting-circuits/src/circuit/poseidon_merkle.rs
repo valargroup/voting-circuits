@@ -10,6 +10,14 @@
 //! The swap gate orders `(current, sibling)` into `(left, right)` based
 //! on a position bit, then the path function hashes `Poseidon(left, right)`
 //! at each level to walk from a leaf up to the root.
+//!
+//! The level is intentionally not part of the Poseidon preimage. This matches
+//! `vote_commitment_tree::MerkleHashVote::combine`; for the fixed-depth vote
+//! commitment tree and IMT, tree integrity comes from consuming exactly
+//! `DEPTH` siblings in LSB-first position-bit order. If a future tree becomes
+//! sparse, variable-depth, or shares siblings across tree domains, this
+//! convention must be revisited and the level should become an explicit hash
+//! input, which would require regenerating verifying keys.
 
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
@@ -140,6 +148,9 @@ impl MerkleSwapGate {
 /// 1. Witnesses the position bit and sibling hash.
 /// 2. Conditionally swaps via [`MerkleSwapGate`].
 /// 3. Hashes `Poseidon(left, right)` with P128Pow5T3.
+///
+/// The parent hash has no depth or level tag; callers rely on a fixed
+/// compile-time `DEPTH` and the position bits to bind each sibling to its level.
 ///
 /// Returns the computed root cell.
 pub(crate) fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
