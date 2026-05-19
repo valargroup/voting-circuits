@@ -1042,12 +1042,19 @@ mod tests {
     }
 
     fn make_test_data(share_idx: u32) -> (Circuit, Instance) {
+        let (circuit, instance, _) = make_test_ballot(share_idx, [625; 16]);
+        (circuit, instance)
+    }
+
+    fn make_test_ballot(
+        share_idx: u32,
+        shares_u64: [u64; 16],
+    ) -> (Circuit, Instance, pallas::Base) {
         let proposal_id = pallas::Base::from(3u64);
         let vote_decision = pallas::Base::from(1u64);
         let voting_round_id = pallas::Base::from(999u64);
 
         let (_ea_sk, ea_pk_point, _ea_pk_affine) = generate_ea_keypair();
-        let shares_u64: [u64; 16] = [625; 16];
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, share_blinds, share_comms, shares_hash_val) =
             encrypt_shares(shares_u64, ea_pk_point);
 
@@ -1089,7 +1096,7 @@ mod tests {
             enc_c2_y[share_idx as usize],
         );
 
-        (circuit, instance)
+        (circuit, instance, vote_commitment)
     }
 
     fn build_single_leaf_merkle_path(
@@ -1202,6 +1209,35 @@ mod tests {
         instance.voting_round_id = pallas::Base::from(12345u64);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
+    }
+
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn test_share_reveal_cannot_replay_across_vote_commitments() {
+        let share_idx = 0;
+        let (circuit_a, instance_a, vote_commitment_a) = make_test_ballot(share_idx, [625; 16]);
+        let (_circuit_b, instance_b, vote_commitment_b) = make_test_ballot(share_idx, [626; 16]);
+
+        assert_eq!(instance_a.voting_round_id, instance_b.voting_round_id);
+        assert_eq!(instance_a.proposal_id, instance_b.proposal_id);
+        assert_eq!(instance_a.vote_decision, instance_b.vote_decision);
+        assert_ne!(vote_commitment_a, vote_commitment_b);
+        assert_ne!(
+            instance_a.vote_comm_tree_root,
+            instance_b.vote_comm_tree_root
+        );
+
+        let prover_a =
+            MockProver::run(K, &circuit_a, vec![instance_a.to_halo2_instance()]).unwrap();
+        assert_eq!(prover_a.verify(), Ok(()));
+
+        // Reuse ballot A's reveal witnesses, but authenticate them against
+        // ballot B's distinct vote commitment tree root.
+        let mut replay_instance = instance_a.clone();
+        replay_instance.vote_comm_tree_root = instance_b.vote_comm_tree_root;
+        let replay_prover =
+            MockProver::run(K, &circuit_a, vec![replay_instance.to_halo2_instance()]).unwrap();
+        assert!(replay_prover.verify().is_err());
     }
 
     /// Proves that flipping c1_y to -c1_y (sign malleability) is detected.
