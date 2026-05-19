@@ -1299,6 +1299,22 @@ mod tests {
     }
 
     #[test]
+    fn share_nullifier_hash_frozen_vector() {
+        assert_eq!(
+            share_nullifier_hash(
+                pallas::Base::from(42u64),
+                pallas::Base::from(3u64),
+                pallas::Base::from(200u64),
+            ),
+            pallas::Base::from_repr([
+                103, 140, 231, 81, 182, 191, 8, 141, 126, 173, 35, 129, 94, 244, 230, 146, 27, 161,
+                255, 223, 211, 230, 26, 212, 86, 62, 15, 167, 99, 237, 233, 63,
+            ])
+            .expect("frozen vector must be canonical")
+        );
+    }
+
+    #[test]
     fn test_share_reveal_domain_tag_matches_server() {
         assert_eq!(domain_tag_share_spend(), crate::domain_tags::share_spend());
     }

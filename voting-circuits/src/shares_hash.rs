@@ -224,7 +224,7 @@ pub fn shares_hash_from_comms(share_comms: [pallas::Base; 16]) -> pallas::Base {
 mod tests {
     use super::*;
 
-    use ff::Field;
+    use ff::{Field, PrimeField};
     use halo2_gadgets::poseidon::Pow5Config as PoseidonConfig;
     use halo2_proofs::{
         circuit::{floor_planner, Value},
@@ -296,6 +296,46 @@ mod tests {
     // ================================================================
     // hash_share_commitment_in_circuit
     // ================================================================
+
+    fn base_from_repr(bytes: [u8; 32]) -> pallas::Base {
+        pallas::Base::from_repr(bytes).expect("frozen vector must be canonical")
+    }
+
+    #[test]
+    fn share_commitment_frozen_vector() {
+        let actual = share_commitment(
+            pallas::Base::from(1u64),
+            pallas::Base::from(2u64),
+            pallas::Base::from(3u64),
+            pallas::Base::from(4u64),
+            pallas::Base::from(5u64),
+        );
+
+        assert_eq!(
+            actual,
+            base_from_repr([
+                183, 66, 173, 64, 240, 83, 206, 161, 132, 211, 79, 38, 240, 12, 144, 142, 247, 139,
+                173, 56, 54, 59, 51, 73, 42, 113, 240, 242, 21, 103, 150, 29,
+            ])
+        );
+    }
+
+    #[test]
+    fn shares_hash_frozen_vector() {
+        let blinds = core::array::from_fn(|i| pallas::Base::from((i + 1) as u64));
+        let enc_c1_x = core::array::from_fn(|i| pallas::Base::from((i + 17) as u64));
+        let enc_c2_x = core::array::from_fn(|i| pallas::Base::from((i + 33) as u64));
+        let enc_c1_y = core::array::from_fn(|i| pallas::Base::from((i + 49) as u64));
+        let enc_c2_y = core::array::from_fn(|i| pallas::Base::from((i + 65) as u64));
+
+        assert_eq!(
+            shares_hash(blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y),
+            base_from_repr([
+                125, 88, 190, 64, 180, 158, 228, 46, 43, 173, 80, 255, 152, 160, 47, 234, 86, 36,
+                157, 87, 187, 167, 86, 239, 58, 45, 222, 42, 111, 6, 63, 28,
+            ])
+        );
+    }
 
     /// Minimal circuit: computes `hash_share_commitment_in_circuit` and
     /// constrains the result to instance row 0.

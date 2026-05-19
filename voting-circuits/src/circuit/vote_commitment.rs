@@ -97,3 +97,31 @@ pub(crate) fn vote_commitment_poseidon(
         message,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ff::PrimeField;
+
+    fn base_from_repr(bytes: [u8; 32]) -> pallas::Base {
+        pallas::Base::from_repr(bytes).expect("frozen vector must be canonical")
+    }
+
+    #[test]
+    fn vote_commitment_hash_frozen_vector() {
+        let actual = vote_commitment_hash(
+            pallas::Base::from(42u64),
+            pallas::Base::from(100u64),
+            pallas::Base::from(7u64),
+            pallas::Base::from(1u64),
+        );
+
+        assert_eq!(
+            actual,
+            base_from_repr([
+                246, 84, 48, 178, 227, 178, 234, 71, 2, 178, 177, 211, 238, 120, 238, 157, 174, 5,
+                29, 244, 76, 128, 250, 245, 139, 137, 84, 246, 108, 197, 47, 31,
+            ])
+        );
+    }
+}

@@ -2504,6 +2504,22 @@ mod tests {
     }
 
     #[test]
+    fn van_nullifier_hash_frozen_vector() {
+        assert_eq!(
+            van_nullifier_hash(
+                pallas::Base::from(1u64),
+                pallas::Base::from(42u64),
+                pallas::Base::from(100u64),
+            ),
+            pallas::Base::from_repr([
+                114, 56, 62, 208, 155, 244, 76, 209, 125, 210, 149, 109, 176, 88, 34, 116, 123, 56,
+                62, 216, 108, 204, 55, 120, 28, 155, 217, 186, 29, 159, 128, 2,
+            ])
+            .expect("frozen vector must be canonical")
+        );
+    }
+
+    #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn stale_and_current_anchor_proofs_for_same_van_share_nullifier() {
         let fixture = VoteReuseFixture::new();

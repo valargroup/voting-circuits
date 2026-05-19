@@ -122,3 +122,33 @@ pub(crate) fn van_integrity_poseidon(
         [van_comm_core, van_comm_rand],
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ff::PrimeField;
+
+    fn base_from_repr(bytes: [u8; 32]) -> pallas::Base {
+        pallas::Base::from_repr(bytes).expect("frozen vector must be canonical")
+    }
+
+    #[test]
+    fn van_integrity_hash_frozen_vector() {
+        let actual = van_integrity_hash(
+            pallas::Base::from(1u64),
+            pallas::Base::from(2u64),
+            pallas::Base::from(3u64),
+            pallas::Base::from(4u64),
+            pallas::Base::from(5u64),
+            pallas::Base::from(6u64),
+        );
+
+        assert_eq!(
+            actual,
+            base_from_repr([
+                170, 254, 87, 142, 76, 163, 228, 29, 153, 102, 1, 140, 237, 128, 137, 3, 137, 237,
+                179, 252, 168, 232, 117, 56, 227, 199, 242, 20, 178, 33, 130, 59,
+            ])
+        );
+    }
+}
