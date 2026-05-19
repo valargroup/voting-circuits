@@ -319,6 +319,11 @@ impl ImtProvider for SpacedLeafImtProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ff::PrimeField;
+
+    fn base_from_repr(bytes: [u8; 32]) -> pallas::Base {
+        pallas::Base::from_repr(bytes).expect("frozen vector must be canonical")
+    }
 
     #[test]
     fn gov_null_hash_is_domain_separated_from_imt_leaf_hash() {
@@ -330,6 +335,32 @@ mod tests {
             gov_null_hash(a, b, c),
             poseidon_hash_3(a, b, c),
             "governance nullifiers must not share the raw Poseidon3 preimage with IMT leaves"
+        );
+    }
+
+    #[test]
+    fn derive_nullifier_domain_frozen_vector() {
+        assert_eq!(
+            derive_nullifier_domain(pallas::Base::from(42u64)),
+            base_from_repr([
+                202, 12, 215, 224, 168, 199, 68, 160, 148, 160, 237, 250, 131, 157, 181, 207, 158,
+                105, 141, 50, 135, 245, 182, 83, 151, 198, 14, 254, 122, 79, 78, 23,
+            ])
+        );
+    }
+
+    #[test]
+    fn gov_null_hash_frozen_vector() {
+        assert_eq!(
+            gov_null_hash(
+                pallas::Base::from(1u64),
+                pallas::Base::from(2u64),
+                pallas::Base::from(3u64),
+            ),
+            base_from_repr([
+                33, 58, 71, 28, 174, 217, 192, 215, 38, 189, 209, 38, 27, 71, 135, 247, 157, 111,
+                146, 254, 20, 25, 211, 204, 191, 4, 120, 54, 134, 218, 195, 29,
+            ])
         );
     }
 }

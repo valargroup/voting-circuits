@@ -1459,7 +1459,7 @@ mod tests {
     use super::*;
     use crate::circuit::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
     use core::iter;
-    use ff::Field;
+    use ff::{Field, PrimeField};
     use group::ff::PrimeFieldBits;
     use group::{Curve, Group};
     use halo2_gadgets::sinsemilla::primitives::CommitDomain;
@@ -2497,6 +2497,22 @@ mod tests {
         // Changing any input changes the hash.
         let h3 = van_nullifier_hash(pallas::Base::random(&mut rng), round, van);
         assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn van_nullifier_hash_frozen_vector() {
+        assert_eq!(
+            van_nullifier_hash(
+                pallas::Base::from(1u64),
+                pallas::Base::from(42u64),
+                pallas::Base::from(100u64),
+            ),
+            pallas::Base::from_repr([
+                114, 56, 62, 208, 155, 244, 76, 209, 125, 210, 149, 109, 176, 88, 34, 116, 123, 56,
+                62, 216, 108, 204, 55, 120, 28, 155, 217, 186, 29, 159, 128, 2,
+            ])
+            .expect("frozen vector must be canonical")
+        );
     }
 
     #[test]

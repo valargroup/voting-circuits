@@ -83,6 +83,59 @@ pub fn share_spend() -> pallas::Base {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ff::PrimeField;
+
+    fn assert_string_tag(name: &str, actual: pallas::Base, expected_prefix: &[u8]) {
+        let mut expected = [0u8; 32];
+        expected[..expected_prefix.len()].copy_from_slice(expected_prefix);
+        assert_eq!(
+            actual.to_repr(),
+            expected,
+            "{name} domain tag must remain a zero-padded ASCII field element"
+        );
+    }
+
+    #[test]
+    fn numeric_domain_tag_values_are_pinned() {
+        assert_eq!(DOMAIN_VAN, 0);
+        assert_eq!(DOMAIN_VC, 1);
+        assert_eq!(pallas::Base::from(DOMAIN_VAN), pallas::Base::zero());
+        assert_eq!(pallas::Base::from(DOMAIN_VC), pallas::Base::one());
+    }
+
+    #[test]
+    fn string_domain_tag_values_are_pinned() {
+        assert_string_tag(
+            "vote authority spend",
+            vote_authority_spend(),
+            b"vote authority spend",
+        );
+        assert_string_tag(
+            "governance authorization",
+            governance_authorization(),
+            b"governance authorization",
+        );
+        assert_string_tag(
+            "delegation rho binding",
+            delegation_rho_binding(),
+            b"delegation rho binding",
+        );
+        assert_string_tag(
+            "governance nullifier",
+            governance_nullifier(),
+            b"governance nullifier",
+        );
+        assert_string_tag("share spend", share_spend(), b"share spend");
+    }
+
+    #[test]
+    fn vote_prf_domain_values_are_pinned() {
+        assert_eq!(VOTE_PRF_PERSONALIZATION, b"ZcashVote_Expand");
+        assert_eq!(VOTE_PRF_DOMAIN_ELGAMAL, 0x00);
+        assert_eq!(VOTE_PRF_DOMAIN_BLIND, 0x01);
+        assert_eq!(VOTE_PRF_DOMAIN_SHUFFLE, 0x02);
+        assert_eq!(VOTE_PRF_DOMAIN_REMAINDER, 0x03);
+    }
 
     #[test]
     fn protocol_domain_tags_are_distinct() {
