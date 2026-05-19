@@ -1830,9 +1830,13 @@ pub struct Instance {
     pub van_comm: pallas::Base,
     /// The voting round identifier.
     pub vote_round_id: pallas::Base,
-    /// The note commitment tree root (shared anchor).
+    /// Ledger-state anchor: the Orchard note commitment tree root at the
+    /// verifier-pinned snapshot height. The verifier must obtain this from
+    /// chain state, not from the prover's bundle.
     pub nc_root: pallas::Base,
-    /// The nullifier IMT root.
+    /// Ledger-state anchor: the alternate-nullifier IMT root at the same
+    /// snapshot height as `nc_root`. The verifier must obtain this from chain
+    /// state, not from the prover's bundle.
     pub nf_imt_root: pallas::Base,
     /// Per-note governance nullifiers (5 slots).
     pub gov_null: [pallas::Base; 5],
@@ -1864,7 +1868,9 @@ impl Instance {
     /// Constructs an [`Instance`] from its constituent parts.
     ///
     /// Callers should authenticate `vote_round_id`, `nc_root`, and
-    /// `nf_imt_root` out-of-band before passing them here — see
+    /// `nf_imt_root` out-of-band before passing them here. `nc_root` and
+    /// `nf_imt_root` must come from the same verifier-pinned ledger snapshot;
+    /// this API does not carry the snapshot height. See
     /// [`crate::delegation::prove::verify_delegation_proof`] for the trust
     /// contract. The remaining fields, including `van_comm` and `dom`, are
     /// proof-attested outputs.

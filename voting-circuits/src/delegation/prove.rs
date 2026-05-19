@@ -115,16 +115,26 @@ pub fn create_delegation_proof(
 /// `constrain_instance` pins each public input to whatever value the
 /// *verifier* supplies; the protocol cannot tell whether that value was
 /// the *right* one. The following fields of `instance` MUST be sourced
-/// from a trusted channel (a signed governance announcement, a signed
-/// chain head, the consuming chain's own state) before calling this
-/// function. Substituting them is not detectable from the proof alone:
+/// from their category-specific authority before calling this function.
+/// Substituting them is not detectable from the proof alone.
+///
+/// ## Ledger-state anchors
+///
+/// These roots must be retrieved from the chain state at a snapshot height
+/// that the verifier independently accepts. This crate's public-input vector
+/// does not carry that height, so a chain ante handler or off-chain verifier
+/// must validate the height-to-root lookup outside this API. Do not take these
+/// values from the prover's bundle.
+///
+/// - `instance.nc_root` — the Orchard note commitment tree root at the
+///   verifier-pinned snapshot height.
+/// - `instance.nf_imt_root` — the alternate-nullifier IMT root at the same
+///   snapshot height as `nc_root`.
+///
+/// ## Session parameters
 ///
 /// - `instance.vote_round_id` — must come from the same governance
-///   announcement as `van_comm`.
-/// - `instance.nc_root` — must be the Orchard note commitment tree root
-///   at the announced snapshot height.
-/// - `instance.nf_imt_root` — must be the alternate-nullifier IMT root at
-///   the same snapshot height as `nc_root`.
+///   announcement as the active voting session.
 ///
 /// # Proof-attested outputs
 ///
