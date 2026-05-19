@@ -887,6 +887,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 /// [`crate::share_reveal::prove::verify_share_reveal_proof`] for which
 /// fields require caller authentication versus which are proof-attested
 /// outputs).
+///
+/// The struct field order preserves the existing API layout and is not the
+/// Halo2 public input order. Use [`Self::to_halo2_instance`] and the
+/// `*_PUBLIC_OFFSET` constants as the canonical public-input mapping.
 #[derive(Clone, Debug)]
 pub struct Instance {
     /// Poseidon nullifier for this share (prevents double-counting).
@@ -995,6 +999,53 @@ mod tests {
     use crate::circuit::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
     use crate::shares_hash::{share_commitment, shares_hash as compute_shares_hash};
     use crate::vote_proof::poseidon_hash_2;
+
+    #[test]
+    fn instance_to_halo2_instance_uses_public_input_offsets() {
+        let share_nullifier = pallas::Base::from(10u64);
+        let enc_share_c1_x = pallas::Base::from(11u64);
+        let enc_share_c1_y = pallas::Base::from(12u64);
+        let enc_share_c2_x = pallas::Base::from(13u64);
+        let enc_share_c2_y = pallas::Base::from(14u64);
+        let proposal_id = pallas::Base::from(15u64);
+        let vote_decision = pallas::Base::from(16u64);
+        let vote_comm_tree_root = pallas::Base::from(17u64);
+        let voting_round_id = pallas::Base::from(18u64);
+
+        let instance = Instance {
+            share_nullifier,
+            enc_share_c1_x,
+            enc_share_c2_x,
+            proposal_id,
+            vote_decision,
+            vote_comm_tree_root,
+            voting_round_id,
+            enc_share_c1_y,
+            enc_share_c2_y,
+        };
+
+        let public_inputs = instance.to_halo2_instance();
+
+        assert_eq!(public_inputs.len(), Instance::NUM_PUBLIC_INPUTS);
+        assert_eq!(
+            public_inputs[SHARE_NULLIFIER_PUBLIC_OFFSET],
+            share_nullifier
+        );
+        assert_eq!(public_inputs[ENC_SHARE_C1_X_PUBLIC_OFFSET], enc_share_c1_x);
+        assert_eq!(public_inputs[ENC_SHARE_C1_Y_PUBLIC_OFFSET], enc_share_c1_y);
+        assert_eq!(public_inputs[ENC_SHARE_C2_X_PUBLIC_OFFSET], enc_share_c2_x);
+        assert_eq!(public_inputs[ENC_SHARE_C2_Y_PUBLIC_OFFSET], enc_share_c2_y);
+        assert_eq!(public_inputs[PROPOSAL_ID_PUBLIC_OFFSET], proposal_id);
+        assert_eq!(public_inputs[VOTE_DECISION_PUBLIC_OFFSET], vote_decision);
+        assert_eq!(
+            public_inputs[VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET],
+            vote_comm_tree_root
+        );
+        assert_eq!(
+            public_inputs[VOTING_ROUND_ID_PUBLIC_OFFSET],
+            voting_round_id
+        );
+    }
 
     fn generate_ea_keypair() -> (pallas::Scalar, pallas::Point, pallas::Affine) {
         let ea_sk = pallas::Scalar::from(42u64);
