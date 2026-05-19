@@ -235,14 +235,15 @@ pub struct VoteProofBundle {
     /// Needed by the helper server to verify share payloads.
     pub shares_hash: pallas::Base,
     /// Per-share blind factors for blinded commitments.
-    /// See `crate::shares_hash` for the authoritative five-coordinate
+    /// See `crate::circuit::share_commitment` for the authoritative
     /// commitment shape.
     /// Deterministically derived from (sk, round_id, proposal_id, van_commitment, share_index).
     pub share_blinds: [pallas::Base; 16],
     /// Pre-computed per-share Poseidon commitments.
     /// Each commitment binds the blind and both coordinates of both El Gamal
-    /// ciphertext points; `crate::shares_hash` is the source of truth for the
-    /// preimage order.
+    /// ciphertext points; `crate::circuit::share_commitment` is the source of
+    /// truth for the per-share preimage order, while `crate::shares_hash` owns
+    /// the aggregate preimage.
     /// Provided as private witness inputs to the ZKP #3 builder. The reveal
     /// circuit binds them transitively through `shares_hash`, so the helper
     /// server only needs the primary share's blind, not all 16.

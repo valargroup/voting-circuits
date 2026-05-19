@@ -30,7 +30,7 @@ pub struct ShareRevealBundle {
 /// - `merkle_auth_path`: The 24 sibling hashes from the vote commitment tree.
 /// - `merkle_position`: Leaf position in the vote commitment tree.
 /// - `share_comms`: Pre-computed per-share Poseidon commitments
-///   (`share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`).
+///   (`share_comm_i = Poseidon(DOMAIN_SHARE_COMM, blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`).
 /// - `primary_blind`: Blind factor for the revealed share (at `share_index`).
 /// - `enc_c1_x`: X-coordinate of the revealed share's El Gamal C1. This is
 ///   reveal data supplied by the caller and bound to `share_comms[share_index]`

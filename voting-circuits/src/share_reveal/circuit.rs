@@ -13,9 +13,10 @@
 //!   private witnesses transitively bound to the public tree root.
 //! - **Condition 4**: Primary Share Binding — the voting client knows a
 //!   blind such that
-//!   `share_comms[share_index] = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`
-//!   (see `crate::shares_hash` for the authoritative five-input shape;
-//!   the y-coordinates defend against ciphertext sign-malleability),
+//!   `share_comms[share_index] = Poseidon(DOMAIN_SHARE_COMM, blind, c1_x, c2_x, c1_y, c2_y)`
+//!   (see `crate::circuit::share_commitment` for the authoritative shape;
+//!   the domain tag separates this from vote commitments, and the
+//!   y-coordinates defend against ciphertext sign-malleability),
 //!   binding the publicly revealed encrypted share to the committed set.
 //! - **Condition 5**: Share Nullifier Integrity — `share_nullifier` is
 //!   correctly derived as
@@ -42,11 +43,12 @@
 //! coordinates bind to the selected `share_comm` through Poseidon preimage
 //! resistance of `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
 //!
-//! Authoritative hash sources: `crate::shares_hash` owns the per-share and
-//! aggregate encrypted-share preimages, `crate::circuit::vote_commitment` owns
-//! the vote commitment preimage, and `crate::domain_tags` owns the share-spend
-//! domain tag encoding. This module's prose points to those owners rather than
-//! defining competing formulas.
+//! Authoritative hash sources: `crate::circuit::share_commitment` owns the
+//! per-share encrypted-share preimage, `crate::shares_hash` owns the aggregate
+//! `shares_hash` preimage, `crate::circuit::vote_commitment` owns the vote
+//! commitment preimage, and `crate::domain_tags` owns domain tag encoding.
+//! This module's prose points to those owners rather than defining competing
+//! formulas.
 //!
 //! ## Column layout
 //!
@@ -80,6 +82,7 @@ use halo2_gadgets::{
 use orchard::circuit::gadget::assign_free_advice;
 
 use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
+use crate::circuit::share_commitment;
 use crate::circuit::vote_commitment;
 use crate::shares_hash::{
     compute_shares_hash_from_comms_in_circuit, hash_share_commitment_in_circuit,
@@ -93,7 +96,7 @@ use crate::vote_proof::VOTE_COMM_TREE_DEPTH;
 /// Circuit size (2^K rows).
 ///
 /// K=11 (2,048 rows). `CircuitCost::measure` reports a floor-planner
-/// high-water mark of ~1,592 rows (78% of 2,048). The `V1` floor
+/// high-water mark of 1,632 rows (79.7% of 2,048). The `V1` floor
 /// planner packs non-overlapping regions into the same row range across
 /// different columns.
 ///
@@ -261,9 +264,9 @@ pub struct Circuit {
     // === Condition 3: Shares Hash Integrity ===
     /// Pre-computed per-share Poseidon commitments (private witnesses).
     ///
-    /// Shape: see `crate::shares_hash` — five-input
-    /// `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` including the
-    /// y-coordinates that defend against ciphertext sign-malleability.
+    /// Shape: see `crate::circuit::share_commitment`:
+    /// `Poseidon(DOMAIN_SHARE_COMM, blind, c1_x, c2_x, c1_y, c2_y)`.
+    /// The y-coordinates defend against ciphertext sign-malleability.
     /// Transitively bound to the public tree root via
     /// `shares_hash → vote_commitment → Merkle path`.
     pub(crate) share_comms: [Value<pallas::Base>; 16],
@@ -271,8 +274,8 @@ pub struct Circuit {
     // === Condition 4: Primary Share Binding ===
     /// Blind factor for the revealed share. The synthesize body
     /// (see the "Condition 4: Primary Share Binding" region below) recomputes
-    /// `Poseidon(primary_blind, c1_x, c2_x, c1_y, c2_y)` using the shared
-    /// `crate::shares_hash` gadget and constrains it to equal
+    /// `Poseidon(DOMAIN_SHARE_COMM, primary_blind, c1_x, c2_x, c1_y, c2_y)`
+    /// using the shared `crate::shares_hash` gadget and constrains it to equal
     /// `share_comms[share_index]`; the y-coordinates are the
     /// sign-malleability defense and the gadget is the single source of
     /// truth for the preimage shape.
@@ -589,8 +592,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // correspond to the share commitment at the declared
         // `share_index`, by recomputing the commitment and matching it
         // against the muxed-out `share_comms[share_index]`:
-        //   derived_comm = Poseidon(primary_blind, enc_c1_x, enc_c2_x,
-        //                          enc_c1_y, enc_c2_y)
+        //   derived_comm = Poseidon(DOMAIN_SHARE_COMM, primary_blind,
+        //                           enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y)
         //   share_comms[share_index] == derived_comm
         //
         // Defense-by-rejection: an adversary that has seen the on-chain
@@ -653,9 +656,13 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             },
         )?;
 
+        let domain_share_comm =
+            share_commitment::assign_domain_share_comm(&mut layouter, config.advices[0])?;
         let derived_comm = hash_share_commitment_in_circuit(
             config.poseidon_chip(),
-            layouter.namespace(|| "cond4: Poseidon(blind, c1_x, c2_x, c1_y, c2_y)"),
+            layouter
+                .namespace(|| "cond4: Poseidon(DOMAIN_SHARE_COMM, blind, c1_x, c2_x, c1_y, c2_y)"),
+            domain_share_comm,
             primary_blind,
             enc_c1_x,
             enc_c2_x,
@@ -664,14 +671,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             0,
         )?;
 
-        // Mux share_comms by share_index → selected_comm.
-        //
-        // Col →  [0]       [1]       [2]        [3]        [4]        [5]        [6]       [7]       [8]       [9]
-        // ------+---------+---------+----------+----------+----------+----------+---------+---------+---------+---------
-        // Row 0 | sel[0]  | sel[1]  | sel[2]   | sel[3]   | sel[4]   | sel[5]   | sel[6]  | sel[7]  | sel[8]  | sel[9]
-        // Row 1 | sel[10] | sel[11] | sel[12]  | sel[13]  | sel[14]  | sel[15]  | comm[0] | comm[1] | comm[2] | comm[3]
-        // Row 2 | comm[4] | comm[5] | comm[6]  | comm[7]  | comm[8]  | comm[9]  | comm[10]| comm[11]| comm[12]| comm[13]
-        // Row 3 | comm[14]| comm[15]| sel_comm | share_idx| —        | —        | —       | —       | —       | —
+        // Mux share_comms by share_index → selected_comm. The layout mirrors
+        // the gate definition in `configure`.
         let selected_comm = layouter.assign_region(
             || "cond4: share commitment mux",
             |mut region| {
@@ -1203,7 +1204,8 @@ mod tests {
     }
 
     /// Proves that flipping c1_y to -c1_y (sign malleability) is detected.
-    /// The share reveal circuit binds to the full curve point via share_commitment(blind, c1_x, c2_x, c1_y, c2_y).
+    /// The share reveal circuit binds to the full curve point via
+    /// Poseidon(DOMAIN_SHARE_COMM, blind, c1_x, c2_x, c1_y, c2_y).
     /// Negating c1_y changes the commitment, so the proof must fail.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
