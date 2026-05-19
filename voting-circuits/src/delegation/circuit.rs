@@ -1856,6 +1856,9 @@ impl std::fmt::Display for InstanceError {
 impl std::error::Error for InstanceError {}
 
 impl Instance {
+    /// Number of public inputs serialized by [`Self::to_halo2_instance`].
+    pub const NUM_PUBLIC_INPUTS: usize = 14;
+
     /// Constructs an [`Instance`] from its constituent parts.
     ///
     /// Callers should authenticate `vote_round_id`, `nc_root`, and

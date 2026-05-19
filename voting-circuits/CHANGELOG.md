@@ -15,6 +15,8 @@
 
 - `create_delegation_proof`, `create_vote_proof`, and `create_share_reveal_proof` now return `Result<Vec<u8>, ProveError>` instead of panicking when Halo2 proof creation fails.
 - Share-reveal APIs are now always available; the `share-reveal` Cargo feature was removed.
+- Public input counts are exposed on each instance type for downstream
+  FFI/wire decoders.
 
 ### Removed
 
