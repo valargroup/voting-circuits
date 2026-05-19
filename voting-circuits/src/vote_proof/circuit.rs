@@ -1577,17 +1577,180 @@ mod tests {
     fn build_single_leaf_merkle_path(
         leaf: pallas::Base,
     ) -> ([pallas::Base; VOTE_COMM_TREE_DEPTH], u32, pallas::Base) {
-        let mut empty_roots = [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH];
-        empty_roots[0] = poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
-        for i in 1..VOTE_COMM_TREE_DEPTH {
-            empty_roots[i] = poseidon_hash_2(empty_roots[i - 1], empty_roots[i - 1]);
-        }
-        let auth_path = empty_roots;
+        let auth_path = empty_vote_comm_tree_path();
         let mut current = leaf;
         for i in 0..VOTE_COMM_TREE_DEPTH {
             current = poseidon_hash_2(current, auth_path[i]);
         }
         (auth_path, 0, current)
+    }
+
+    fn empty_vote_comm_tree_path() -> [pallas::Base; VOTE_COMM_TREE_DEPTH] {
+        let mut empty_roots = [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH];
+        empty_roots[0] = poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
+        for i in 1..VOTE_COMM_TREE_DEPTH {
+            empty_roots[i] = poseidon_hash_2(empty_roots[i - 1], empty_roots[i - 1]);
+        }
+        empty_roots
+    }
+
+    fn build_left_leaf_merkle_path_with_sibling(
+        left_leaf: pallas::Base,
+        right_leaf: pallas::Base,
+    ) -> ([pallas::Base; VOTE_COMM_TREE_DEPTH], u32, pallas::Base) {
+        let mut auth_path = empty_vote_comm_tree_path();
+        auth_path[0] = right_leaf;
+
+        let mut current = left_leaf;
+        for i in 0..VOTE_COMM_TREE_DEPTH {
+            current = poseidon_hash_2(current, auth_path[i]);
+        }
+        (auth_path, 0, current)
+    }
+
+    struct VoteReuseFixture {
+        vsk: pallas::Scalar,
+        vsk_nk: pallas::Base,
+        rivk_v: pallas::Scalar,
+        alpha_v: pallas::Scalar,
+        vpk_g_d_affine: pallas::Affine,
+        vpk_pk_d_affine: pallas::Affine,
+        total_note_value: pallas::Base,
+        proposal_authority_old: pallas::Base,
+        proposal_id: u64,
+        van_comm_rand: pallas::Base,
+        shares_u64: [u64; 16],
+        ea_pk_point: pallas::Point,
+        ea_pk_affine: pallas::Affine,
+    }
+
+    impl VoteReuseFixture {
+        fn new() -> Self {
+            let mut rng = OsRng;
+            let vsk = pallas::Scalar::random(&mut rng);
+            let vsk_nk = pallas::Base::random(&mut rng);
+            let rivk_v = pallas::Scalar::random(&mut rng);
+            let alpha_v = pallas::Scalar::random(&mut rng);
+            let (vpk_g_d_affine, vpk_pk_d_affine) = derive_voting_address(vsk, vsk_nk, rivk_v);
+            let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
+
+            Self {
+                vsk,
+                vsk_nk,
+                rivk_v,
+                alpha_v,
+                vpk_g_d_affine,
+                vpk_pk_d_affine,
+                total_note_value: pallas::Base::from(10_000u64),
+                proposal_authority_old: pallas::Base::from(13u64),
+                proposal_id: TEST_PROPOSAL_ID,
+                van_comm_rand: pallas::Base::random(&mut rng),
+                shares_u64: [625; 16],
+                ea_pk_point,
+                ea_pk_affine,
+            }
+        }
+
+        fn vpk_x_coordinates(&self) -> (pallas::Base, pallas::Base) {
+            (
+                *self.vpk_g_d_affine.coordinates().unwrap().x(),
+                *self.vpk_pk_d_affine.coordinates().unwrap().x(),
+            )
+        }
+
+        fn vote_authority_note_old(&self, voting_round_id: pallas::Base) -> pallas::Base {
+            let (vpk_g_d_x, vpk_pk_d_x) = self.vpk_x_coordinates();
+            van_integrity_hash(
+                vpk_g_d_x,
+                vpk_pk_d_x,
+                self.total_note_value,
+                voting_round_id,
+                self.proposal_authority_old,
+                self.van_comm_rand,
+            )
+        }
+
+        fn vote_authority_note_new(&self, voting_round_id: pallas::Base) -> pallas::Base {
+            let (vpk_g_d_x, vpk_pk_d_x) = self.vpk_x_coordinates();
+            let proposal_authority_new =
+                self.proposal_authority_old - pallas::Base::from(1u64 << self.proposal_id);
+            van_integrity_hash(
+                vpk_g_d_x,
+                vpk_pk_d_x,
+                self.total_note_value,
+                voting_round_id,
+                proposal_authority_new,
+                self.van_comm_rand,
+            )
+        }
+
+        fn build_vote_data(
+            &self,
+            voting_round_id: pallas::Base,
+            auth_path: [pallas::Base; VOTE_COMM_TREE_DEPTH],
+            position: u32,
+            vote_comm_tree_root: pallas::Base,
+            anchor_height: u64,
+        ) -> (Circuit, Instance) {
+            let vote_authority_note_old = self.vote_authority_note_old(voting_round_id);
+            let vote_authority_note_new = self.vote_authority_note_new(voting_round_id);
+            let van_nullifier =
+                van_nullifier_hash(self.vsk_nk, voting_round_id, vote_authority_note_old);
+
+            let g = pallas::Point::from(spend_auth_g_affine());
+            let r_vpk = (g * self.vsk + g * self.alpha_v).to_affine();
+            let r_vpk_x = *r_vpk.coordinates().unwrap().x();
+            let r_vpk_y = *r_vpk.coordinates().unwrap().y();
+
+            let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
+                encrypt_shares(self.shares_u64, self.ea_pk_point);
+
+            let mut circuit = Circuit::with_van_witnesses(
+                Value::known(auth_path),
+                Value::known(position),
+                Value::known(self.vpk_g_d_affine),
+                Value::known(self.vpk_pk_d_affine),
+                Value::known(self.total_note_value),
+                Value::known(self.proposal_authority_old),
+                Value::known(self.van_comm_rand),
+                Value::known(vote_authority_note_old),
+                Value::known(self.vsk),
+                Value::known(self.rivk_v),
+                Value::known(self.vsk_nk),
+                Value::known(self.alpha_v),
+            );
+            circuit.one_shifted = Value::known(pallas::Base::from(1u64 << self.proposal_id));
+            circuit.shares = self.shares_u64.map(|s| Value::known(pallas::Base::from(s)));
+            circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
+            circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
+            circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
+            circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
+            circuit.share_blinds = share_blinds.map(Value::known);
+            circuit.share_randomness = randomness.map(Value::known);
+            circuit.ea_pk = Value::known(self.ea_pk_affine);
+            let vote_commitment = set_condition_11(
+                &mut circuit,
+                shares_hash_val,
+                self.proposal_id,
+                voting_round_id,
+            );
+
+            let instance = Instance::from_parts(
+                van_nullifier,
+                r_vpk_x,
+                r_vpk_y,
+                vote_authority_note_new,
+                vote_commitment,
+                vote_comm_tree_root,
+                pallas::Base::from(anchor_height),
+                pallas::Base::from(self.proposal_id),
+                voting_round_id,
+                *self.ea_pk_affine.coordinates().unwrap().x(),
+                *self.ea_pk_affine.coordinates().unwrap().y(),
+            );
+
+            (circuit, instance)
+        }
     }
 
     /// Build test (circuit, instance) with given proposal_authority_old,
@@ -1819,6 +1982,69 @@ mod tests {
         // Should fail: the voting_round_id from the instance doesn't match
         // the one hashed into the VAN (condition 2).
         assert!(prover.verify().is_err());
+    }
+
+    #[test]
+    fn round_scoped_van_redelegation_changes_nullifier() {
+        let fixture = VoteReuseFixture::new();
+        let round_1 = pallas::Base::from(0xCAFEu64);
+        let round_2 = pallas::Base::from(0xCAFFu64);
+
+        let van_round_1 = fixture.vote_authority_note_old(round_1);
+        let van_round_2 = fixture.vote_authority_note_old(round_2);
+        assert_ne!(
+            van_round_1, van_round_2,
+            "voting_round_id is part of the VAN preimage"
+        );
+
+        let nullifier_round_1 = van_nullifier_hash(fixture.vsk_nk, round_1, van_round_1);
+        let nullifier_round_2 = van_nullifier_hash(fixture.vsk_nk, round_2, van_round_2);
+        assert_ne!(
+            nullifier_round_1, nullifier_round_2,
+            "honest redelegation in a new round must not collide with the old round"
+        );
+    }
+
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn round_scoped_van_redelegation_verifies_with_distinct_nullifiers() {
+        let fixture = VoteReuseFixture::new();
+        let round_1 = pallas::Base::from(0xCAFEu64);
+        let round_2 = pallas::Base::from(0xCAFFu64);
+
+        let van_round_1 = fixture.vote_authority_note_old(round_1);
+        let (path_round_1, position_round_1, root_round_1) =
+            build_single_leaf_merkle_path(van_round_1);
+        let (circuit_round_1, instance_round_1) =
+            fixture.build_vote_data(round_1, path_round_1, position_round_1, root_round_1, 10);
+
+        let van_round_2 = fixture.vote_authority_note_old(round_2);
+        let (path_round_2, position_round_2, root_round_2) =
+            build_single_leaf_merkle_path(van_round_2);
+        let (circuit_round_2, instance_round_2) =
+            fixture.build_vote_data(round_2, path_round_2, position_round_2, root_round_2, 20);
+
+        assert_ne!(van_round_1, van_round_2);
+        assert_ne!(
+            instance_round_1.van_nullifier,
+            instance_round_2.van_nullifier
+        );
+
+        let prover_round_1 = MockProver::run(
+            K,
+            &circuit_round_1,
+            vec![instance_round_1.to_halo2_instance()],
+        )
+        .unwrap();
+        assert_eq!(prover_round_1.verify(), Ok(()));
+
+        let prover_round_2 = MockProver::run(
+            K,
+            &circuit_round_2,
+            vec![instance_round_2.to_halo2_instance()],
+        )
+        .unwrap();
+        assert_eq!(prover_round_2.verify(), Ok(()));
     }
 
     /// Verifies the out-of-circuit helper produces deterministic results.
@@ -2244,6 +2470,52 @@ mod tests {
         // Changing any input changes the hash.
         let h3 = van_nullifier_hash(pallas::Base::random(&mut rng), round, van);
         assert_ne!(h1, h3);
+    }
+
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn stale_and_current_anchor_proofs_for_same_van_share_nullifier() {
+        let fixture = VoteReuseFixture::new();
+        let voting_round_id = pallas::Base::from(0xCAFEu64);
+        let stale_van = fixture.vote_authority_note_old(voting_round_id);
+        let successor_van = fixture.vote_authority_note_new(voting_round_id);
+
+        let (stale_path, stale_position, stale_root) = build_single_leaf_merkle_path(stale_van);
+        let (stale_circuit, stale_instance) =
+            fixture.build_vote_data(voting_round_id, stale_path, stale_position, stale_root, 10);
+
+        let (current_path, current_position, current_root) =
+            build_left_leaf_merkle_path_with_sibling(stale_van, successor_van);
+        let (current_circuit, current_instance) = fixture.build_vote_data(
+            voting_round_id,
+            current_path,
+            current_position,
+            current_root,
+            11,
+        );
+
+        assert_ne!(
+            stale_root, current_root,
+            "the successor VAN changes the supplied tree anchor"
+        );
+        assert_eq!(
+            stale_instance.van_nullifier, current_instance.van_nullifier,
+            "same (vsk_nk, voting_round_id, VAN) must collide for chain-side nullifier uniqueness"
+        );
+
+        // The circuit only proves membership in the supplied root. Freshness of
+        // the height-to-root mapping is enforced by the chain ante handler.
+        let stale_prover =
+            MockProver::run(K, &stale_circuit, vec![stale_instance.to_halo2_instance()]).unwrap();
+        assert_eq!(stale_prover.verify(), Ok(()));
+
+        let current_prover = MockProver::run(
+            K,
+            &current_circuit,
+            vec![current_instance.to_halo2_instance()],
+        )
+        .unwrap();
+        assert_eq!(current_prover.verify(), Ok(()));
     }
 
     /// Verifies the domain tag is non-zero and deterministic.
