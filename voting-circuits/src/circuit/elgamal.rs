@@ -338,7 +338,7 @@ pub(crate) fn prove_elgamal_encryptions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use group::Group;
+    use group::{Curve, Group};
 
     #[test]
     fn elgamal_encrypt_rejects_zero_randomness() {
@@ -347,6 +347,35 @@ mod tests {
             .expect_err("zero randomness should be rejected without panicking");
 
         assert_eq!(err, ElGamalEncryptError::ZeroRandomness);
+    }
+
+    #[test]
+    fn elgamal_encrypt_returns_slots_in_documented_order() {
+        let share_value = pallas::Base::from(7u64);
+        let randomness = pallas::Base::from(11u64);
+        let g = pallas::Point::from(spend_auth_g_affine());
+        let ea_pk = g * pallas::Scalar::from(13u64);
+
+        let (c1_x, c2_x, c1_y, c2_y) = elgamal_encrypt(share_value, randomness, ea_pk)
+            .expect("test encryption inputs should produce non-identity ciphertext points");
+
+        let r_scalar = base_to_scalar(randomness).expect("test randomness should fit scalar field");
+        let v_scalar = base_to_scalar(share_value).expect("test share should fit scalar field");
+        let expected_c1 = (g * r_scalar).to_affine();
+        let expected_c2 = (g * v_scalar + ea_pk * r_scalar).to_affine();
+        let expected_c1_coords = expected_c1
+            .coordinates()
+            .into_option()
+            .expect("non-zero randomness should produce non-identity C1");
+        let expected_c2_coords = expected_c2
+            .coordinates()
+            .into_option()
+            .expect("chosen test inputs should produce non-identity C2");
+
+        assert_eq!(c1_x, *expected_c1_coords.x(), "slot 0 must be C1.x");
+        assert_eq!(c2_x, *expected_c2_coords.x(), "slot 1 must be C2.x");
+        assert_eq!(c1_y, *expected_c1_coords.y(), "slot 2 must be C1.y");
+        assert_eq!(c2_y, *expected_c2_coords.y(), "slot 3 must be C2.y");
     }
 
     #[test]
