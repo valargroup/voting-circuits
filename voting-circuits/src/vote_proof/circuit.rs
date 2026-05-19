@@ -1759,7 +1759,7 @@ mod tests {
             circuit.share_blinds = share_blinds.map(Value::known);
             circuit.share_randomness = randomness.map(Value::known);
             circuit.ea_pk = Value::known(self.ea_pk_affine);
-            let vote_commitment = set_condition_11(
+            let vote_commitment = set_condition_12(
                 &mut circuit,
                 shares_hash_val,
                 self.proposal_id,
