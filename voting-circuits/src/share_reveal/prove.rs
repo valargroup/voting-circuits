@@ -134,6 +134,25 @@ pub fn create_share_reveal_proof(
 ///   (the proof binds it but does not assert it equals any particular
 ///   value).
 ///
+/// # Caller-supplied values bound transitively by the proof
+///
+/// The revealed ciphertext coordinates are public values supplied by the
+/// caller. The circuit does not recover them from ZKP #2, because vote-proof
+/// publishes only the aggregate `vote_commitment`. Instead, condition 4 binds
+/// them by proving:
+///
+/// `Poseidon(blind, c1_x, c2_x, c1_y, c2_y) = share_comms[share_index]`
+///
+/// for a private `blind` and one of the 16 private share commitments, which
+/// are then bound to `vote_comm_tree_root` through
+/// `share_comms -> shares_hash -> vote_commitment -> Merkle path`. This
+/// category is sound under the share-commitment Poseidon preimage-resistance
+/// assumption, but it is not a direct `constrain_instance` derivation from
+/// other public inputs.
+///
+/// - `instance.enc_share_c1_x`, `instance.enc_share_c1_y`
+/// - `instance.enc_share_c2_x`, `instance.enc_share_c2_y`
+///
 /// # Proof-attested outputs
 ///
 /// The following public inputs are derived outside the circuit but
@@ -142,8 +161,6 @@ pub fn create_share_reveal_proof(
 /// not need a separate trusted channel:
 ///
 /// - `instance.share_nullifier`
-/// - `instance.enc_share_c1_x`, `instance.enc_share_c1_y`
-/// - `instance.enc_share_c2_x`, `instance.enc_share_c2_y`
 pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
     let (params, _pk, vk) = share_reveal_cached_keys();
 

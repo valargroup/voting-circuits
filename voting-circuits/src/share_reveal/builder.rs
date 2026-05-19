@@ -32,10 +32,15 @@ pub struct ShareRevealBundle {
 /// - `share_comms`: Pre-computed per-share Poseidon commitments
 ///   (`share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`).
 /// - `primary_blind`: Blind factor for the revealed share (at `share_index`).
-/// - `enc_c1_x`: X-coordinate of the revealed share's El Gamal C1.
-/// - `enc_c2_x`: X-coordinate of the revealed share's El Gamal C2.
-/// - `enc_c1_y`: Y-coordinate of the revealed share's El Gamal C1.
-/// - `enc_c2_y`: Y-coordinate of the revealed share's El Gamal C2.
+/// - `enc_c1_x`: X-coordinate of the revealed share's El Gamal C1. This is
+///   reveal data supplied by the caller and bound to `share_comms[share_index]`
+///   through the share-commitment Poseidon hash.
+/// - `enc_c2_x`: X-coordinate of the revealed share's El Gamal C2. Same
+///   transitive binding as `enc_c1_x`.
+/// - `enc_c1_y`: Y-coordinate of the revealed share's El Gamal C1. Included so
+///   the reveal binds the exact curve point, not only its x-coordinate.
+/// - `enc_c2_y`: Y-coordinate of the revealed share's El Gamal C2. Included for
+///   exact-point binding and tied through the selected share commitment.
 /// - `share_index`: Which of the 16 shares is being revealed (0..15).
 /// - `proposal_id`: Proposal identifier (as a field element).
 /// - `vote_decision`: The voter's choice (as a field element).

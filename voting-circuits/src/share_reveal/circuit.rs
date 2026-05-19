@@ -38,7 +38,9 @@
 //! they never appear on chain, preserving share-level unlinkability.
 //! Soundness is guaranteed because `share_comms` are transitively bound
 //! to the public `vote_comm_tree_root` via
-//! `shares_hash → vote_commitment → Merkle path`.
+//! `shares_hash → vote_commitment → Merkle path`; the revealed ciphertext
+//! coordinates bind to the selected `share_comm` through Poseidon preimage
+//! resistance of `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
 //!
 //! Authoritative hash sources: `crate::shares_hash` owns the per-share and
 //! aggregate encrypted-share preimages, `crate::circuit::vote_commitment` owns
@@ -106,16 +108,29 @@ pub const K: u32 = 11;
 /// Public input offset for the share nullifier (prevents double-counting).
 pub const SHARE_NULLIFIER_PUBLIC_OFFSET: usize = 0;
 /// Public input offset for the revealed share's C1 x-coordinate.
+///
+/// This is caller-supplied. Condition 4 binds it transitively to the committed
+/// vote by proving `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` equals the
+/// selected private `share_comm`; ZKP #2 does not publish per-share
+/// ciphertext coordinates as public inputs.
 pub const ENC_SHARE_C1_X_PUBLIC_OFFSET: usize = 1;
 /// Public input offset for the revealed share's C1 y-coordinate.
 ///
 /// Binds the proof to the exact curve point (not just x-coordinate),
 /// preventing ciphertext sign-malleability attacks where an adversary
-/// negates ElGamal ciphertext points without invalidating the ZKP.
+/// negates ElGamal ciphertext points without invalidating the ZKP. Like the
+/// x-coordinate, this is caller-supplied and bound through the selected
+/// `share_comm` Poseidon preimage.
 pub const ENC_SHARE_C1_Y_PUBLIC_OFFSET: usize = 2;
 /// Public input offset for the revealed share's C2 x-coordinate.
+///
+/// Caller-supplied and bound through condition 4's selected share-commitment
+/// equality; not directly published by ZKP #2.
 pub const ENC_SHARE_C2_X_PUBLIC_OFFSET: usize = 3;
 /// Public input offset for the revealed share's C2 y-coordinate.
+///
+/// Caller-supplied y-coordinate for exact-point binding, transitively tied to
+/// the committed vote through the selected `share_comm`.
 pub const ENC_SHARE_C2_Y_PUBLIC_OFFSET: usize = 4;
 /// Public input offset for the proposal identifier.
 pub const PROPOSAL_ID_PUBLIC_OFFSET: usize = 5;
@@ -565,6 +580,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // ---------------------------------------------------------------
         // Condition 4: Primary Share Binding.
         //
+        // The ciphertext coordinates are caller-supplied public inputs. ZKP #2
+        // publishes only the aggregate vote_commitment, not per-share
+        // ciphertext coordinates, so this is a transitive hash binding rather
+        // than a direct comparison against vote-proof public inputs.
+        //
         // Proves that the ciphertext coordinates of the *revealed* share
         // correspond to the share commitment at the declared
         // `share_index`, by recomputing the commitment and matching it
@@ -576,7 +596,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Defense-by-rejection: an adversary that has seen the on-chain
         // ciphertexts but does not hold the blind cannot claim the wrong share
         // is the revealed one. The recomputed commitment must match the muxed
-        // `share_comms[share_index]`; otherwise condition 4 rejects.
+        // `share_comms[share_index]`; otherwise condition 4 rejects. The
+        // load-bearing assumption is Poseidon preimage resistance for the
+        // share-commitment hash shape owned by `crate::shares_hash`.
         // ---------------------------------------------------------------
 
         let enc_c1_x = layouter.assign_region(
@@ -868,9 +890,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 pub struct Instance {
     /// Poseidon nullifier for this share (prevents double-counting).
     pub share_nullifier: pallas::Base,
-    /// X-coordinate of the revealed share's El Gamal C1 component.
+    /// Caller-supplied x-coordinate of the revealed share's El Gamal C1
+    /// component, bound through condition 4's selected share commitment.
     pub enc_share_c1_x: pallas::Base,
-    /// X-coordinate of the revealed share's El Gamal C2 component.
+    /// Caller-supplied x-coordinate of the revealed share's El Gamal C2
+    /// component, bound through condition 4's selected share commitment.
     pub enc_share_c2_x: pallas::Base,
     /// Which proposal this vote is for.
     pub proposal_id: pallas::Base,
@@ -880,11 +904,15 @@ pub struct Instance {
     pub vote_comm_tree_root: pallas::Base,
     /// The voting round identifier.
     pub voting_round_id: pallas::Base,
-    /// Y-coordinate of the revealed share's El Gamal C1 component.
+    /// Caller-supplied y-coordinate of the revealed share's El Gamal C1
+    /// component.
     ///
     /// Binds the proof to the exact curve point, preventing sign-malleability.
+    /// This is transitively bound through the selected share commitment, not
+    /// directly recovered from vote-proof public inputs.
     pub enc_share_c1_y: pallas::Base,
-    /// Y-coordinate of the revealed share's El Gamal C2 component.
+    /// Caller-supplied y-coordinate of the revealed share's El Gamal C2
+    /// component, transitively bound through the selected share commitment.
     pub enc_share_c2_y: pallas::Base,
 }
 
@@ -898,9 +926,14 @@ impl Instance {
     /// `vote_comm_tree_root`, and `voting_round_id` out-of-band before
     /// passing them here — see
     /// [`crate::share_reveal::prove::verify_share_reveal_proof`] for the
-    /// trust contract. The remaining fields are proof-attested outputs
-    /// derived outside the circuit but constrained in-circuit against
-    /// authenticated inputs and private witnesses.
+    /// trust contract. The ciphertext coordinate fields are caller-supplied
+    /// reveal data bound through
+    /// `Poseidon(blind, c1_x, c2_x, c1_y, c2_y) = share_comm[share_index]`
+    /// and the transitive `share_comm -> shares_hash -> vote_commitment`
+    /// chain; they are not direct public outputs of ZKP #2. The remaining
+    /// fields are proof-attested outputs derived outside the circuit but
+    /// constrained in-circuit against authenticated inputs and private
+    /// witnesses.
     #[allow(clippy::too_many_arguments)]
     pub fn from_parts(
         share_nullifier: pallas::Base,
