@@ -2,7 +2,7 @@
 //!
 //! Authoritative in-tree definition of the two-layer Poseidon hash used by
 //! both ZKP #1 (delegation, condition 7) and ZKP #2 (vote proof, conditions 2
-//! and 6). README prose should cite this module instead of restating the
+//! and 7). README prose should cite this module instead of restating the
 //! preimage shape as an independent source of truth:
 //!
 //! ```text
@@ -10,6 +10,16 @@
 //!                          voting_round_id, proposal_authority)
 //! result = Poseidon(van_comm_core, van_comm_rand)
 //! ```
+//!
+//! Address encoding note: `g_d_x` and `pk_d_x` are x-coordinates of the
+//! voting hotkey address points. The VAN hash therefore identifies `(g_d,
+//! pk_d)` only up to coordinated point negation and must not be treated as a
+//! standalone commitment to unique full points. The current protocol pairs it
+//! with full-point constraints: delegation also binds the output address into
+//! `cmx_new` through NoteCommit's point encoding, and vote proof binds the
+//! witnessed address to the voting key hierarchy before deriving a per-VAN
+//! nullifier from the same commitment. Future callers must preserve equivalent
+//! constraints or widen the VAN preimage to include full point data.
 //!
 //! The first layer commits to the structural fields (domain tag,
 //! diversified address, value, round, authority). The second layer
@@ -44,6 +54,9 @@ pub use crate::domain_tags::DOMAIN_VAN;
 ///                          voting_round_id, proposal_authority)
 /// result = Poseidon(van_comm_core, van_comm_rand)
 /// ```
+///
+/// The address inputs are x-coordinates only. See the module docs for the
+/// full-point constraints that make this preimage safe in the current protocol.
 ///
 /// Used by builders and tests to compute the expected VAN commitment.
 pub(crate) fn van_integrity_hash(
@@ -81,10 +94,12 @@ pub(crate) fn van_integrity_hash(
 ///
 /// Takes a `PoseidonConfig` so it can be used by any circuit that
 /// configures a compatible Poseidon chip (P128Pow5T3, width 3, rate 2).
+/// Like the native helper, it absorbs address x-coordinates only and does not
+/// by itself prove a unique full-point address binding.
 ///
 /// In ZKP #1 (delegation, condition 7) `proposal_authority` is
 /// `MAX_PROPOSAL_AUTHORITY` (fresh delegation). In ZKP #2 (vote
-/// proof) condition 2 passes `_old`, condition 6 passes `_new`
+/// proof) condition 2 passes `_old`, condition 7 passes `_new`
 /// (from condition 5's decrement).
 pub(crate) fn van_integrity_poseidon(
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
