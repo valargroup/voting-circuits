@@ -45,6 +45,17 @@ pub struct ShareRevealBundle {
 /// - `proposal_id`: Proposal identifier (as a field element).
 /// - `vote_decision`: The voter's choice (as a field element).
 /// - `voting_round_id`: Voting round identifier (as a field element).
+///
+/// # Caller contract
+///
+/// `share_comms`, `primary_blind`, and the encrypted-share coordinates are
+/// cross-circuit outputs from `vote_proof::build_vote_proof_from_delegation`.
+/// Pass the selected `VoteProofBundle::share_blinds[share_index]`,
+/// `VoteProofBundle::encrypted_shares[share_index]`, and full
+/// `VoteProofBundle::share_comms` array unchanged; drawing a fresh blind breaks
+/// the share-commitment constraint and can invalidate the reveal. `proposal_id`,
+/// `vote_decision`, `voting_round_id`, and the vote commitment tree witness are
+/// authenticated session parameters supplied by the caller.
 #[allow(clippy::too_many_arguments)]
 pub fn build_share_reveal(
     merkle_auth_path: [pallas::Base; VOTE_COMM_TREE_DEPTH],

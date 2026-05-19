@@ -13,7 +13,7 @@ use pasta_curves::{
     arithmetic::{CurveAffine, CurveExt},
     pallas,
 };
-use rand::RngCore;
+use rand::{CryptoRng, RngCore};
 use std::{iter, vec::Vec};
 
 use orchard::{
@@ -502,9 +502,20 @@ impl std::fmt::Display for PrecomputedRandomnessLocation {
 ///   `real_notes` must authenticate to this provider's root, and the caller
 ///   must ensure the provider root is from the same ledger snapshot as
 ///   `nc_root`.
-/// - `rng`: Random number generator.
+/// - `rng`: Cryptographically secure random number generator.
 /// - `precomputed`: If `Some`, reuse Phase 1 randomness for padded/signed/output notes
 ///   (ZCA-74 fix). If `None`, sample fresh randomness (backward compat for tests).
+///
+/// # Caller contract
+///
+/// `alpha` and `van_comm_rand` are secret, one-time blinding scalars and MUST
+/// be drawn from a CSPRNG such as `OsRng` for each delegation bundle.
+/// `vote_round_id`, `nc_root`, and the IMT root behind `imt_provider` are
+/// authenticated session parameters: the builder constrains proofs to the
+/// supplied values but cannot prove they came from the intended chain snapshot
+/// or governance announcement. `rng` is used for note seed material and dummy
+/// Merkle paths when randomness is not supplied via `precomputed`; the
+/// security-critical blinding scalars remain caller-supplied.
 #[allow(clippy::too_many_arguments)]
 pub fn build_delegation_bundle(
     real_notes: Vec<RealNoteInput>,
@@ -515,7 +526,7 @@ pub fn build_delegation_bundle(
     nc_root: pallas::Base,
     van_comm_rand: pallas::Base,
     imt_provider: &impl ImtProvider,
-    rng: &mut impl RngCore,
+    rng: &mut (impl RngCore + CryptoRng),
     precomputed: Option<&PrecomputedRandomness>,
 ) -> Result<DelegationBundle, DelegationBuildError> {
     // The circuit exposes a fixed MAX_REAL_NOTES shape; callers split larger
@@ -1001,7 +1012,7 @@ mod tests {
     fn build_single_note_bundle_with_fvk_and_precomputed(
         fvk: &FullViewingKey,
         precomputed: &PrecomputedRandomness,
-        rng: &mut impl RngCore,
+        rng: &mut (impl RngCore + CryptoRng),
     ) -> Result<DelegationBundle, DelegationBuildError> {
         let output_recipient = fvk.address_at(1u32, Scope::External);
         let vote_round_id = pallas::Base::random(&mut *rng);
