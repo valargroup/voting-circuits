@@ -20,8 +20,8 @@ use orchard::{
     NOTE_COMMITMENT_TREE_DEPTH,
 };
 use voting_circuits::delegation::{
-    build_delegation_bundle, build_sentinel_list, ImtError, ImtProofData, ImtProvider,
-    RealNoteInput, SpacedLeafImtProvider, K,
+    build_delegation_bundle, build_nullifier_list, build_sentinel_list, ImtError, ImtProofData,
+    ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
 };
 
 use imt_tree::tree::{
@@ -217,29 +217,10 @@ struct ProductionSentinelImtAdapter {
     levels: Vec<Vec<pallas::Base>>,
 }
 
-fn test_sentinel_list_with_extra(extra_nfs: &[pallas::Base]) -> Vec<pallas::Base> {
-    let mut all_nfs = build_sentinel_list();
-    all_nfs.extend_from_slice(extra_nfs);
-    all_nfs.sort();
-    all_nfs.dedup();
-    // Mirror production `prepare_nullifiers`: preserve the odd-count invariant
-    // after real nullifiers are merged, just before punctured ranges are built.
-    if all_nfs.len() % 2 == 0 {
-        let padding = std::iter::once(2u64)
-            .chain(1u64..)
-            .map(pallas::Base::from)
-            .find(|candidate| all_nfs.binary_search(candidate).is_err())
-            .expect("small field-element padding candidate should exist");
-        let insert_at = all_nfs.binary_search(&padding).unwrap_err();
-        all_nfs.insert(insert_at, padding);
-    }
-    all_nfs
-}
-
 impl ProductionSentinelImtAdapter {
     /// Uses the production sentinel injection shared with the crate IMT provider.
     fn new(extra_nfs: &[pallas::Base]) -> Self {
-        let all_nfs = test_sentinel_list_with_extra(extra_nfs);
+        let all_nfs = build_nullifier_list(extra_nfs);
 
         let ranges = build_punctured_ranges(&all_nfs);
         verify_punctured_range_spans(&ranges).expect("all spans must be ≤ 2^250");
@@ -291,6 +272,64 @@ impl ImtProvider for ProductionSentinelImtAdapter {
             path,
         })
     }
+}
+
+fn assert_imt_provider_equivalence(
+    local: &SpacedLeafImtProvider,
+    production: &ProductionSentinelImtAdapter,
+    accepted_queries: &[pallas::Base],
+    rejected_queries: &[pallas::Base],
+) {
+    assert_eq!(local.root(), production.root());
+
+    for &nf in accepted_queries {
+        let local_proof = local
+            .non_membership_proof(nf)
+            .expect("local provider should accept query");
+        let production_proof = production
+            .non_membership_proof(nf)
+            .expect("production provider should accept query");
+
+        assert_eq!(local_proof.root, production_proof.root);
+        assert_eq!(local_proof.nf_bounds, production_proof.nf_bounds);
+        assert_eq!(local_proof.leaf_pos, production_proof.leaf_pos);
+        assert_eq!(local_proof.path, production_proof.path);
+    }
+
+    for &nf in rejected_queries {
+        assert!(local.non_membership_proof(nf).is_err());
+        assert!(production.non_membership_proof(nf).is_err());
+    }
+}
+
+#[test]
+fn spaced_leaf_and_production_sentinel_providers_agree() {
+    let accepted_queries = [
+        pallas::Base::from(1_000u64),
+        pallas::Base::from(50_000u64),
+        pallas::Base::from(1_000_000u64),
+    ];
+    let sentinel_rejections = [pallas::Base::zero(), pallas::Base::from(2u64)];
+
+    let local = SpacedLeafImtProvider::new();
+    let production = ProductionSentinelImtAdapter::new(&[]);
+    assert_imt_provider_equivalence(&local, &production, &accepted_queries, &sentinel_rejections);
+
+    let extra_nfs = [pallas::Base::from(12_345u64), pallas::Base::from(67_890u64)];
+    let local_with_extras = SpacedLeafImtProvider::with_extra_nullifiers(&extra_nfs);
+    let production_with_extras = ProductionSentinelImtAdapter::new(&extra_nfs);
+    let rejected_with_extras = [
+        pallas::Base::zero(),
+        pallas::Base::from(2u64),
+        extra_nfs[0],
+        extra_nfs[1],
+    ];
+    assert_imt_provider_equivalence(
+        &local_with_extras,
+        &production_with_extras,
+        &accepted_queries,
+        &rejected_with_extras,
+    );
 }
 
 /// End-to-end test using the production sentinel construction path.
