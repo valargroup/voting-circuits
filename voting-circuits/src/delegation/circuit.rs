@@ -2199,6 +2199,10 @@ mod tests {
         make_test_data_with_alpha(None)
     }
 
+    fn assert_rejects(prover: MockProver<pallas::Base>) {
+        prover.verify().expect_err("malicious bundle must reject");
+    }
+
     #[test]
     fn rho_binding_hash_is_domain_separated_from_legacy_shape() {
         let cmx_1 = pallas::Base::from(1u64);
@@ -2377,6 +2381,113 @@ mod tests {
         let pi = instance.to_halo2_instance();
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
         assert!(prover.verify().is_err());
+    }
+
+    /// Malicious-builder custody test: a client cannot swap the output note to
+    /// an attacker recipient while preserving the user-signed `van_comm` /
+    /// `cmx_new` public inputs. A bundle that recomputes those inputs for the
+    /// attacker recipient must still be rejected by Keystone re-rendering before
+    /// signing; this test pins the in-circuit rejection side of that chain.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn malicious_output_recipient_substitution_fails() {
+        let mut rng = OsRng;
+        let t = make_test_data();
+        let mut circuit = t.circuit;
+        let pi = t.instance.to_halo2_instance();
+
+        let attacker_sk = SpendingKey::random(&mut rng);
+        let attacker_fvk: FullViewingKey = (&attacker_sk).into();
+        let attacker_recipient = attacker_fvk.address_at(0u32, Scope::External);
+        let attacker_output = Note::new(
+            attacker_recipient,
+            NoteValue::ZERO,
+            Rho::from_nf_old(t.instance.nf_signed),
+            &mut rng,
+        );
+        circuit = circuit.with_output_note(&attacker_output);
+
+        let prover = MockProver::run(K, &circuit, vec![pi]).unwrap();
+        assert_rejects(prover);
+    }
+
+    /// Malicious-builder custody test: flipping the scope flag selects the
+    /// wrong IVK, so the note's anchored address can no longer satisfy
+    /// `pk_d = [selected_ivk] * g_d`.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn malicious_is_internal_flag_flip_fails() {
+        let t = make_test_data();
+        let mut circuit = t.circuit;
+        let pi = t.instance.to_halo2_instance();
+
+        circuit.notes[0].is_internal = Value::known(true);
+
+        let prover = MockProver::run(K, &circuit, vec![pi]).unwrap();
+        assert_rejects(prover);
+    }
+
+    /// Malicious-builder custody test: `psi` is witnessed rather than derived
+    /// in-circuit, but it is still bound by the Merkle-anchored note
+    /// commitment. Substituting it makes the recomputed commitment differ from
+    /// the anchored `cm`.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn malicious_note_psi_substitution_fails() {
+        let t = make_test_data();
+        let mut circuit = t.circuit;
+        let pi = t.instance.to_halo2_instance();
+
+        circuit.notes[0].psi = Value::known(pallas::Base::random(&mut OsRng));
+
+        let prover = MockProver::run(K, &circuit, vec![pi]).unwrap();
+        assert_rejects(prover);
+    }
+
+    /// Malicious-builder custody test: `rcm` is witnessed rather than derived
+    /// in-circuit, but it is still bound by the Merkle-anchored note
+    /// commitment. Substituting it makes the recomputed commitment differ from
+    /// the anchored `cm`.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn malicious_note_rcm_substitution_fails() {
+        let mut rng = OsRng;
+        let t = make_test_data();
+        let mut circuit = t.circuit;
+        let pi = t.instance.to_halo2_instance();
+
+        let replacement_sk = SpendingKey::random(&mut rng);
+        let replacement_fvk = FullViewingKey::from(&replacement_sk);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
+        let rho = Rho::from_nf_old(dummy_parent.nullifier(&replacement_fvk));
+        let replacement_note = Note::new(
+            replacement_fvk.address_at(0u32, Scope::External),
+            NoteValue::ZERO,
+            rho,
+            &mut rng,
+        );
+        circuit.notes[0].rcm = Value::known(replacement_note.rseed().rcm(&replacement_note.rho()));
+
+        let prover = MockProver::run(K, &circuit, vec![pi]).unwrap();
+        assert_rejects(prover);
+    }
+
+    /// Malicious-builder custody test: inflating the note value changes both
+    /// ballot accounting and the note commitment preimage. The Merkle-anchored
+    /// commitment catches the substituted value before it can become authority.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn malicious_note_value_inflation_fails() {
+        let t = make_test_data();
+        let mut circuit = t.circuit;
+        let pi = t.instance.to_halo2_instance();
+
+        circuit.notes[0].v = Value::known(NoteValue::from_raw(26_000_000));
+        circuit =
+            circuit.with_ballot_scaling(pallas::Base::from(2u64), pallas::Base::from(1_000_000u64));
+
+        let prover = MockProver::run(K, &circuit, vec![pi]).unwrap();
+        assert_rejects(prover);
     }
 
     #[test]
