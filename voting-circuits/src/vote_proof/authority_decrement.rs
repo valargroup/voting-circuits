@@ -136,6 +136,28 @@ use halo2_gadgets::utilities::bool_check;
 
 use super::circuit::MAX_PROPOSAL_ID;
 
+// Maps each proposal_id `i` to the authority bit mask `1 << i` used to
+// clear that proposal's permission bit. Keep this literal so range or mapping
+// changes are reviewed as fixture changes rather than hidden behind a formula.
+const AUTHORITY_DECREMENT_LOOKUP_TABLE: [(u64, u64); MAX_PROPOSAL_ID] = [
+    (0, 1),
+    (1, 2),
+    (2, 4),
+    (3, 8),
+    (4, 16),
+    (5, 32),
+    (6, 64),
+    (7, 128),
+    (8, 256),
+    (9, 512),
+    (10, 1024),
+    (11, 2048),
+    (12, 4096),
+    (13, 8192),
+    (14, 16384),
+    (15, 32768),
+];
+
 // ================================================================
 // Config
 // ================================================================
@@ -383,18 +405,20 @@ impl AuthorityDecrementChip {
         layouter.assign_table(
             || "proposal_id one_shifted table",
             |mut table| {
-                for i in 0..MAX_PROPOSAL_ID {
+                for (i, (proposal_id, one_shifted)) in
+                    AUTHORITY_DECREMENT_LOOKUP_TABLE.iter().copied().enumerate()
+                {
                     table.assign_cell(
                         || "table proposal_id",
                         config.table_proposal_id,
                         i,
-                        || Value::known(pallas::Base::from(i as u64)),
+                        || Value::known(pallas::Base::from(proposal_id)),
                     )?;
                     table.assign_cell(
                         || "table one_shifted",
                         config.table_one_shifted,
                         i,
-                        || Value::known(pallas::Base::from(1u64 << i)),
+                        || Value::known(pallas::Base::from(one_shifted)),
                     )?;
                 }
                 Ok(())
@@ -669,7 +693,7 @@ mod tests {
     use super::*;
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
-        dev::MockProver,
+        dev::{MockProver, VerifyFailure},
         plonk::{Circuit, Column, ConstraintSystem, Instance},
     };
     use pasta_curves::pallas;
@@ -777,7 +801,21 @@ mod tests {
         proposal_id: u64,
         authority_new_override: Option<pallas::Base>,
     ) -> Result<(), Vec<halo2_proofs::dev::VerifyFailure>> {
-        let one_shifted = pallas::Base::from(1u64 << proposal_id);
+        run_chip_with_one_shifted(
+            authority_old,
+            proposal_id,
+            1u64 << proposal_id,
+            authority_new_override,
+        )
+    }
+
+    fn run_chip_with_one_shifted(
+        authority_old: u64,
+        proposal_id: u64,
+        one_shifted: u64,
+        authority_new_override: Option<pallas::Base>,
+    ) -> Result<(), Vec<VerifyFailure>> {
+        let one_shifted = pallas::Base::from(one_shifted);
         let authority_new_expected = authority_new_override
             .unwrap_or_else(|| pallas::Base::from(authority_old) - one_shifted);
 
@@ -789,6 +827,16 @@ mod tests {
         // K=5 (32 rows) is sufficient for 18 rows + overhead.
         let prover = MockProver::run(5, &circuit, vec![instance]).unwrap();
         prover.verify()
+    }
+
+    fn assert_has_lookup_failure(result: Result<(), Vec<VerifyFailure>>, message: &str) {
+        let failures = result.expect_err(message);
+        assert!(
+            failures
+                .iter()
+                .any(|failure| matches!(failure, VerifyFailure::Lookup { .. })),
+            "{message}; failures: {failures:?}",
+        );
     }
 
     #[test]
@@ -817,6 +865,47 @@ mod tests {
             run_chip(1, 0, None).is_err(),
             "proposal_id = 0 must be rejected"
         );
+    }
+
+    #[test]
+    fn lookup_rejects_mismatched_one_shifted() {
+        assert_has_lookup_failure(
+            run_chip_with_one_shifted(2, 1, 4, None),
+            "(proposal_id, one_shifted) = (1, 4) must miss the lookup table",
+        );
+    }
+
+    #[test]
+    fn lookup_rejects_proposal_id_out_of_range() {
+        assert_has_lookup_failure(
+            run_chip_with_one_shifted(1u64 << 16, 16, 1u64 << 16, None),
+            "proposal_id = 16 must miss the lookup table",
+        );
+    }
+
+    #[test]
+    fn lookup_table_contents_frozen() {
+        const EXPECTED: [(u64, u64); 16] = [
+            (0, 1),
+            (1, 2),
+            (2, 4),
+            (3, 8),
+            (4, 16),
+            (5, 32),
+            (6, 64),
+            (7, 128),
+            (8, 256),
+            (9, 512),
+            (10, 1024),
+            (11, 2048),
+            (12, 4096),
+            (13, 8192),
+            (14, 16384),
+            (15, 32768),
+        ];
+
+        assert_eq!(MAX_PROPOSAL_ID, 16);
+        assert_eq!(AUTHORITY_DECREMENT_LOOKUP_TABLE, EXPECTED);
     }
 
     #[test]
