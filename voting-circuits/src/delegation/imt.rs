@@ -42,7 +42,7 @@ pub fn derive_nullifier_domain(vote_round_id: pallas::Base) -> pallas::Base {
 ///
 /// This is public so client crates can derive the exact governance nullifiers
 /// that the delegation circuit constrains, without carrying a parallel
-/// Poseidon preimage implementation that could drift from the circuit.
+/// Poseidon preimage implementation.
 pub fn gov_null_hash(nk: pallas::Base, dom: pallas::Base, real_nf: pallas::Base) -> pallas::Base {
     poseidon_hash_3(nk, dom, real_nf)
 }
