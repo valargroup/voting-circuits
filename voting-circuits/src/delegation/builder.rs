@@ -188,6 +188,14 @@ fn non_identity_padding_point(
         })
 }
 
+fn validate_padding_slot_index(slot_index: usize) -> Result<(), DelegationBuildError> {
+    if (1..circuit::MAX_REAL_NOTES).contains(&slot_index) {
+        Ok(())
+    } else {
+        Err(DelegationBuildError::InvalidPaddingSlotIndex { slot_index })
+    }
+}
+
 // Derives the synthetic `(g_d_pad, pk_d_pad)` pair for padding slot `slot_index`.
 // `g_d_pad` is domain-separated from Orchard's `DiversifyHash`, so the pair is
 // intentionally not a valid `orchard::Address`. `pk_d_pad = [ivk] * g_d_pad`
@@ -199,12 +207,15 @@ pub(crate) fn padding_points(
     slot_index: usize,
     ivk: pallas::Scalar,
 ) -> Result<(NonIdentityPallasPoint, NonIdentityPallasPoint), DelegationBuildError> {
-    let slot_index = u32::try_from(slot_index).expect("padding slot index fits in u32");
-    let g_d_pad = pallas::Point::hash_to_curve(PADDING_PERSONALIZATION)(&slot_index.to_le_bytes());
+    validate_padding_slot_index(slot_index)?;
+    let slot_index_u32 =
+        u32::try_from(slot_index).expect("validated padding slot index fits in u32");
+    let g_d_pad =
+        pallas::Point::hash_to_curve(PADDING_PERSONALIZATION)(&slot_index_u32.to_le_bytes());
     let pk_d_pad = g_d_pad * ivk;
     Ok((
-        non_identity_padding_point(g_d_pad, slot_index as usize, "g_d")?,
-        non_identity_padding_point(pk_d_pad, slot_index as usize, "pk_d")?,
+        non_identity_padding_point(g_d_pad, slot_index, "g_d")?,
+        non_identity_padding_point(pk_d_pad, slot_index, "pk_d")?,
     ))
 }
 
@@ -352,11 +363,16 @@ fn derive_synthetic_padding_note(
 /// [`PaddedNoteData`]) so the off-circuit `cmx`/`nullifier` agree with
 /// the circuit's witnessed values bit-for-bit.
 ///
-/// Returns [`DelegationBuildError::InvalidPaddingPoint`],
+/// Valid `slot_index` values are circuit padding slots `1..MAX_REAL_NOTES`
+/// (`1..=4` for the current fixed-width circuit); slot `0` is always a real
+/// note slot and `MAX_REAL_NOTES` is outside the circuit shape.
+///
+/// Returns [`DelegationBuildError::InvalidPaddingSlotIndex`],
+/// [`DelegationBuildError::InvalidPaddingPoint`],
 /// [`DelegationBuildError::InvalidPaddingNoteCommitment`], or
 /// [`DelegationBuildError::InvalidPaddingNullifier`] for the
-/// cryptographically negligible failure modes (identity point, Sinsemilla
-/// bottom, identity nullifier point). Errors are reported against
+/// slot validation error and cryptographically negligible failure modes
+/// (identity point, Sinsemilla bottom, identity nullifier point). Errors are reported against
 /// [`PrecomputedRandomnessLocation::PaddedNote`] with the supplied
 /// `slot_index`.
 pub fn synthetic_padding_note_parts(
@@ -499,6 +515,8 @@ pub enum DelegationBuildError {
     InvalidNoteCount(usize),
     /// Public input construction failed.
     Instance(circuit::InstanceError),
+    /// Padding can only occupy circuit slots 1..`circuit::MAX_REAL_NOTES`.
+    InvalidPaddingSlotIndex { slot_index: usize },
     /// A synthesized padding point was the identity.
     InvalidPaddingPoint {
         slot_index: usize,
@@ -553,6 +571,13 @@ impl std::fmt::Display for DelegationBuildError {
             }
             DelegationBuildError::Instance(e) => {
                 write!(f, "instance construction failed: {e}")
+            }
+            DelegationBuildError::InvalidPaddingSlotIndex { slot_index } => {
+                write!(
+                    f,
+                    "invalid padding slot index {slot_index} (expected 1..={})",
+                    circuit::MAX_REAL_NOTES - 1
+                )
             }
             DelegationBuildError::InvalidPaddingPoint {
                 slot_index,
@@ -1254,14 +1279,14 @@ mod tests {
     #[test]
     fn test_five_real_notes_uses_no_padding() {
         // With 5 real notes there are no padding slots. Assert that no slot's
-        // g_d matches the synthetic padding point for *any* slot index — this
+        // g_d matches the synthetic padding point for any valid padding slot — this
         // catches an off-by-one in the `n_real..5` iteration boundary that
         // would smuggle a padding point into a real slot (which would silently
         // zero that slot's vote weight in condition 10's `v * (root - anchor)`
         // gate path because padding always has `v = 0`).
         let (bundle, fvk, ak) = build_bundle_for_inspection(&[2_500_000; 5], &[Scope::External; 5]);
         let ivk = external_ivk_scalar(&fvk, &ak);
-        let padding_g_ds: Vec<_> = (0..5)
+        let padding_g_ds: Vec<_> = (1..circuit::MAX_REAL_NOTES)
             .map(|i| {
                 padding_points(i, ivk)
                     .expect("test padding points should be valid")
@@ -1301,6 +1326,23 @@ mod tests {
                 pk_d_pad.to_affine().to_bytes(),
                 real_orchard_addr.pk_d().to_bytes()
             );
+        }
+    }
+
+    #[test]
+    fn test_padding_points_reject_impossible_slot_indices() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let ivk = external_ivk_scalar(&fvk, &ak);
+
+        for slot_index in [0, circuit::MAX_REAL_NOTES, usize::MAX] {
+            assert!(matches!(
+                padding_points(slot_index, ivk),
+                Err(DelegationBuildError::InvalidPaddingSlotIndex { slot_index: actual })
+                    if actual == slot_index
+            ));
         }
     }
 
@@ -1629,6 +1671,22 @@ mod tests {
             }
         );
         assert_eq!(imt.requested_nfs.borrow().as_slice(), &[padding.real_nf]);
+    }
+
+    #[test]
+    fn test_synthetic_padding_note_parts_rejects_impossible_slot_indices() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let (_padded_note, rho, rseed) = precomputed_padding_note(&mut rng);
+
+        for slot_index in [0, circuit::MAX_REAL_NOTES, usize::MAX] {
+            assert!(matches!(
+                crate::delegation::synthetic_padding_note_parts(&fvk, slot_index, rho, rseed),
+                Err(DelegationBuildError::InvalidPaddingSlotIndex { slot_index: actual })
+                    if actual == slot_index
+            ));
+        }
     }
 
     #[test]
