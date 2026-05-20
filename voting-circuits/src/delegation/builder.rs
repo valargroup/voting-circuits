@@ -271,6 +271,112 @@ fn derive_note_nullifier(
     point_x_opt(&(k * scalar + cm))
 }
 
+/// Off-circuit `(cmx, nullifier)` for a synthetic padding slot, in canonical
+/// little-endian byte encoding.
+///
+/// The values match what the delegation circuit constrains for the padded
+/// slot, so downstream consumers (PCZT metadata, PIR precompute, IMT
+/// non-membership lookups) can reference the same padding-slot commitment
+/// x-coordinate and real Orchard nullifier the prover witnesses without
+/// re-implementing the synthetic padding derivation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SyntheticPaddingNoteParts {
+    /// Extracted x-coordinate of the synthetic padding note commitment.
+    pub cmx: [u8; 32],
+    /// Real Orchard nullifier of the synthetic padding note (the one
+    /// `gov_null` is derived from).
+    pub nullifier: [u8; 32],
+}
+
+struct SyntheticPaddingDerivation {
+    g_d_pad: NonIdentityPallasPoint,
+    pk_d_pad: NonIdentityPallasPoint,
+    psi: pallas::Base,
+    rcm: orchard::note::NoteCommitTrapdoor,
+    cm: pallas::Point,
+    cmx: pallas::Base,
+    real_nf: pallas::Base,
+}
+
+// Derives every off-circuit value for a synthetic padding note from one shared
+// construction, so public helper output and in-circuit witnesses cannot drift.
+fn derive_synthetic_padding_note(
+    nk: pallas::Base,
+    ivk: pallas::Scalar,
+    slot_index: usize,
+    rho: Rho,
+    rseed: RandomSeed,
+    location: PrecomputedRandomnessLocation,
+) -> Result<SyntheticPaddingDerivation, DelegationBuildError> {
+    // Padding uses synthetic address components bound to the external IVK; the
+    // rho-scoped seed then supplies the Orchard commitment randomness.
+    let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk)?;
+    let psi = rseed.psi(&rho);
+    let rcm = rseed.rcm(&rho);
+
+    // Commitment and nullifier derivation can bottom out only in negligible
+    // group edge cases; surface those as build errors at the caller's location.
+    let cm = note_commitment_point(
+        *g_d_pad,
+        *pk_d_pad,
+        NoteValue::ZERO,
+        rho.into_inner(),
+        psi,
+        rcm.inner(),
+    )
+    .ok_or(DelegationBuildError::InvalidPaddingNoteCommitment { location })?;
+    let cmx =
+        point_x_opt(&cm).ok_or(DelegationBuildError::InvalidPaddingNoteCommitment { location })?;
+    let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm)
+        .ok_or(DelegationBuildError::InvalidPaddingNullifier { location })?;
+
+    Ok(SyntheticPaddingDerivation {
+        g_d_pad,
+        pk_d_pad,
+        psi,
+        rcm,
+        cm,
+        cmx,
+        real_nf,
+    })
+}
+
+/// Computes the off-circuit `(cmx, nullifier)` for a synthetic padding slot
+/// from the same construction the delegation builder uses in-circuit.
+///
+/// Padding slots are not Orchard diversified addresses: `g_d_pad` is
+/// hash-to-curve under [`PADDING_PERSONALIZATION`] (domain-separated from
+/// Orchard's `DiversifyHash`) and `pk_d_pad = [ivk_external] * g_d_pad`.
+/// Callers must supply the same `slot_index`, `rho`, and `rseed` the
+/// delegation builder will see during proving (e.g. via
+/// [`PaddedNoteData`]) so the off-circuit `cmx`/`nullifier` agree with
+/// the circuit's witnessed values bit-for-bit.
+///
+/// Returns [`DelegationBuildError::InvalidPaddingPoint`],
+/// [`DelegationBuildError::InvalidPaddingNoteCommitment`], or
+/// [`DelegationBuildError::InvalidPaddingNullifier`] for the
+/// cryptographically negligible failure modes (identity point, Sinsemilla
+/// bottom, identity nullifier point). Errors are reported against
+/// [`PrecomputedRandomnessLocation::PaddedNote`] with the supplied
+/// `slot_index`.
+pub fn synthetic_padding_note_parts(
+    fvk: &FullViewingKey,
+    slot_index: usize,
+    rho: Rho,
+    rseed: RandomSeed,
+) -> Result<SyntheticPaddingNoteParts, DelegationBuildError> {
+    let ak: SpendValidatingKey = fvk.clone().into();
+    let ivk = external_ivk_scalar(fvk, &ak);
+    let location = PrecomputedRandomnessLocation::PaddedNote(slot_index);
+    let padding =
+        derive_synthetic_padding_note(fvk.nk().inner(), ivk, slot_index, rho, rseed, location)?;
+
+    Ok(SyntheticPaddingNoteParts {
+        cmx: padding.cmx.to_repr(),
+        nullifier: padding.real_nf.to_repr(),
+    })
+}
+
 // A single padding note slot in the delegation.
 struct PaddingSlot {
     witness: NoteSlotWitness,
@@ -292,7 +398,6 @@ fn build_padding_slot(
     rng: &mut impl RngCore,
     precomputed: Option<&PrecomputedRandomness>,
 ) -> Result<PaddingSlot, DelegationBuildError> {
-    let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk)?;
     let location = PrecomputedRandomnessLocation::PaddedNote(pad_idx);
 
     let (rho, rseed) = if let Some(pre) = precomputed {
@@ -317,35 +422,21 @@ fn build_padding_slot(
         (rho, rseed)
     };
 
-    let psi = rseed.psi(&rho);
-    let rcm = rseed.rcm(&rho);
-    let cm = note_commitment_point(
-        *g_d_pad,
-        *pk_d_pad,
-        NoteValue::ZERO,
-        rho.into_inner(),
-        psi,
-        rcm.inner(),
-    )
-    .ok_or(DelegationBuildError::InvalidPaddingNoteCommitment { location })?;
-    let cmx = point_x(&cm);
-
-    let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm)
-        .ok_or(DelegationBuildError::InvalidPaddingNullifier { location })?;
-    let gov_null = gov_null_hash(nk, dom, real_nf);
-    let imt_proof = imt_provider.non_membership_proof(real_nf)?;
+    let padding = derive_synthetic_padding_note(nk, ivk, slot_index, rho, rseed, location)?;
+    let gov_null = gov_null_hash(nk, dom, padding.real_nf);
+    let imt_proof = imt_provider.non_membership_proof(padding.real_nf)?;
 
     // Merkle path is unconstrained for zero-value padding because condition 10
     // is gated by v=0; IMT non-membership and address ownership still run.
     let merkle_path = MerklePath::dummy(&mut *rng);
     let witness = NoteSlotWitness {
-        g_d: Value::known(g_d_pad),
-        pk_d: Value::known(pk_d_pad),
+        g_d: Value::known(padding.g_d_pad),
+        pk_d: Value::known(padding.pk_d_pad),
         v: Value::known(NoteValue::ZERO),
         rho: Value::known(rho.into_inner()),
-        psi: Value::known(psi),
-        rcm: Value::known(rcm),
-        cm: Value::known(cm),
+        psi: Value::known(padding.psi),
+        rcm: Value::known(padding.rcm),
+        cm: Value::known(padding.cm),
         path: Value::known(merkle_path.auth_path()),
         pos: Value::known(merkle_path.position()),
         imt_nf_bounds: Value::known(imt_proof.nf_bounds),
@@ -356,11 +447,11 @@ fn build_padding_slot(
 
     Ok(PaddingSlot {
         witness,
-        cmx,
+        cmx: padding.cmx,
         v_raw: 0,
         gov_null,
         #[cfg(test)]
-        real_nf,
+        real_nf: padding.real_nf,
     })
 }
 
@@ -1460,6 +1551,84 @@ mod tests {
             &imt_proof,
             &requested_nfs,
         );
+    }
+
+    #[test]
+    fn test_derive_synthetic_padding_note_matches_manual_derivation() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let nk = fvk.nk().inner();
+        let ivk = external_ivk_scalar(&fvk, &ak);
+        let slot_index = 3;
+        let (_padded_note, rho, rseed) = precomputed_padding_note(&mut rng);
+
+        let derived = derive_synthetic_padding_note(
+            nk,
+            ivk,
+            slot_index,
+            rho,
+            rseed,
+            PrecomputedRandomnessLocation::PaddedNote(0),
+        )
+        .unwrap();
+
+        let (expected_g_d, expected_pk_d) =
+            padding_points(slot_index, ivk).expect("test padding points should be valid");
+        let expected_psi = rseed.psi(&rho);
+        let expected_rcm = rseed.rcm(&rho);
+        let expected_cm = note_commitment_point(
+            *expected_g_d,
+            *expected_pk_d,
+            NoteValue::ZERO,
+            rho.into_inner(),
+            expected_psi,
+            expected_rcm.inner(),
+        )
+        .expect("test padding commitment should be valid");
+        let expected_nf = derive_note_nullifier(nk, rho.into_inner(), expected_psi, expected_cm)
+            .expect("test padding nullifier should be valid");
+
+        assert_eq!(derived.g_d_pad, expected_g_d);
+        assert_eq!(derived.pk_d_pad, expected_pk_d);
+        assert_eq!(derived.psi, expected_psi);
+        assert_eq!(derived.rcm.inner(), expected_rcm.inner());
+        assert_eq!(derived.cm, expected_cm);
+        assert_eq!(derived.cmx, point_x(&expected_cm));
+        assert_eq!(derived.real_nf, expected_nf);
+    }
+
+    #[test]
+    fn test_synthetic_padding_note_parts_matches_padding_slot_derivation() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let nk = fvk.nk().inner();
+        let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
+        let ivk = external_ivk_scalar(&fvk, &ak);
+        let imt = RecordingImtProvider::returning(test_imt_proof());
+
+        let (padded_note, rho, rseed) = precomputed_padding_note(&mut rng);
+        let precomputed = PrecomputedRandomness {
+            padded_notes: vec![padded_note],
+            rseed_signed: [0; 32],
+            rseed_output: [0; 32],
+        };
+
+        let padding =
+            build_padding_slot(3, 0, nk, dom, ivk, &imt, &mut rng, Some(&precomputed)).unwrap();
+        let parts = crate::delegation::synthetic_padding_note_parts(&fvk, 3, rho, rseed).unwrap();
+
+        assert_eq!(
+            parts,
+            crate::delegation::SyntheticPaddingNoteParts {
+                cmx: padding.cmx.to_repr(),
+                nullifier: padding.real_nf.to_repr(),
+            }
+        );
+        assert_eq!(imt.requested_nfs.borrow().as_slice(), &[padding.real_nf]);
     }
 
     #[test]

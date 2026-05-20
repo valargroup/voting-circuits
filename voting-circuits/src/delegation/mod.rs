@@ -12,8 +12,8 @@ pub(crate) mod imt_circuit;
 pub(crate) mod prove;
 
 pub use builder::{
-    build_delegation_bundle, DelegationBuildError, DelegationBundle, PaddedNoteData,
-    PrecomputedRandomness, RealNoteInput,
+    build_delegation_bundle, synthetic_padding_note_parts, DelegationBuildError, DelegationBundle,
+    PaddedNoteData, PrecomputedRandomness, RealNoteInput, SyntheticPaddingNoteParts,
 };
 pub use circuit::{
     Circuit, Instance, CMX_NEW_PUBLIC_OFFSET, DOM_PUBLIC_OFFSET, GOV_NULL_1_PUBLIC_OFFSET,
