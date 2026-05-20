@@ -15,7 +15,7 @@
 //!
 //! - **Condition 1**: Signed note commitment integrity.
 //! - **Condition 2**: Nullifier integrity.
-//! - **Condition 3**: Rho binding — keystone rho = Poseidon(domain, cmx_1..5, van_comm, vote_round_id).
+//! - **Condition 3**: Rho binding — keystone rho = Poseidon(cmx_1..5, van_comm, vote_round_id).
 //! - **Condition 4**: Spend authority.
 //! - **Condition 5**: CommitIvk & diversified address integrity.
 //! - **Condition 6**: Output note commitment integrity.
@@ -43,7 +43,6 @@ use crate::circuit::address_ownership::prove_address_ownership;
 use crate::circuit::gadget::assign_constant;
 use crate::circuit::mul_chip::{MulChip, MulConfig, MulInstruction};
 use crate::circuit::van_integrity;
-use crate::domain_tags;
 use crate::protocol_hash::poseidon_hash_in_circuit;
 use halo2_gadgets::{
     ecc::{
@@ -163,8 +162,6 @@ pub(crate) const MAX_PROPOSAL_AUTHORITY: u64 = 65535; // 2^16 - 1
 pub(crate) const MAX_REAL_NOTES: usize = 5;
 
 /// Out-of-circuit rho binding hash used by the builder and tests.
-///
-/// `rho_signed = Poseidon("delegation rho binding", cmx_1..5, van_comm, vote_round_id)`.
 pub(crate) fn rho_binding_hash(
     cmx_1: pallas::Base,
     cmx_2: pallas::Base,
@@ -174,8 +171,7 @@ pub(crate) fn rho_binding_hash(
     van_comm: pallas::Base,
     vote_round_id: pallas::Base,
 ) -> pallas::Base {
-    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<8>, 3, 2>::init().hash([
-        domain_tags::delegation_rho_binding(),
+    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<7>, 3, 2>::init().hash([
         cmx_1,
         cmx_2,
         cmx_3,
@@ -969,7 +965,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // ---------------------------------------------------------------
 
         // Rho binding (condition 3).
-        // rho_signed = Poseidon(domain, cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
+        // rho_signed = Poseidon(cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
         // Binds the signed note to the exact notes being delegated, the governance
         // commitment, and the round, making the keystone signature non-replayable.
         //
@@ -1115,7 +1111,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // ---------------------------------------------------------------
         // Condition 3: Rho binding.
-        // rho_signed = Poseidon(domain, cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
+        // rho_signed = Poseidon(cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
         // ---------------------------------------------------------------
 
         // The keystone note's rho is deterministically derived from the 5 note
@@ -1124,15 +1120,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // the signature with different notes would produce a different rho, which
         // would change the nullifier (cond 2) and break the proof.
         {
-            // Hash the domain tag, 5 note commitment x-coords (from cond 9),
+            // Hash the 7 inputs: 5 note commitment x-coords (from cond 9),
             // van_comm (public input), and vote_round_id (public input).
-            let rho_binding_domain = assign_constant(
-                layouter.namespace(|| "rho binding domain tag"),
-                config.advices[0],
-                domain_tags::delegation_rho_binding(),
-            )?;
             let poseidon_message = [
-                rho_binding_domain,
                 cmx_cells[0].clone(),
                 cmx_cells[1].clone(),
                 cmx_cells[2].clone(),
@@ -1145,7 +1135,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 pallas::Base,
                 _,
                 poseidon::P128Pow5T3,
-                ConstantLength<8>,
+                ConstantLength<7>,
                 3,
                 2,
             >::init(
@@ -1153,7 +1143,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 layouter.namespace(|| "rho binding Poseidon init"),
             )?;
             let derived_rho = poseidon_hasher.hash(
-                layouter.namespace(|| "Poseidon(domain, cmx_1..5, van_comm, vote_round_id)"),
+                layouter.namespace(|| "Poseidon(cmx_1..5, van_comm, vote_round_id)"),
                 poseidon_message,
             )?;
 
@@ -2189,43 +2179,6 @@ mod tests {
 
     fn assert_rejects(prover: MockProver<pallas::Base>) {
         prover.verify().expect_err("malicious bundle must reject");
-    }
-
-    #[test]
-    fn rho_binding_hash_is_domain_separated_from_legacy_shape() {
-        let cmx_1 = pallas::Base::from(1u64);
-        let cmx_2 = pallas::Base::from(2u64);
-        let cmx_3 = pallas::Base::from(3u64);
-        let cmx_4 = pallas::Base::from(4u64);
-        let cmx_5 = pallas::Base::from(5u64);
-        let van_comm = pallas::Base::from(6u64);
-        let vote_round_id = pallas::Base::from(7u64);
-
-        let tagged = rho_binding_hash(cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id);
-        let legacy_untagged =
-            poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<7>, 3, 2>::init().hash([
-                cmx_1,
-                cmx_2,
-                cmx_3,
-                cmx_4,
-                cmx_5,
-                van_comm,
-                vote_round_id,
-            ]);
-        let manual_tagged =
-            poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<8>, 3, 2>::init().hash([
-                domain_tags::delegation_rho_binding(),
-                cmx_1,
-                cmx_2,
-                cmx_3,
-                cmx_4,
-                cmx_5,
-                van_comm,
-                vote_round_id,
-            ]);
-
-        assert_ne!(tagged, legacy_untagged);
-        assert_eq!(tagged, manual_tagged);
     }
 
     #[test]

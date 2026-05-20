@@ -68,11 +68,6 @@ pub(crate) fn governance_authorization() -> pallas::Base {
     string_domain_tag(b"governance authorization")
 }
 
-/// Domain tag for ZKP #1 delegation rho binding.
-pub(crate) fn delegation_rho_binding() -> pallas::Base {
-    string_domain_tag(b"delegation rho binding")
-}
-
 /// Domain tag for ZKP #3 share nullifiers.
 pub fn share_spend() -> pallas::Base {
     string_domain_tag(b"share spend")
@@ -113,11 +108,6 @@ mod tests {
             governance_authorization(),
             b"governance authorization",
         );
-        assert_string_tag(
-            "delegation rho binding",
-            delegation_rho_binding(),
-            b"delegation rho binding",
-        );
         assert_string_tag("share spend", share_spend(), b"share spend");
     }
 
@@ -138,7 +128,6 @@ mod tests {
             ("share commitment", pallas::Base::from(DOMAIN_SHARE_COMM)),
             ("vote authority spend", vote_authority_spend()),
             ("governance authorization", governance_authorization()),
-            ("delegation rho binding", delegation_rho_binding()),
             ("share spend", share_spend()),
         ];
 
