@@ -6,6 +6,7 @@
 
 - Revert "Domain-separate delegation governance nullifiers from IMT leaf hashes by adding
   a dedicated governance nullifier tag to the Poseidon preimage."
+- Revert "Add a protocol domain tag to the delegation rho binding hash."
 
 ## v0.5.0
 
@@ -37,7 +38,6 @@
 
 ### Security
 
-- Add a protocol domain tag to the delegation rho binding hash.
 - Domain-separate delegation governance nullifiers from IMT leaf hashes by adding
   a dedicated governance nullifier tag to the Poseidon preimage.
 - Bind the delegation nullifier domain to `vote_round_id` in-circuit, preventing `dom` from being used as a free public input.

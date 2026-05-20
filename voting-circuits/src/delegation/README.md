@@ -128,7 +128,7 @@ buckets, useful for auditing future refactors:
   consistent with the real-note slots' `ivk`); condition 4
   (`rk = [α]·SpendAuthG + ak`).
 - **Wallet-authorization binding (load-bearing as a chain).** Condition
-  3 (`rho_signed = Poseidon("delegation rho binding", cmx_1..5, van_comm, vote_round_id)`) and
+  3 (`rho_signed = Poseidon(cmx_1..5, van_comm, vote_round_id)`) and
   condition 2 (`nf_signed = DeriveNullifier(nk, rho_signed, psi_signed, cm_signed)`,
   exposed as a public input). Together with the verifier-enforced
   `proof.nf_signed == action.nullifier` check, this is the chain by
@@ -201,18 +201,17 @@ DeriveNullifier_nk(rho, psi, cm) = ExtractP(
 Purpose: the signed note's rho is bound to the exact notes being delegated, the governance commitment, and the round. This makes the keystone signature non-replayable and scoped.
 
 ```
-rho_signed = Poseidon("delegation rho binding", cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
+rho_signed = Poseidon(cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)
 ```
 
 Where:
-- **"delegation rho binding"**: the protocol domain tag from `crate::domain_tags`, assigned as a circuit constant.
 - **cmx_1..5**: the extracted note commitments (`ExtractP(cm_i)`) of the five delegated notes. **These are internal wires** — produced by per-note condition 9 (note commitment integrity), not free witnesses. By hashing all five commitments into rho, the keystone signature is bound to the exact set of notes the delegator chose.
 - **van_comm**: the governance commitment (public input).
 - **vote_round_id**: the vote round identifier (public input).
 
-**Function:** `Poseidon` with `ConstantLength<8>`. Uses `Pow5Chip` / `P128Pow5T3` with rate 2 (4 absorption rounds for 8 inputs).
+**Function:** `Poseidon` with `ConstantLength<7>`. Uses `Pow5Chip` / `P128Pow5T3` with rate 2 (4 absorption rounds for 7 inputs).
 
-**Constraint:** The circuit computes `derived_rho = Poseidon("delegation rho binding", cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)` and enforces strict equality `derived_rho == rho_signed`. Since `rho_signed` is the same value used in both note commitment integrity (condition 1) and nullifier integrity (condition 2), this creates a three-way binding: the nullifier, the note commitment, and the delegation scope are all tied to the same rho.
+**Constraint:** The circuit computes `derived_rho = Poseidon(cmx_1, cmx_2, cmx_3, cmx_4, cmx_5, van_comm, vote_round_id)` and enforces strict equality `derived_rho == rho_signed`. Since `rho_signed` is the same value used in both note commitment integrity (condition 1) and nullifier integrity (condition 2), this creates a three-way binding: the nullifier, the note commitment, and the delegation scope are all tied to the same rho.
 
 **Constructions:** `PoseidonChip`.
 
