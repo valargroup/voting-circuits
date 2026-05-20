@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## v0.6.0
+
+### Added
+
+- Exported delegation hash helpers `rho_binding_hash`,
+  `van_commitment_hash`, and `gov_null_hash` so client crates can derive the
+  same signed-note rho, VAN commitment, and governance nullifiers constrained
+  by the delegation circuit.
 
 ### Changed
 

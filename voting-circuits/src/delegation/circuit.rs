@@ -162,7 +162,10 @@ pub(crate) const MAX_PROPOSAL_AUTHORITY: u64 = 65535; // 2^16 - 1
 pub(crate) const MAX_REAL_NOTES: usize = 5;
 
 /// Out-of-circuit rho binding hash used by the builder and tests.
-pub(crate) fn rho_binding_hash(
+///
+/// This is public so client crates can derive the same signed-note rho that the
+/// delegation circuit constrains, without duplicating the Poseidon preimage.
+pub fn rho_binding_hash(
     cmx_1: pallas::Base,
     cmx_2: pallas::Base,
     cmx_3: pallas::Base,
@@ -193,7 +196,11 @@ pub(crate) const BALLOT_DIVISOR: u64 = 12_500_000;
 /// `MAX_PROPOSAL_AUTHORITY` as the proposal authority (fresh delegation).
 /// The `value` parameter is `num_ballots` (ballot count after floor-division),
 /// NOT the raw zatoshi sum.
-pub(crate) fn van_commitment_hash(
+///
+/// This is public so client crates can compute the same VAN commitment that the
+/// delegation circuit constrains, while keeping byte parsing and amount policy
+/// in their own API layer.
+pub fn van_commitment_hash(
     g_d_new_x: pallas::Base,
     pk_d_new_x: pallas::Base,
     num_ballots: pallas::Base,
