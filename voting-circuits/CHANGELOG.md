@@ -10,6 +10,11 @@
 - Added `ProveError` for typed Halo2 proof creation failures.
 - Exported delegation, vote-proof, and share-reveal public input offsets from
   their module roots for clients that construct or inspect proof instances.
+- Exported `delegation::synthetic_padding_note_parts` and
+  `delegation::SyntheticPaddingNoteParts` so off-circuit consumers (PCZT
+  metadata, PIR precompute, IMT non-membership lookups) can derive the
+  `(cmx, nullifier)` of a synthetic padding slot from the same construction
+  the delegation builder uses in-circuit, without re-implementing it.
 
 ### Changed
 
