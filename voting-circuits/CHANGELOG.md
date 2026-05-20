@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Revert "Domain-separate delegation governance nullifiers from IMT leaf hashes by adding
+  a dedicated governance nullifier tag to the Poseidon preimage."
+
+## v0.5.0
+
 ### Added
 
 - Declared Rust 1.86 as the minimum supported Rust version.
