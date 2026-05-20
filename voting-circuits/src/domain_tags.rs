@@ -6,9 +6,9 @@
 //!
 //! ## Encoding rule
 //!
-//! - Small numeric tags are used for compact protocol-internal domains whose
-//!   preimage layouts are crate-owned and fixed. These are encoded as
-//!   `pallas::Base::from(tag)`.
+//! - Small numeric tags are used when several protocol-internal hashes share
+//!   the same Poseidon shape and live in the same commitment tree. These are
+//!   encoded as `pallas::Base::from(tag)`.
 //! - Short ASCII string tags are used when the preimage should be readable at
 //!   the byte level because the hash separates cross-protocol or cross-circuit
 //!   replay domains. These are encoded as a zero-padded 32-byte little-endian
@@ -24,9 +24,6 @@ pub const DOMAIN_VAN: u64 = 0;
 
 /// Domain tag for vote commitments in the shared vote tree.
 pub const DOMAIN_VC: u64 = 1;
-
-/// Domain tag for per-share commitments inside the vote-share hash.
-pub const DOMAIN_SHARE_COMM: u64 = 2;
 
 /// Blake2b-512 personalization for vote share secret derivation.
 ///
@@ -125,7 +122,6 @@ mod tests {
         let tags = [
             ("van commitment", pallas::Base::from(DOMAIN_VAN)),
             ("vote commitment", pallas::Base::from(DOMAIN_VC)),
-            ("share commitment", pallas::Base::from(DOMAIN_SHARE_COMM)),
             ("vote authority spend", vote_authority_spend()),
             ("governance authorization", governance_authorization()),
             ("share spend", share_spend()),

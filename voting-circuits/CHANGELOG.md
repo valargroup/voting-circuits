@@ -7,6 +7,8 @@
 - Revert "Domain-separate delegation governance nullifiers from IMT leaf hashes by adding
   a dedicated governance nullifier tag to the Poseidon preimage."
 - Revert "Add a protocol domain tag to the delegation rho binding hash."
+- Revert "Domain separate share commitments", restoring the prior per-share
+  Poseidon commitment preimage shape.
 
 ## v0.5.0
 

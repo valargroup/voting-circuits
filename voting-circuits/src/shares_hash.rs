@@ -6,8 +6,7 @@
 //! rather than maintaining separate formula copies:
 //!
 //! ```text
-//! share_comm_i = Poseidon(DOMAIN_SHARE_COMM, blind_i,
-//!                         c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i ∈ 0..16
+//! share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i ∈ 0..16
 //! shares_hash  = Poseidon(share_comm_0, …, share_comm_15)
 //! ```
 //!
@@ -34,14 +33,31 @@ use halo2_proofs::{
 use itertools::Itertools;
 use pasta_curves::pallas;
 
-pub use crate::circuit::share_commitment::share_commitment;
-use crate::circuit::share_commitment::share_commitment_poseidon;
+/// Native per-share blinded commitment:
+///
+/// ```text
+/// share_comm = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)
+/// ```
+///
+/// The y-coordinates bind the commitment to the exact curve point, preventing
+/// ciphertext sign-malleability. The blind factor prevents anyone who sees the
+/// encrypted shares on-chain from recomputing `shares_hash` and linking it to a
+/// specific vote commitment.
+pub fn share_commitment(
+    blind: pallas::Base,
+    c1_x: pallas::Base,
+    c2_x: pallas::Base,
+    c1_y: pallas::Base,
+    c2_y: pallas::Base,
+) -> pallas::Base {
+    poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2>::init()
+        .hash([blind, c1_x, c2_x, c1_y, c2_y])
+}
 
 /// Native full two-level shares hash:
 ///
 /// ```text
-/// share_comm_i = Poseidon(DOMAIN_SHARE_COMM, blind_i,
-///                         c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i ∈ 0..16
+/// share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i ∈ 0..16
 /// shares_hash  = Poseidon(share_comm_0, …, share_comm_15)
 /// ```
 ///
@@ -68,12 +84,8 @@ pub fn shares_hash(
 /// Computes a single blinded per-share commitment in-circuit:
 ///
 /// ```text
-/// share_comm = Poseidon(DOMAIN_SHARE_COMM, blind, c1_x, c2_x, c1_y, c2_y)
+/// share_comm = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)
 /// ```
-///
-/// `domain_share_comm` must be assigned with
-/// `crate::circuit::share_commitment::assign_domain_share_comm`, which pins
-/// the domain tag into the verification key.
 ///
 /// The y-coordinates bind the commitment to the exact curve point, preventing
 /// ciphertext sign-malleability. The `index` is used only for namespace labels
@@ -81,7 +93,6 @@ pub fn shares_hash(
 pub(crate) fn hash_share_commitment_in_circuit(
     chip: PoseidonChip<pallas::Base, 3, 2>,
     mut layouter: impl Layouter<pallas::Base>,
-    domain_share_comm: AssignedCell<pallas::Base, pallas::Base>,
     blind: AssignedCell<pallas::Base, pallas::Base>,
     enc_c1_x: AssignedCell<pallas::Base, pallas::Base>,
     enc_c2_x: AssignedCell<pallas::Base, pallas::Base>,
@@ -89,24 +100,23 @@ pub(crate) fn hash_share_commitment_in_circuit(
     enc_c2_y: AssignedCell<pallas::Base, pallas::Base>,
     index: usize,
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
-    share_commitment_poseidon(
-        chip,
-        &mut layouter,
-        &format!("share_comm_{index} = Poseidon(DOMAIN_SHARE_COMM, blind, c1_x, c2_x, c1_y, c2_y)[{index}]"),
-        domain_share_comm,
-        blind,
-        enc_c1_x,
-        enc_c2_x,
-        enc_c1_y,
-        enc_c2_y,
+    let hasher =
+        PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2>::init(
+            chip,
+            layouter.namespace(|| format!("share_comm_{index} Poseidon init")),
+        )?;
+    hasher.hash(
+        layouter.namespace(|| {
+            format!("share_comm_{index} = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)[{index}]")
+        }),
+        [blind, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y],
     )
 }
 
 /// Computes the two-level shares hash in-circuit:
 ///
 /// ```text
-/// share_comm_i = Poseidon(DOMAIN_SHARE_COMM, blind_i,
-///                         c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i ∈ 0..16
+/// share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)   for i ∈ 0..16
 /// shares_hash  = Poseidon(share_comm_0, …, share_comm_15)
 /// ```
 ///
@@ -116,7 +126,6 @@ pub(crate) fn hash_share_commitment_in_circuit(
 ///   it is called. It is called 17 times: once per per-share hash and once for
 ///   the outer hash. Typically `|| config.poseidon_chip()`.
 /// * `layouter` — The circuit layouter.
-/// * `domain_share_comm` — Constant cell for `DOMAIN_SHARE_COMM`.
 /// * `blinds` — The 16 per-share blind factors.
 /// * `enc_c1_x` — The 16 El Gamal `C1` x-coordinates.
 /// * `enc_c2_x` — The 16 El Gamal `C2` x-coordinates.
@@ -129,7 +138,6 @@ pub(crate) fn hash_share_commitment_in_circuit(
 pub(crate) fn compute_shares_hash_in_circuit(
     poseidon_chip: impl Fn() -> PoseidonChip<pallas::Base, 3, 2>,
     mut layouter: impl Layouter<pallas::Base>,
-    domain_share_comm: AssignedCell<pallas::Base, pallas::Base>,
     blinds: [AssignedCell<pallas::Base, pallas::Base>; 16],
     enc_c1_x: [AssignedCell<pallas::Base, pallas::Base>; 16],
     enc_c2_x: [AssignedCell<pallas::Base, pallas::Base>; 16],
@@ -146,7 +154,6 @@ pub(crate) fn compute_shares_hash_in_circuit(
             hash_share_commitment_in_circuit(
                 poseidon_chip(),
                 layouter.namespace(|| format!("share_comm_{i}")),
-                domain_share_comm.clone(),
                 blind,
                 c1x,
                 c2x,
@@ -185,9 +192,7 @@ pub(crate) fn compute_shares_hash_in_circuit(
 ///
 /// Unlike [`compute_shares_hash_in_circuit`], this skips the per-share
 /// blind hashing (level 1) because the caller already provides the 16
-/// `share_comm` values. ZKP #3 supplies them as private advice cells and
-/// binds them transitively through `shares_hash`, the vote commitment, and
-/// the vote commitment tree root.
+/// `share_comm` values — e.g. as private witness cells in ZKP #3.
 ///
 /// Returns an internal cell; callers must bind it transitively through their
 /// own public commitment path.
@@ -232,8 +237,6 @@ mod tests {
         plonk::{Advice, Column, ConstraintSystem, Fixed, Instance as InstanceColumn},
     };
     use rand::rngs::OsRng;
-
-    use crate::circuit::share_commitment as share_commitment_hash;
 
     // ---------------------------------------------------------------
     // Shared minimal circuit config (Poseidon only, no ECC).
@@ -314,8 +317,8 @@ mod tests {
         assert_eq!(
             actual,
             base_from_repr([
-                200, 104, 26, 102, 102, 40, 123, 255, 191, 211, 64, 21, 231, 9, 17, 56, 135, 82,
-                223, 166, 239, 179, 183, 186, 201, 92, 77, 152, 7, 135, 105, 61,
+                183, 66, 173, 64, 240, 83, 206, 161, 132, 211, 79, 38, 240, 12, 144, 142, 247, 139,
+                173, 56, 54, 59, 51, 73, 42, 113, 240, 242, 21, 103, 150, 29,
             ])
         );
     }
@@ -331,8 +334,8 @@ mod tests {
         assert_eq!(
             shares_hash(blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y),
             base_from_repr([
-                217, 50, 145, 59, 50, 83, 184, 227, 14, 174, 134, 235, 19, 229, 137, 68, 159, 166,
-                211, 72, 11, 103, 32, 245, 104, 109, 188, 209, 179, 253, 94, 61,
+                125, 88, 190, 64, 180, 158, 228, 46, 43, 173, 80, 255, 152, 160, 47, 234, 86, 36,
+                157, 87, 187, 167, 86, 239, 58, 45, 222, 42, 111, 6, 63, 28,
             ])
         );
     }
@@ -391,12 +394,9 @@ mod tests {
                 Value::known(self.c2_y),
             )?;
 
-            let domain_share_comm =
-                share_commitment_hash::assign_domain_share_comm(&mut layouter, config.advice)?;
             let result = hash_share_commitment_in_circuit(
                 config.poseidon_chip(),
                 layouter.namespace(|| "hash_share_comm"),
-                domain_share_comm,
                 blind,
                 c1x,
                 c2x,
@@ -559,12 +559,9 @@ mod tests {
             let enc_c2_y: [AssignedCell<pallas::Base, pallas::Base>; 16] =
                 c2y_cells.try_into().unwrap();
 
-            let domain_share_comm =
-                share_commitment_hash::assign_domain_share_comm(&mut layouter, config.advice)?;
             let result = compute_shares_hash_in_circuit(
                 || config.poseidon_chip(),
                 layouter.namespace(|| "compute_shares_hash"),
-                domain_share_comm,
                 blinds,
                 enc_c1_x,
                 enc_c2_x,
@@ -593,8 +590,7 @@ mod tests {
             enc_c1_y,
             enc_c2_y,
         };
-        // K=12 (4096 rows) comfortably fits the 16 inner Poseidon(6) regions
-        // plus the outer Poseidon(16) region.
+        // K=12 (4096 rows) comfortably fits 17 chained Poseidon(5) regions.
         let prover =
             MockProver::run(12, &circuit, vec![vec![expected]]).expect("MockProver::run failed");
         assert_eq!(prover.verify(), Ok(()));
@@ -820,12 +816,9 @@ mod tests {
             let enc_c2_y_full: [AssignedCell<pallas::Base, pallas::Base>; 16] =
                 core::array::from_fn(|i| c2y_cells[i].clone());
 
-            let domain_share_comm =
-                share_commitment_hash::assign_domain_share_comm(&mut layouter, config.advice)?;
             let full_hash = compute_shares_hash_in_circuit(
                 || config.poseidon_chip(),
                 layouter.namespace(|| "full shares_hash path"),
-                domain_share_comm.clone(),
                 blinds_full,
                 enc_c1_x_full,
                 enc_c2_x_full,
@@ -838,7 +831,6 @@ mod tests {
                     hash_share_commitment_in_circuit(
                         config.poseidon_chip(),
                         layouter.namespace(|| format!("from-comms share_comm_{i}")),
-                        domain_share_comm.clone(),
                         blind_cells[i].clone(),
                         c1x_cells[i].clone(),
                         c2x_cells[i].clone(),
