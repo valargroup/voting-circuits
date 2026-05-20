@@ -276,9 +276,9 @@ fn derive_note_nullifier(
 ///
 /// The values match what the delegation circuit constrains for the padded
 /// slot, so downstream consumers (PCZT metadata, PIR precompute, IMT
-/// non-membership lookups) can reference the same `cmx_new` and alternate
-/// nullifier the prover commits to without re-implementing the synthetic
-/// padding derivation.
+/// non-membership lookups) can reference the same padding-slot commitment
+/// x-coordinate and real Orchard nullifier the prover witnesses without
+/// re-implementing the synthetic padding derivation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SyntheticPaddingNoteParts {
     /// Extracted x-coordinate of the synthetic padding note commitment.
