@@ -29,7 +29,6 @@ src/
 │   ├── address_ownership.rs      #   CommitIvk + diversified-address integrity
 │   ├── elgamal.rs                #   El Gamal encryption (vote proof condition 11)
 │   ├── poseidon_merkle.rs        #   Poseidon-based Merkle path verification
-│   ├── share_commitment.rs       #   Domain-separated per-share commitment hash
 │   ├── van_integrity.rs          #   VAN commitment hash (two-layer Poseidon)
 │   └── vote_commitment.rs        #   Vote commitment hash
 ├── shares_hash.rs                # Shares-hash gadget (shared by ZKP 2 & 3)
@@ -67,7 +66,6 @@ Reusable halo2 gadgets that appear in more than one circuit:
 | `address_ownership` | Delegation, Vote Proof | CommitIvk + diversified-address binding |
 | `elgamal` | Vote Proof | El Gamal encryption of vote shares |
 | `poseidon_merkle` | All three | Poseidon Merkle-path membership proofs |
-| `share_commitment` | Vote Proof, Share Reveal | Domain-separated hash of one blinded encrypted share |
 | `van_integrity` | Delegation, Vote Proof | Two-layer Poseidon hash for VAN commitments |
 | `vote_commitment` | Vote Proof, Share Reveal | Hash of `(domain, round_id, shares_hash, proposal_id, decision)` |
 
