@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.1
+
+### Security
+
+- Published a patch release for downstream crates that exact-pin the
+  Valar-owned voting circuit crate as part of supply-chain hardening. This
+  release has no functional circuit or upstream dependency changes.
+
 ## v0.6.0
 
 ### Added
