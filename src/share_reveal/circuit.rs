@@ -223,13 +223,13 @@ pub struct Config {
 
 impl Config {
     /// Constructs a Poseidon chip from this configuration.
-    pub(crate) fn poseidon_chip(&self) -> PoseidonChip<pallas::Base, 3, 2> {
+    fn poseidon_chip(&self) -> PoseidonChip<pallas::Base, 3, 2> {
         PoseidonChip::construct(self.poseidon_config.clone())
     }
 
     /// Assigns a field-element constant to an advice cell so the value is
     /// baked into the verification key via `assign_advice_from_constant`.
-    pub(crate) fn assign_constant(
+    fn assign_constant(
         &self,
         layouter: &mut impl Layouter<pallas::Base>,
         label: &'static str,
@@ -254,9 +254,9 @@ impl Config {
 pub struct Circuit {
     // === Condition 1: VC Membership ===
     /// Merkle authentication path (sibling hashes at each tree level).
-    pub(crate) vote_comm_tree_path: Value<[pallas::Base; VOTE_COMM_TREE_DEPTH]>,
+    pub(super) vote_comm_tree_path: Value<[pallas::Base; VOTE_COMM_TREE_DEPTH]>,
     /// Leaf position in the vote commitment tree.
-    pub(crate) vote_comm_tree_position: Value<u32>,
+    pub(super) vote_comm_tree_position: Value<u32>,
 
     // === Condition 3: Shares Hash Integrity ===
     /// Pre-computed per-share Poseidon commitments (private witnesses).
@@ -266,7 +266,7 @@ pub struct Circuit {
     /// y-coordinates that defend against ciphertext sign-malleability.
     /// Transitively bound to the public tree root via
     /// `shares_hash → vote_commitment → Merkle path`.
-    pub(crate) share_comms: [Value<pallas::Base>; 16],
+    pub(super) share_comms: [Value<pallas::Base>; 16],
 
     // === Condition 4: Primary Share Binding ===
     /// Blind factor for the revealed share. The synthesize body
@@ -276,15 +276,15 @@ pub struct Circuit {
     /// `share_comms[share_index]`; the y-coordinates are the
     /// sign-malleability defense and the gadget is the single source of
     /// truth for the preimage shape.
-    pub(crate) primary_blind: Value<pallas::Base>,
+    pub(super) primary_blind: Value<pallas::Base>,
 
     // === Share selection ===
     /// Which of the 16 shares is being revealed (0..15).
-    pub(crate) share_index: Value<pallas::Base>,
+    pub(super) share_index: Value<pallas::Base>,
 
     // === Condition 5: Share Nullifier Integrity ===
     /// The vote commitment leaf value (links conditions 1, 2, and 5).
-    pub(crate) vote_commitment: Value<pallas::Base>,
+    pub(super) vote_commitment: Value<pallas::Base>,
 }
 
 impl Default for Circuit {

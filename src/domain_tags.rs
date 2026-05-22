@@ -45,7 +45,7 @@ pub(crate) const VOTE_PRF_DOMAIN_REMAINDER: u8 = 0x03;
 /// The 31-byte length limit leaves the high byte zero, which makes the
 /// little-endian integer strictly smaller than the Pallas base-field modulus
 /// for the tags used by this crate.
-pub(crate) fn string_domain_tag(tag: &[u8]) -> pallas::Base {
+fn string_domain_tag(tag: &[u8]) -> pallas::Base {
     assert!(
         tag.len() < 32 && tag.is_ascii(),
         "domain tags must be short ASCII strings"

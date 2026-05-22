@@ -5,18 +5,18 @@
 //! The builder layer creates padded notes for unused slots and
 //! produces a single proof.
 
-pub(crate) mod builder;
-pub(crate) mod circuit;
-pub(crate) mod imt;
-pub(crate) mod imt_circuit;
-pub(crate) mod prove;
+mod builder;
+mod circuit;
+mod imt;
+mod imt_circuit;
+mod prove;
 
 pub use builder::{
     build_delegation_bundle, synthetic_padding_note_parts, DelegationBuildError, DelegationBundle,
     PaddedNoteData, PrecomputedRandomness, RealNoteInput, SyntheticPaddingNoteParts,
 };
 pub use circuit::{
-    rho_binding_hash, van_commitment_hash, Circuit, Instance, CMX_NEW_PUBLIC_OFFSET,
+    rho_binding_hash, van_commitment_hash, Circuit, Config, Instance, CMX_NEW_PUBLIC_OFFSET,
     DOM_PUBLIC_OFFSET, GOV_NULL_1_PUBLIC_OFFSET, GOV_NULL_2_PUBLIC_OFFSET,
     GOV_NULL_3_PUBLIC_OFFSET, GOV_NULL_4_PUBLIC_OFFSET, GOV_NULL_5_PUBLIC_OFFSET,
     GOV_NULL_PUBLIC_OFFSETS, K, NC_ROOT_PUBLIC_OFFSET, NF_IMT_ROOT_PUBLIC_OFFSET,

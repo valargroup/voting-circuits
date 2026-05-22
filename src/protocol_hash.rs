@@ -15,7 +15,7 @@ use halo2_proofs::{
 use pasta_curves::pallas;
 
 /// Computes the protocol Poseidon hash for a fixed number of field inputs.
-pub(crate) fn poseidon_hash<const N: usize>(inputs: [pallas::Base; N]) -> pallas::Base {
+fn poseidon_hash<const N: usize>(inputs: [pallas::Base; N]) -> pallas::Base {
     poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<N>, 3, 2>::init().hash(inputs)
 }
 

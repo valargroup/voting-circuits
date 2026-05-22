@@ -65,14 +65,14 @@ use crate::protocol_hash::poseidon_hash_in_circuit;
 /// the nullifier domain. This gate checks only the selected leaf, not the global
 /// tree layout.
 #[derive(Clone, Debug)]
-pub(crate) struct PuncturedIntervalGate {
-    pub(crate) q_interval: Selector,
-    pub(crate) q_neq: Selector,
+struct PuncturedIntervalGate {
+    q_interval: Selector,
+    q_neq: Selector,
     advices: [Column<Advice>; 3],
 }
 
 impl PuncturedIntervalGate {
-    pub(crate) fn configure(
+    fn configure(
         meta: &mut plonk::ConstraintSystem<pallas::Base>,
         advices: [Column<Advice>; 3],
     ) -> Self {
@@ -143,7 +143,7 @@ impl PuncturedIntervalGate {
     /// Assigns the punctured interval check region.
     /// Returns `(x_lo, x_hi)` for external range checking.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn assign(
+    fn assign(
         &self,
         region: &mut halo2_proofs::circuit::Region<'_, pallas::Base>,
         offset: usize,
@@ -227,17 +227,17 @@ impl PuncturedIntervalGate {
 
 /// Bundles the Merkle swap gate, punctured interval gate, and the columns they need.
 #[derive(Clone, Debug)]
-pub(crate) struct ImtNonMembershipConfig {
-    pub(crate) swap_gate: MerkleSwapGate,
-    pub(crate) interval_gate: PuncturedIntervalGate,
+pub(super) struct ImtNonMembershipConfig {
+    swap_gate: MerkleSwapGate,
+    interval_gate: PuncturedIntervalGate,
     /// The first advice column, used for free-witness assignments.
-    pub(crate) advice_0: Column<Advice>,
+    advice_0: Column<Advice>,
 }
 
 impl ImtNonMembershipConfig {
     /// Configures IMT gates. Uses `advices[0..5]` for the swap gate and
     /// `advices[0..3]` for the interval gate (overlapping is fine — different selectors).
-    pub(crate) fn configure(
+    pub(super) fn configure(
         meta: &mut plonk::ConstraintSystem<pallas::Base>,
         advices: &[Column<Advice>; 10],
     ) -> Self {
@@ -270,7 +270,7 @@ impl ImtNonMembershipConfig {
 ///
 /// Returns `imt_root` which the caller feeds into the `q_per_note` gate.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn synthesize_imt_non_membership(
+pub(super) fn synthesize_imt_non_membership(
     imt_config: &ImtNonMembershipConfig,
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
     ecc_config: &EccConfig<OrchardFixedBases>,

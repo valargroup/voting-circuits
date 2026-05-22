@@ -12,9 +12,9 @@
 //! - **Condition 5**: Share Nullifier Integrity (four-input Poseidon hash with
 //!   round binding through `vote_commitment`).
 
-pub(crate) mod builder;
-pub(crate) mod circuit;
-pub(crate) mod prove;
+mod builder;
+mod circuit;
+mod prove;
 
 pub use builder::{build_share_reveal, ShareRevealBundle};
 pub use circuit::{

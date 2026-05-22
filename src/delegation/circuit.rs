@@ -151,7 +151,7 @@ pub const DOM_PUBLIC_OFFSET: usize = 13;
 /// This constant is hashed into `van_comm` (condition 7) as a constant-
 /// constrained witness, baked into the verification key so a malicious prover
 /// cannot substitute a different authority value.
-pub(crate) const MAX_PROPOSAL_AUTHORITY: u64 = 65535; // 2^16 - 1
+const MAX_PROPOSAL_AUTHORITY: u64 = 65535; // 2^16 - 1
 
 /// Maximum number of real Orchard notes consumed by one delegation proof.
 ///
@@ -159,7 +159,7 @@ pub(crate) const MAX_PROPOSAL_AUTHORITY: u64 = 65535; // 2^16 - 1
 /// with zero-value notes. Keeping the count fixed hides the real-note count
 /// within the 1..=5 bucket and keeps the delegation circuit within K=14 while
 /// leaving row-budget headroom for the IMT and NoteCommit paths.
-pub(crate) const MAX_REAL_NOTES: usize = 5;
+pub(super) const MAX_REAL_NOTES: usize = 5;
 
 /// Out-of-circuit rho binding hash used by the builder and tests.
 ///
@@ -188,7 +188,7 @@ pub fn rho_binding_hash(
 /// Ballot divisor for converting raw zatoshi balance to ballot count.
 ///
 /// `num_ballots = floor(v_total / BALLOT_DIVISOR)`
-pub(crate) const BALLOT_DIVISOR: u64 = 12_500_000;
+pub(super) const BALLOT_DIVISOR: u64 = 12_500_000;
 
 /// Out-of-circuit governance commitment hash used by the builder and tests.
 ///
@@ -351,22 +351,22 @@ impl Config {
 
 /// Private witness data for a single note slot (conditions 9–14).
 #[derive(Clone, Debug, Default)]
-pub struct NoteSlotWitness {
-    pub(crate) g_d: Value<NonIdentityPallasPoint>,
-    pub(crate) pk_d: Value<NonIdentityPallasPoint>,
-    pub(crate) v: Value<NoteValue>,
-    pub(crate) rho: Value<pallas::Base>,
-    pub(crate) psi: Value<pallas::Base>,
-    pub(crate) rcm: Value<NoteCommitTrapdoor>,
-    pub(crate) cm: Value<pallas::Point>,
-    pub(crate) path: Value<[MerkleHashOrchard; MERKLE_DEPTH_ORCHARD]>,
-    pub(crate) pos: Value<u32>,
-    pub(crate) imt_nf_bounds: Value<[pallas::Base; 3]>,
-    pub(crate) imt_leaf_pos: Value<u32>,
-    pub(crate) imt_path: Value<[pallas::Base; IMT_DEPTH]>,
+pub(super) struct NoteSlotWitness {
+    pub(super) g_d: Value<NonIdentityPallasPoint>,
+    pub(super) pk_d: Value<NonIdentityPallasPoint>,
+    pub(super) v: Value<NoteValue>,
+    pub(super) rho: Value<pallas::Base>,
+    pub(super) psi: Value<pallas::Base>,
+    pub(super) rcm: Value<NoteCommitTrapdoor>,
+    pub(super) cm: Value<pallas::Point>,
+    pub(super) path: Value<[MerkleHashOrchard; MERKLE_DEPTH_ORCHARD]>,
+    pub(super) pos: Value<u32>,
+    pub(super) imt_nf_bounds: Value<[pallas::Base; 3]>,
+    pub(super) imt_leaf_pos: Value<u32>,
+    pub(super) imt_path: Value<[pallas::Base; IMT_DEPTH]>,
     /// Whether this note uses the internal (change) scope.
     /// When true, `ivk_internal` is used for Condition 11 instead of `ivk`.
-    pub(crate) is_internal: Value<bool>,
+    pub(super) is_internal: Value<bool>,
 }
 
 // ================================================================
@@ -408,7 +408,11 @@ pub struct Circuit {
 
 impl Circuit {
     /// Constructs a `Circuit` from a note, its full viewing key, and the spend auth randomizer.
-    pub fn from_note_unchecked(fvk: &FullViewingKey, note: &Note, alpha: pallas::Scalar) -> Self {
+    pub(super) fn from_note_unchecked(
+        fvk: &FullViewingKey,
+        note: &Note,
+        alpha: pallas::Scalar,
+    ) -> Self {
         let sender_address = note.recipient();
         let rho_signed = note.rho();
         let psi_signed = note.rseed().psi(&rho_signed);
@@ -430,7 +434,7 @@ impl Circuit {
     }
 
     /// Sets the output note witness fields (condition 6).
-    pub fn with_output_note(mut self, output_note: &Note) -> Self {
+    pub(super) fn with_output_note(mut self, output_note: &Note) -> Self {
         let rho_new = output_note.rho();
         let psi_new = output_note.rseed().psi(&rho_new);
         let rcm_new = output_note.rseed().rcm(&rho_new);
@@ -442,7 +446,7 @@ impl Circuit {
     }
 
     /// Sets the five per-note slot witnesses (conditions 9–14).
-    pub fn with_notes(mut self, notes: [NoteSlotWitness; 5]) -> Self {
+    pub(super) fn with_notes(mut self, notes: [NoteSlotWitness; 5]) -> Self {
         self.notes = notes;
         self
     }
@@ -452,18 +456,18 @@ impl Circuit {
     /// path (which slot is real vs. synthetic, and that synthetic slots come
     /// from `padding_points`).
     #[cfg(test)]
-    pub(crate) fn notes_for_testing(&self) -> &[NoteSlotWitness; 5] {
+    pub(super) fn notes_for_testing(&self) -> &[NoteSlotWitness; 5] {
         &self.notes
     }
 
     /// Sets the governance commitment blinding factor (condition 7).
-    pub fn with_van_comm_rand(mut self, van_comm_rand: pallas::Base) -> Self {
+    pub(super) fn with_van_comm_rand(mut self, van_comm_rand: pallas::Base) -> Self {
         self.van_comm_rand = Value::known(van_comm_rand);
         self
     }
 
     /// Sets the ballot scaling witnesses (condition 8).
-    pub fn with_ballot_scaling(
+    pub(super) fn with_ballot_scaling(
         mut self,
         num_ballots: pallas::Base,
         remainder: pallas::Base,

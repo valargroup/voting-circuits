@@ -17,10 +17,10 @@
 //! - **Condition 11**: Encryption Integrity (ECC variable-base mul, `constrain_equal`).
 //! - **Condition 12**: Vote Commitment Integrity (Poseidon `ConstantLength<5>`, `constrain_instance`).
 
-pub(crate) mod authority_decrement;
-pub(crate) mod builder;
-pub(crate) mod circuit;
-pub(crate) mod prove;
+mod authority_decrement;
+mod builder;
+mod circuit;
+mod prove;
 
 pub use crate::circuit::elgamal::spend_auth_g_affine;
 pub use crate::shares_hash::{share_commitment, shares_hash};

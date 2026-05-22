@@ -20,7 +20,7 @@ pub const IMT_DEPTH: usize = 29;
 
 /// Protocol identifier for governance authorization, encoded as a little-endian
 /// Pallas field element. Used to derive the nullifier domain for this application.
-pub(crate) use crate::domain_tags::governance_authorization as gov_auth_domain_tag;
+pub(super) use crate::domain_tags::governance_authorization as gov_auth_domain_tag;
 
 /// Derive the nullifier domain for a voting round (out of circuit).
 ///
@@ -142,12 +142,12 @@ fn empty_imt_hashes() -> Vec<pallas::Base> {
 /// With K=2 punctured ranges each leaf spans two consecutive intervals,
 /// giving outer span `2 * 2^249 = 2^250` — matching the circuit's 250-bit
 /// range check.
-pub const SENTINEL_EXPONENT: u64 = 249;
+const SENTINEL_EXPONENT: u64 = 249;
 
 /// Number of sentinel multiples: `0, 1*step, 2*step, ..., 32*step`.
 /// `32 * 2^249 = 2^254` reaches the main high bit of the Pallas base field,
 /// and the final `p - 1` sentinel closes the remaining tail.
-pub const SENTINEL_COUNT: u64 = 32;
+const SENTINEL_COUNT: u64 = 32;
 
 /// Build the sorted, deduplicated, odd-count sentinel list used by both
 /// [`SpacedLeafImtProvider`] and the production `prepare_nullifiers` path.

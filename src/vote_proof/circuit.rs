@@ -122,8 +122,8 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 ///   `cargo test vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
 pub const K: u32 = 13;
 
-pub(crate) use van_integrity::DOMAIN_VAN;
-pub(crate) use vote_commitment::DOMAIN_VC;
+pub(super) use van_integrity::DOMAIN_VAN;
+pub(super) use vote_commitment::DOMAIN_VC;
 
 /// Maximum proposal_id bit index (exclusive upper bound). `proposal_id` is in `[1, MAX_PROPOSAL_ID)`,
 /// i.e. valid values are 1–15. Bit 0 is permanently reserved as the sentinel/unset value and is
@@ -193,14 +193,14 @@ pub const EA_PK_Y_PUBLIC_OFFSET: usize = 10;
 // Out-of-circuit helpers
 // ================================================================
 
-pub(crate) use van_integrity::van_integrity_hash;
-pub(crate) use vote_commitment::vote_commitment_hash;
+pub(super) use van_integrity::van_integrity_hash;
+pub(super) use vote_commitment::vote_commitment_hash;
 
 /// Returns the domain separator for the VAN nullifier inner hash.
 ///
 /// The tag is defined in [`crate::domain_tags`], the central registry for
 /// domain-separation constants and encoding rules.
-pub fn domain_van_nullifier() -> pallas::Base {
+pub(super) fn domain_van_nullifier() -> pallas::Base {
     domain_tags::vote_authority_spend()
 }
 
@@ -305,7 +305,7 @@ impl Config {
     ///
     /// Width 3 (P128Pow5T3 state size), rate 2 (absorbs 2 field elements
     /// per permutation — halves the number of rounds vs rate 1).
-    pub(crate) fn poseidon_chip(&self) -> PoseidonChip<pallas::Base, 3, 2> {
+    fn poseidon_chip(&self) -> PoseidonChip<pallas::Base, 3, 2> {
         PoseidonChip::construct(self.poseidon_config.clone())
     }
 
@@ -356,9 +356,9 @@ pub struct Circuit {
     // Condition 1 (VAN Membership): Poseidon-based Merkle path from
     // vote_authority_note_old to vote_comm_tree_root.
     /// Merkle authentication path (sibling hashes at each tree level).
-    pub(crate) vote_comm_tree_path: Value<[pallas::Base; VOTE_COMM_TREE_DEPTH]>,
+    pub(super) vote_comm_tree_path: Value<[pallas::Base; VOTE_COMM_TREE_DEPTH]>,
     /// Leaf position in the vote commitment tree.
-    pub(crate) vote_comm_tree_position: Value<u32>,
+    pub(super) vote_comm_tree_position: Value<u32>,
 
     // Condition 2 (VAN Integrity): two-layer hash matching ZKP 1 (delegation):
     // van_comm_core = Poseidon(DOMAIN_VAN, vpk_g_d.x, vpk_pk_d.x, total_note_value,
@@ -372,39 +372,39 @@ pub struct Circuit {
     /// Voting public key — diversified base point (from DiversifyHash(d)).
     /// This is the vpk_g_d component of the voting hotkey address.
     /// Condition 3 performs `[ivk_v] * vpk_g_d` to derive vpk_pk_d.
-    pub(crate) vpk_g_d: Value<pallas::Affine>,
+    pub(super) vpk_g_d: Value<pallas::Affine>,
     /// Voting public key — diversified transmission key (pk_d = [ivk_v] * g_d).
     /// This is the vpk_pk_d component of the voting hotkey address.
     /// Condition 3 (Diversified Address Integrity) constrains this to equal `[ivk_v] * vpk_g_d`.
-    pub(crate) vpk_pk_d: Value<pallas::Affine>,
+    pub(super) vpk_pk_d: Value<pallas::Affine>,
     /// The voter's total delegated weight, denominated in ballots
     /// (1 ballot = 0.125 ZEC; converted from zatoshi by ZKP #1 condition 8).
-    pub(crate) total_note_value: Value<pallas::Base>,
+    pub(super) total_note_value: Value<pallas::Base>,
     // Condition 6:
     /// Remaining proposal authority bitmask in the old VAN.
-    pub(crate) proposal_authority_old: Value<pallas::Base>,
+    pub(super) proposal_authority_old: Value<pallas::Base>,
     /// Blinding randomness for the VAN commitment.
-    pub(crate) van_comm_rand: Value<pallas::Base>,
+    pub(super) van_comm_rand: Value<pallas::Base>,
     /// The old VAN commitment (Poseidon hash output). Used as the Merkle
     /// leaf in condition 1 and constrained to equal the derived hash here.
-    pub(crate) vote_authority_note_old: Value<pallas::Base>,
+    pub(super) vote_authority_note_old: Value<pallas::Base>,
 
     // Condition 3 (Diversified Address Integrity): prover controls the VAN address.
     // vpk_pk_d = [ivk_v] * vpk_g_d
     //   where ivk_v = CommitIvk_rivk_v(ExtractP([vsk]*SpendAuthG), vsk.nk)
     /// Voting spending key (scalar for ECC multiplication).
     /// Used in condition 3 for `[vsk] * SpendAuthG`.
-    pub(crate) vsk: Value<pallas::Scalar>,
+    pub(super) vsk: Value<pallas::Scalar>,
     /// CommitIvk randomness for the ivk_v derivation (condition 3).
     /// Used as the blinding scalar in `CommitIvk(ak, nk, rivk_v)`.
-    pub(crate) rivk_v: Value<pallas::Scalar>,
+    pub(super) rivk_v: Value<pallas::Scalar>,
     /// Spend auth randomizer for condition 4: r_vpk = vsk.ak + [alpha_v] * G.
-    pub(crate) alpha_v: Value<pallas::Scalar>,
+    pub(super) alpha_v: Value<pallas::Scalar>,
 
     // Condition 5 (VAN Nullifier Integrity): nullifier deriving key.
     // Also used in condition 3 as the nk input to CommitIvk.
     /// Nullifier deriving key derived from vsk.
-    pub(crate) vsk_nk: Value<pallas::Base>,
+    pub(super) vsk_nk: Value<pallas::Base>,
 
     // Condition 6 (Proposal Authority Decrement): one_shifted = 2^proposal_id.
     /// `2^proposal_id`, supplied as a private witness and constrained by a lookup.
@@ -414,7 +414,7 @@ pub struct Circuit {
     /// table `(0,1), (1,2), ..., (15,32768)` then proves `one_shifted == 2^proposal_id`.
     /// The bit-decomposition region uses this value to compute
     /// `proposal_authority_new = proposal_authority_old - one_shifted`.
-    pub(crate) one_shifted: Value<pallas::Base>,
+    pub(super) one_shifted: Value<pallas::Base>,
 
     // === Vote commitment construction (conditions 8–12) ===
 
@@ -423,7 +423,7 @@ pub struct Circuit {
     /// Voting share vector (16 random shares that sum to total_note_value).
     /// The decomposition is chosen by the prover for amount privacy: the
     /// on-chain El Gamal ciphertexts reveal no weight fingerprint.
-    pub(crate) shares: [Value<pallas::Base>; 16],
+    pub(super) shares: [Value<pallas::Base>; 16],
 
     // Condition 10 (Shares Hash Integrity): El Gamal ciphertext coordinates.
     // These are the coordinates of the curve points comprising each
@@ -431,32 +431,32 @@ pub struct Circuit {
     // encryptions; condition 10 hashes them (including y-coordinates to
     // prevent ciphertext sign-malleability).
     /// X-coordinates of C1_i = r_i * G for each share (via ExtractP).
-    pub(crate) enc_share_c1_x: [Value<pallas::Base>; 16],
+    pub(super) enc_share_c1_x: [Value<pallas::Base>; 16],
     /// X-coordinates of C2_i = shares_i * G + r_i * ea_pk for each share (via ExtractP).
-    pub(crate) enc_share_c2_x: [Value<pallas::Base>; 16],
+    pub(super) enc_share_c2_x: [Value<pallas::Base>; 16],
     /// Y-coordinates of C1_i (bound to the exact curve point, preventing sign-malleability).
-    pub(crate) enc_share_c1_y: [Value<pallas::Base>; 16],
+    pub(super) enc_share_c1_y: [Value<pallas::Base>; 16],
     /// Y-coordinates of C2_i (bound to the exact curve point, preventing sign-malleability).
-    pub(crate) enc_share_c2_y: [Value<pallas::Base>; 16],
+    pub(super) enc_share_c2_y: [Value<pallas::Base>; 16],
 
     // Condition 10 (Shares Hash Integrity): per-share blind factors for blinded commitments.
     /// Random blind factors: share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y).
-    pub(crate) share_blinds: [Value<pallas::Base>; 16],
+    pub(super) share_blinds: [Value<pallas::Base>; 16],
 
     // Condition 11 (Encryption Integrity): El Gamal randomness and public key.
     /// El Gamal encryption randomness for each share (base field element,
     /// converted to scalar via ScalarVar::from_base in-circuit).
-    pub(crate) share_randomness: [Value<pallas::Base>; 16],
+    pub(super) share_randomness: [Value<pallas::Base>; 16],
     /// Election authority public key (Pallas curve point).
     /// The El Gamal encryption key — published as a round parameter.
     /// Both coordinates are public inputs (EA_PK_X_PUBLIC_OFFSET, EA_PK_Y_PUBLIC_OFFSET).
     /// The caller must authenticate this key against the governance
     /// announcement; the circuit only binds encryption to the supplied key.
-    pub(crate) ea_pk: Value<pallas::Affine>,
+    pub(super) ea_pk: Value<pallas::Affine>,
 
     // Condition 12 (Vote Commitment Integrity): vote decision.
     /// The voter's choice (hidden inside the vote commitment).
-    pub(crate) vote_decision: Value<pallas::Base>,
+    pub(super) vote_decision: Value<pallas::Base>,
 }
 
 impl Circuit {
