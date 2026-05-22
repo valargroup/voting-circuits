@@ -9,8 +9,9 @@ use halo2_proofs::circuit::Value;
 use pasta_curves::pallas;
 
 use crate::circuit::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
+use crate::params::VOTE_COMM_TREE_DEPTH;
+use crate::protocol_hash::poseidon_hash_2;
 use crate::shares_hash::shares_hash_from_comms;
-use crate::vote_proof::{poseidon_hash_2, VOTE_COMM_TREE_DEPTH};
 
 use super::circuit::{share_nullifier_hash, Circuit, Instance};
 

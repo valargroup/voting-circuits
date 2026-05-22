@@ -81,10 +81,10 @@ use orchard::circuit::gadget::assign_free_advice;
 
 use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
 use crate::circuit::vote_commitment;
+use crate::params::VOTE_COMM_TREE_DEPTH;
 use crate::shares_hash::{
     compute_shares_hash_from_comms_in_circuit, hash_share_commitment_in_circuit,
 };
-use crate::vote_proof::VOTE_COMM_TREE_DEPTH;
 
 // ================================================================
 // Constants
@@ -997,7 +997,7 @@ mod tests {
     use crate::circuit::elgamal::{elgamal_encrypt, spend_auth_g_affine};
     use crate::circuit::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
     use crate::shares_hash::{share_commitment, shares_hash as compute_shares_hash};
-    use crate::vote_proof::poseidon_hash_2;
+    use crate::protocol_hash::poseidon_hash_2;
 
     #[test]
     fn instance_to_halo2_instance_uses_public_input_offsets() {

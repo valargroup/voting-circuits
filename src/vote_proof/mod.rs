@@ -22,17 +22,15 @@ mod builder;
 mod circuit;
 mod prove;
 
-pub use crate::circuit::elgamal::spend_auth_g_affine;
-pub use crate::shares_hash::{share_commitment, shares_hash};
 pub use builder::{
     build_vote_proof_from_delegation, EncryptedShareOutput, VoteProofBuildError, VoteProofBundle,
 };
 pub use circuit::{
-    poseidon_hash_2, Circuit, Config, Instance, EA_PK_X_PUBLIC_OFFSET, EA_PK_Y_PUBLIC_OFFSET, K,
+    Circuit, Config, Instance, EA_PK_X_PUBLIC_OFFSET, EA_PK_Y_PUBLIC_OFFSET, K,
     PROPOSAL_ID_PUBLIC_OFFSET, R_VPK_X_PUBLIC_OFFSET, R_VPK_Y_PUBLIC_OFFSET,
     VAN_NULLIFIER_PUBLIC_OFFSET, VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET,
     VOTE_COMMITMENT_PUBLIC_OFFSET, VOTE_COMM_TREE_ANCHOR_HEIGHT_PUBLIC_OFFSET,
-    VOTE_COMM_TREE_DEPTH, VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET, VOTING_ROUND_ID_PUBLIC_OFFSET,
+    VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET, VOTING_ROUND_ID_PUBLIC_OFFSET,
 };
 pub use prove::{
     create_vote_proof, verify_vote_proof, vote_proof_cached_keys, vote_proof_params,

@@ -251,7 +251,7 @@ mod tests {
             12_500_000,
             pallas::Base::from(0xDEAD_u64),
             pallas::Base::from(0xCAFE_u64),
-            [pallas::Base::zero(); crate::vote_proof::VOTE_COMM_TREE_DEPTH],
+            [pallas::Base::zero(); crate::params::VOTE_COMM_TREE_DEPTH],
             0,
             123,
             1,

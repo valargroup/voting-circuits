@@ -33,6 +33,7 @@ use super::{
     imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
 };
 use crate::circuit::elgamal::base_to_scalar;
+use crate::params::BALLOT_DIVISOR;
 use crate::protocol_hash::poseidon_hash_2;
 
 // Hash-to-curve personalization for synthetic padding `g_d_pad` points.
@@ -758,8 +759,8 @@ pub fn build_delegation_bundle(
     // Condition 8: ballot scaling.
     // num_ballots = floor(v_total / BALLOT_DIVISOR)
     let v_total_u64: u64 = v_values.iter().sum();
-    let num_ballots_u64 = v_total_u64 / circuit::BALLOT_DIVISOR;
-    let remainder_u64 = v_total_u64 % circuit::BALLOT_DIVISOR;
+    let num_ballots_u64 = v_total_u64 / BALLOT_DIVISOR;
+    let remainder_u64 = v_total_u64 % BALLOT_DIVISOR;
     let num_ballots_field = pallas::Base::from(num_ballots_u64);
 
     // Condition 7: gov commitment integrity.

@@ -66,7 +66,9 @@ use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwa
 use crate::circuit::van_integrity;
 use crate::circuit::vote_commitment;
 use crate::domain_tags;
-pub use crate::protocol_hash::poseidon_hash_2;
+use crate::params::VOTE_COMM_TREE_DEPTH;
+#[cfg(test)]
+use crate::protocol_hash::poseidon_hash_2;
 use crate::shares_hash::compute_shares_hash_in_circuit;
 #[cfg(test)]
 use crate::shares_hash::{hash_share_commitment_in_circuit, share_commitment, shares_hash};
@@ -92,16 +94,6 @@ use orchard::constants::{OrchardCommitDomains, OrchardFixedBases, OrchardHashDom
 // ================================================================
 // Constants
 // ================================================================
-
-/// Depth of the Poseidon-based vote commitment tree.
-///
-/// Reduced from Zcash's depth 32 (~4.3B) because governance voting
-/// produces far fewer leaves than a full shielded pool. Each voter
-/// generates 1 leaf per delegation + 2 per vote, so even 10K voters
-/// × 50 proposals ≈ 1M leaves — well within 2^24 ≈ 16.7M capacity.
-///
-/// Must match `vote_commitment_tree::TREE_DEPTH`.
-pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 
 /// Circuit size (2^K rows).
 ///

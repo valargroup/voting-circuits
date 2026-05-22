@@ -23,11 +23,11 @@ use orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
 
 use super::circuit::{
     van_integrity_hash, van_nullifier_hash, vote_commitment_hash, Circuit, Instance,
-    MAX_PROPOSAL_ID, VOTE_COMM_TREE_DEPTH,
+    MAX_PROPOSAL_ID,
 };
 use super::prove::create_vote_proof;
 use crate::circuit::elgamal::{base_to_scalar, spend_auth_g_affine};
-use crate::delegation::BALLOT_DIVISOR;
+use crate::params::{BALLOT_DIVISOR, VOTE_COMM_TREE_DEPTH};
 use crate::shares_hash::{share_commitment, shares_hash};
 use crate::{domain_tags, ProveError};
 
@@ -782,7 +782,7 @@ pub fn build_vote_proof_from_delegation(
     // Recompute the root from the leaf + auth path to set as public input.
 
     let vote_comm_tree_root = {
-        use super::circuit::poseidon_hash_2;
+        use crate::protocol_hash::poseidon_hash_2;
 
         let mut current = vote_authority_note_old;
         for level in 0..VOTE_COMM_TREE_DEPTH {

@@ -43,6 +43,7 @@ use crate::circuit::address_ownership::prove_address_ownership;
 use crate::circuit::gadget::assign_constant;
 use crate::circuit::mul_chip::{MulChip, MulConfig, MulInstruction};
 use crate::circuit::van_integrity;
+use crate::params::BALLOT_DIVISOR;
 use crate::protocol_hash::poseidon_hash_in_circuit;
 use halo2_gadgets::{
     ecc::{
@@ -184,11 +185,6 @@ pub fn rho_binding_hash(
         vote_round_id,
     ])
 }
-
-/// Ballot divisor for converting raw zatoshi balance to ballot count.
-///
-/// `num_ballots = floor(v_total / BALLOT_DIVISOR)`
-pub(crate) const BALLOT_DIVISOR: u64 = 12_500_000;
 
 /// Out-of-circuit governance commitment hash used by the builder and tests.
 ///
