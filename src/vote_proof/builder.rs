@@ -28,11 +28,9 @@ use super::circuit::{
 };
 use super::prove::create_vote_proof;
 use crate::circuit::elgamal::{base_to_scalar, spend_auth_g_affine};
+use crate::delegation::BALLOT_DIVISOR;
 use crate::shares_hash::{share_commitment, shares_hash};
 use crate::{domain_tags, ProveError};
-
-/// Ballot divisor — must match `delegation::circuit::BALLOT_DIVISOR`.
-const BALLOT_DIVISOR: u64 = 12_500_000;
 
 /// Number of shares per vote.
 const NUM_SHARES: usize = 16;

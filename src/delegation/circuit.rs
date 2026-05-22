@@ -188,7 +188,7 @@ pub fn rho_binding_hash(
 /// Ballot divisor for converting raw zatoshi balance to ballot count.
 ///
 /// `num_ballots = floor(v_total / BALLOT_DIVISOR)`
-pub(super) const BALLOT_DIVISOR: u64 = 12_500_000;
+pub(crate) const BALLOT_DIVISOR: u64 = 12_500_000;
 
 /// Out-of-circuit governance commitment hash used by the builder and tests.
 ///

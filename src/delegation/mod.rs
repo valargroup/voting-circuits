@@ -11,6 +11,8 @@ mod imt;
 mod imt_circuit;
 mod prove;
 
+pub(crate) use circuit::BALLOT_DIVISOR;
+
 pub use builder::{
     build_delegation_bundle, synthetic_padding_note_parts, DelegationBuildError, DelegationBundle,
     PaddedNoteData, PrecomputedRandomness, RealNoteInput, SyntheticPaddingNoteParts,
