@@ -27,9 +27,6 @@ jobs:
     name: Short tests
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: voting-circuits
 
     steps:
       - name: Checkout
@@ -42,8 +39,6 @@ jobs:
 
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: voting-circuits
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -55,9 +50,6 @@ jobs:
     name: Full suite
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run == 'full-suite')
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: voting-circuits
 
     steps:
       - name: Checkout
@@ -70,8 +62,6 @@ jobs:
 
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: voting-circuits
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -86,9 +76,6 @@ jobs:
     name: Diagnostics
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run == 'diagnostics')
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: voting-circuits
 
     steps:
       - name: Checkout
@@ -101,8 +88,6 @@ jobs:
 
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: voting-circuits
 
       - name: Run row-budget diagnostics
         run: cargo test --locked row_budget -- --ignored --nocapture

@@ -1,6 +1,6 @@
 # voting-circuits
 
-Governance ZKP circuits (delegation, vote proof, share reveal) for the Zally voting protocol.
+Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol.
 
 Built with [halo2](https://github.com/zcash/halo2) on top of the upstream [Orchard](https://github.com/zcash/orchard) shielded protocol. The crate requires `std`.
 
@@ -19,6 +19,21 @@ Orchard Notes ──► Delegation (ZKP 1) ──► Vote Authority Notes (VANs)
 1. [**Delegation**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) spends Orchard notes and mints VANs that carry delegated voting weight.
 2. [**Vote Proof**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) spends a VAN to cast a vote, producing El Gamal-encrypted shares and a vote commitment.
 3. [**Share Reveal**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) opens a single encrypted share and proves it belongs to a registered vote commitment.
+
+## Usage
+
+This crate is the circuit-only side. Wallets typically don't call it directly; they consume the higher-level [`zcash_voting`](https://github.com/valargroup/zcash_voting) crate which wraps proof generation, hotkey derivation, share construction, and the HTTP wire format.
+
+If you do want the raw gadgets for a custom prover:
+
+```rust
+use voting_circuits::vote_proof::Circuit as VoteProofCircuit;
+// ... assemble public/private inputs and run halo2_proofs
+```
+
+Minimum supported Rust version: 1.86, as declared by the crate manifest.
+
+Protocol domain-separation tags are registered in [`src/domain_tags.rs`](src/domain_tags.rs). Hash-owning modules document their own preimage layout, but new tags should be added to the registry first so the encoding rule and distinctness test stay centralized.
 
 ## Package layout
 
@@ -86,22 +101,36 @@ This crate depends on upstream [`zcash/orchard`](https://github.com/zcash/orchar
 ## Building
 
 ```bash
-cargo build --manifest-path voting-circuits/Cargo.toml
+cargo build
 ```
 
 ## Testing
 
-```bash
-cargo test --manifest-path voting-circuits/Cargo.toml
+Short-running tests are the default:
 
-# Vote-proof row-budget diagnostic (ignored by default, prints utilization)
-cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1
+```bash
+cargo test
 ```
+
+Long-running tests are explicitly ignored and can be run when circuit-level coverage is needed. Skip the row-budget and cost-breakdown diagnostics for a normal regression pass:
+
+```bash
+cargo test -- --ignored --skip row_budget --skip cost_breakdown
+```
+
+To inspect circuit size diagnostics, keep `--nocapture` so the output is printed:
+
+```bash
+cargo test row_budget -- --ignored --nocapture
+cargo test cost_breakdown -- --ignored --nocapture
+```
+
+The long tests are slow because they synthesize Halo 2 circuits and run `MockProver` verification over the configured `K` domain (`delegation` uses K=14, `vote_proof` K=13, and `share_reveal` K=11). Some gadget stress tests are also long-running because they repeat many `MockProver` checks, for example one K=12 shares-hash test runs 16 separate prover checks. The real proof roundtrip also performs proving-key/proof generation and verification, so it is intentionally outside the default unit-test path.
 
 ## Benchmarks
 
 ```bash
-cargo bench --manifest-path voting-circuits/Cargo.toml   # runs delegation proving benchmarks via Criterion
+cargo bench   # runs delegation proving benchmarks via Criterion
 ```
 
 ## Key dependencies
@@ -115,3 +144,7 @@ cargo bench --manifest-path voting-circuits/Cargo.toml   # runs delegation provi
 | `halo2_poseidon` | Poseidon hash for Merkle trees and commitments |
 | `incrementalmerkletree` | Incremental Merkle tree data structure |
 | `sinsemilla` | Sinsemilla hash (used via Orchard) |
+
+## License
+
+Dual-licensed under MIT or Apache-2.0. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).

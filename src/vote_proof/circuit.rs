@@ -119,7 +119,7 @@ pub const VOTE_COMM_TREE_DEPTH: usize = 24;
 /// - 10-bit Sinsemilla/range-check lookup table: 1,024 fixed rows.
 ///
 /// Run the `row_budget` diagnostic to re-measure after circuit changes:
-///   `cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
+///   `cargo test vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
 pub const K: u32 = 13;
 
 pub(crate) use van_integrity::DOMAIN_VAN;
@@ -3623,9 +3623,9 @@ mod tests {
     /// number rather than the theoretical 2^K capacity.
     ///
     /// Run with:
-    ///   cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1
+    ///   cargo test vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1
     #[test]
-    #[ignore = "long-running row-budget diagnostic; run with `cargo test --manifest-path voting-circuits/Cargo.toml vote_proof::circuit::tests::row_budget -- --ignored --nocapture --test-threads=1`"]
+    #[ignore = "long-running row-budget diagnostic; run with `cargo test vote_proof::circuit::tests::row_budget -- --ignored --nocapture --test-threads=1`"]
     fn row_budget() {
         use halo2_proofs::dev::CircuitCost;
         use pasta_curves::vesta;
