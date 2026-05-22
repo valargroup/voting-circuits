@@ -2,7 +2,7 @@
 
 Governance ZKP circuits (delegation, vote proof, share reveal) for the Zally voting protocol.
 
-Built with [halo2](https://github.com/zcash/halo2) and a local fork of the [Orchard](https://github.com/zcash/orchard) shielded protocol. The crate requires `std`.
+Built with [halo2](https://github.com/zcash/halo2) on top of the upstream [Orchard](https://github.com/zcash/orchard) shielded protocol. The crate requires `std`.
 
 ## Proof flow
 
@@ -79,9 +79,9 @@ Reusable halo2 gadgets that appear in more than one circuit:
 | Vote Proof | 13 | 8 192 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
 | Share Reveal | 11 | 2 048 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
 
-## Companion crate
+## Dependency on `orchard`
 
-The `orchard/` directory at the workspace root is a local fork of the Zcash Orchard shielded-transaction protocol. It supplies NoteCommit, nullifier derivation, CommitIvk, and SpendAuthG primitives consumed by the circuits here.
+This crate depends on upstream [`zcash/orchard`](https://github.com/zcash/orchard) `=0.13.1` from crates.io, with the `unstable-voting-circuits` feature enabled to expose the governance-visibility APIs the voting circuits rely on. The previous `valar-orchard` fork has been retired.
 
 ## Building
 
@@ -111,7 +111,7 @@ cargo bench --manifest-path voting-circuits/Cargo.toml   # runs delegation provi
 | `halo2_proofs` | Proof system (with batch verification) |
 | `halo2_gadgets` | Standard gadgets (Poseidon, Sinsemilla, ECC) |
 | `pasta_curves` | Pallas / Vesta curve arithmetic |
-| `orchard` (local) | Orchard note commitment, nullifier, CommitIvk |
+| `orchard` | Orchard note commitment, nullifier, CommitIvk |
 | `halo2_poseidon` | Poseidon hash for Merkle trees and commitments |
 | `incrementalmerkletree` | Incremental Merkle tree data structure |
 | `sinsemilla` | Sinsemilla hash (used via Orchard) |
