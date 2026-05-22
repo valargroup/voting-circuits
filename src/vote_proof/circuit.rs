@@ -58,13 +58,13 @@ use halo2_proofs::{
 };
 use pasta_curves::{pallas, vesta};
 
-use super::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
-use crate::circuit::address_ownership::{prove_address_ownership, spend_auth_g_mul};
-use crate::circuit::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
-use crate::circuit::nonzero::NonZeroConfig;
-use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
-use crate::circuit::van_integrity;
-use crate::circuit::vote_commitment;
+use super::gadgets::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
+use crate::gadgets::address_ownership::{prove_address_ownership, spend_auth_g_mul};
+use crate::gadgets::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
+use crate::gadgets::nonzero::NonZeroConfig;
+use crate::gadgets::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
+use crate::gadgets::van_integrity;
+use crate::gadgets::vote_commitment;
 use crate::domain_tags;
 use crate::params::VOTE_COMM_TREE_DEPTH;
 #[cfg(test)]
@@ -840,10 +840,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // The out-of-circuit verifier checks that the vote signature is valid under r_vpk,
         // so this links the ZKP to the signature without revealing ak.
         //
-        // Uses the shared gadget from crate::circuit::spend_authority – a 1:1 copy of
+        // Uses the shared gadget from crate::gadgets::spend_authority – a 1:1 copy of
         // the upstream Orchard spend authority check:
         //   https://github.com/zcash/orchard/blob/main/src/circuit.rs#L542-L558
-        crate::circuit::spend_authority::prove_spend_authority(
+        crate::gadgets::spend_authority::prove_spend_authority(
             ecc_chip.clone(),
             layouter.namespace(|| "cond4 spend authority"),
             self.alpha_v,
@@ -1449,7 +1449,7 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::circuit::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
+    use crate::gadgets::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
     use core::iter;
     use ff::{Field, PrimeField};
     use group::ff::PrimeFieldBits;

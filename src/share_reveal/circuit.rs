@@ -43,7 +43,7 @@
 //! resistance of `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
 //!
 //! Authoritative hash sources: `crate::shares_hash` owns the per-share and
-//! aggregate encrypted-share preimages, `crate::circuit::vote_commitment` owns
+//! aggregate encrypted-share preimages, `crate::gadgets::vote_commitment` owns
 //! the vote commitment preimage, and `crate::domain_tags` owns the share-spend
 //! domain tag encoding. This module's prose points to those owners rather than
 //! defining competing formulas.
@@ -79,8 +79,8 @@ use halo2_gadgets::{
 
 use orchard::circuit::gadget::assign_free_advice;
 
-use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
-use crate::circuit::vote_commitment;
+use crate::gadgets::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
+use crate::gadgets::vote_commitment;
 use crate::params::VOTE_COMM_TREE_DEPTH;
 use crate::shares_hash::{
     compute_shares_hash_from_comms_in_circuit, hash_share_commitment_in_circuit,
@@ -994,8 +994,8 @@ mod tests {
     use halo2_proofs::dev::MockProver;
     use pasta_curves::pallas;
 
-    use crate::circuit::elgamal::{elgamal_encrypt, spend_auth_g_affine};
-    use crate::circuit::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
+    use crate::gadgets::elgamal::{elgamal_encrypt, spend_auth_g_affine};
+    use crate::gadgets::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
     use crate::shares_hash::{share_commitment, shares_hash as compute_shares_hash};
     use crate::protocol_hash::poseidon_hash_2;
 

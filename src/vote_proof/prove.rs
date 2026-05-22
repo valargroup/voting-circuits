@@ -237,7 +237,7 @@ mod tests {
     #[test]
     #[ignore = "expensive end-to-end proof generation; run with --ignored when touching verification"]
     fn typed_verify_accepts_proof_created_by_typed_builder() {
-        use crate::circuit::elgamal::spend_auth_g_affine;
+        use crate::gadgets::elgamal::spend_auth_g_affine;
         use crate::vote_proof::build_vote_proof_from_delegation;
         use group::Curve;
         use orchard::keys::SpendingKey;

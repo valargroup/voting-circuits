@@ -7,8 +7,8 @@
 
 mod builder;
 mod circuit;
+mod gadgets;
 mod imt;
-mod imt_circuit;
 mod prove;
 
 pub use builder::{

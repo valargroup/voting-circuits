@@ -32,7 +32,7 @@ use super::{
     circuit::{self, rho_binding_hash, van_commitment_hash, NoteSlotWitness},
     imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
 };
-use crate::circuit::elgamal::base_to_scalar;
+use crate::gadgets::elgamal::base_to_scalar;
 use crate::params::BALLOT_DIVISOR;
 use crate::protocol_hash::poseidon_hash_2;
 

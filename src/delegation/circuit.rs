@@ -37,12 +37,12 @@ use halo2_proofs::{
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
 use std::vec::Vec;
 
+use super::gadgets::gadget::assign_constant;
+use super::gadgets::imt_circuit::{synthesize_imt_non_membership, ImtNonMembershipConfig};
+use super::gadgets::mul_chip::{MulChip, MulConfig, MulInstruction};
 use super::imt::{gov_auth_domain_tag, IMT_DEPTH};
-use super::imt_circuit::{synthesize_imt_non_membership, ImtNonMembershipConfig};
-use crate::circuit::address_ownership::prove_address_ownership;
-use crate::circuit::gadget::assign_constant;
-use crate::circuit::mul_chip::{MulChip, MulConfig, MulInstruction};
-use crate::circuit::van_integrity;
+use crate::gadgets::address_ownership::prove_address_ownership;
+use crate::gadgets::van_integrity;
 use crate::params::BALLOT_DIVISOR;
 use crate::protocol_hash::poseidon_hash_in_circuit;
 use halo2_gadgets::{
@@ -835,11 +835,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // The out-of-circuit verifier checks that the keystone signature is valid under rk,
         // so this links the ZKP to the signature without revealing ak.
         //
-        // Uses the shared gadget from crate::circuit::spend_authority – a 1:1 copy of
+        // Uses the shared gadget from crate::gadgets::spend_authority – a 1:1 copy of
         // the upstream Orchard spend authority check:
         //   https://github.com/zcash/orchard/blob/main/src/circuit.rs#L542-L558
         // Note: RK_X_PUBLIC_OFFSET and RK_Y_PUBLIC_OFFSET are public inputs.
-        crate::circuit::spend_authority::prove_spend_authority(
+        crate::gadgets::spend_authority::prove_spend_authority(
             ecc_chip.clone(),
             layouter.namespace(|| "cond4 spend authority"),
             self.alpha,

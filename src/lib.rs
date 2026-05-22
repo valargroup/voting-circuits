@@ -8,15 +8,15 @@
 #![deny(missing_debug_implementations)]
 #![deny(unsafe_code)]
 
-mod circuit;
 mod domain_tags;
+mod gadgets;
 mod protocol_hash;
 mod prove_error;
 mod shares_hash;
 
 pub mod params;
 
-pub use circuit::elgamal::spend_auth_g_affine;
+pub use gadgets::elgamal::spend_auth_g_affine;
 pub use protocol_hash::poseidon_hash_2;
 pub use prove_error::ProveError;
 pub use shares_hash::{share_commitment, shares_hash, shares_hash_from_comms};

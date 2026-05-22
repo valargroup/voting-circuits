@@ -17,9 +17,9 @@
 //! - **Condition 11**: Encryption Integrity (ECC variable-base mul, `constrain_equal`).
 //! - **Condition 12**: Vote Commitment Integrity (Poseidon `ConstantLength<5>`, `constrain_instance`).
 
-mod authority_decrement;
 mod builder;
 mod circuit;
+mod gadgets;
 mod prove;
 
 pub use builder::{

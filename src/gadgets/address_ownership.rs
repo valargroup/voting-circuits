@@ -30,8 +30,8 @@ use orchard::constants::{OrchardCommitDomains, OrchardHashDomains};
 
 /// Computes `[scalar] * SpendAuthG` using the Orchard fixed base.
 ///
-/// Thin wrapper around the shared gadget in `crate::circuit::spend_authority` –
-/// see [`crate::circuit::spend_authority`] for the upstream reference.
+/// Thin wrapper around the shared gadget in `crate::gadgets::spend_authority` –
+/// see [`crate::gadgets::spend_authority`] for the upstream reference.
 ///
 /// Used by delegation (condition 4: alpha), vote proof (condition 3: vsk).
 /// Returns the resulting curve point so the caller can e.g. add `ak_P` for rk

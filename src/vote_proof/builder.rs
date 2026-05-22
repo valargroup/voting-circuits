@@ -26,7 +26,7 @@ use super::circuit::{
     MAX_PROPOSAL_ID,
 };
 use super::prove::create_vote_proof;
-use crate::circuit::elgamal::{base_to_scalar, spend_auth_g_affine};
+use crate::gadgets::elgamal::{base_to_scalar, spend_auth_g_affine};
 use crate::params::{BALLOT_DIVISOR, VOTE_COMM_TREE_DEPTH};
 use crate::shares_hash::{share_commitment, shares_hash};
 use crate::{domain_tags, ProveError};

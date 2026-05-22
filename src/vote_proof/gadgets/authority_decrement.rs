@@ -134,7 +134,7 @@ use pasta_curves::pallas;
 
 use halo2_gadgets::utilities::bool_check;
 
-use super::circuit::MAX_PROPOSAL_ID;
+use crate::vote_proof::circuit::MAX_PROPOSAL_ID;
 
 // Maps each proposal_id `i` to the authority bit mask `1 << i` used to
 // clear that proposal's permission bit. Keep this literal so range or mapping
@@ -164,30 +164,30 @@ const AUTHORITY_DECREMENT_LOOKUP_TABLE: [(u64, u64); MAX_PROPOSAL_ID] = [
 
 /// Configuration for the [`AuthorityDecrementChip`].
 #[derive(Clone, Debug)]
-pub(super) struct AuthorityDecrementConfig {
+pub(in crate::vote_proof) struct AuthorityDecrementConfig {
     /// Complex selector for the lookup row (row 0 of the chip region).
     /// When 1 the `(proposal_id, one_shifted)` lookup is enforced;
     /// when 0 the lookup input is `(0, 1)` which always passes.
-    pub(super) q_cond_6: Selector,
+    pub(in crate::vote_proof) q_cond_6: Selector,
     /// Lookup table column for `proposal_id` in `(proposal_id, 2^proposal_id)`.
     /// Rows: `(0,1), (1,2), ..., (15, 32768)`.
-    pub(super) table_proposal_id: TableColumn,
+    pub(in crate::vote_proof) table_proposal_id: TableColumn,
     /// Lookup table column for `one_shifted = 2^proposal_id`.
-    pub(super) table_one_shifted: TableColumn,
+    pub(in crate::vote_proof) table_one_shifted: TableColumn,
     /// Selector for the init row (i=0): enforces `index=0, two_pow_i=1`.
-    pub(super) q_cond_6_init: Selector,
+    pub(in crate::vote_proof) q_cond_6_init: Selector,
     /// Selector for bit rows i=1..15: recurrence `index++, two_pow_i*=2`.
-    pub(super) q_cond_6_bits: Selector,
+    pub(in crate::vote_proof) q_cond_6_bits: Selector,
     /// Selector for the last bit row (i=15): enforces `run_sel=1, run_selected=1`.
-    pub(super) q_cond_6_selected_one: Selector,
+    pub(in crate::vote_proof) q_cond_6_selected_one: Selector,
     /// Advice column that holds `proposal_id^-1` on row 0.
     ///
     /// Used by the `proposal_id != 0` gate:
     /// `q_cond_6 * (1 - proposal_id * proposal_id_inv) = 0`.
     /// This is `advices[2]`, which is otherwise unused on row 0.
-    pub(super) proposal_id_inv: Column<Advice>,
+    pub(in crate::vote_proof) proposal_id_inv: Column<Advice>,
     /// The 10 shared advice columns passed in by the outer circuit.
-    pub(super) advices: [Column<Advice>; 10],
+    pub(in crate::vote_proof) advices: [Column<Advice>; 10],
 }
 
 // ================================================================
@@ -287,14 +287,14 @@ fn cond6_shared_constraints(r: &Cond6Row) -> Vec<(&'static str, Expression<palla
 /// - `proposal_authority_new = proposal_authority_old - (1 << proposal_id)`.
 /// - `proposal_id != 0` (rejects the sentinel value).
 /// - `proposal_id` is in range `[1, 16)` via the `(proposal_id, 2^proposal_id)` lookup.
-pub(super) struct AuthorityDecrementChip;
+pub(in crate::vote_proof) struct AuthorityDecrementChip;
 
 impl AuthorityDecrementChip {
     /// Creates gates and lookup for the chip.
     ///
     /// `advices` must be the same 10-column slice used by the outer circuit
     /// (equality must already be enabled on each column by the caller).
-    pub(super) fn configure(
+    pub(in crate::vote_proof) fn configure(
         meta: &mut ConstraintSystem<pallas::Base>,
         advices: [Column<Advice>; 10],
     ) -> AuthorityDecrementConfig {
@@ -398,7 +398,7 @@ impl AuthorityDecrementChip {
     ///
     /// Must be called from `synthesize` before [`Self::assign`], alongside
     /// `SinsemillaChip::load`.
-    pub(super) fn load_table(
+    pub(in crate::vote_proof) fn load_table(
         config: &AuthorityDecrementConfig,
         layouter: &mut impl Layouter<pallas::Base>,
     ) -> Result<(), plonk::Error> {
@@ -442,7 +442,7 @@ impl AuthorityDecrementChip {
     ///
     /// The `proposal_authority_new` cell (`= proposal_authority_old` with the
     /// selected bit cleared).
-    pub(super) fn assign(
+    pub(in crate::vote_proof) fn assign(
         config: &AuthorityDecrementConfig,
         layouter: &mut impl Layouter<pallas::Base>,
         proposal_id: AssignedCell<pallas::Base, pallas::Base>,

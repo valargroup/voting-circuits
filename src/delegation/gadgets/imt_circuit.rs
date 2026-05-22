@@ -13,7 +13,7 @@
 //! - Merkle path to the committed root
 //!
 //! The Merkle conditional swap gate and path synthesis are provided by
-//! [`crate::circuit::poseidon_merkle`].
+//! [`crate::gadgets::poseidon_merkle`].
 
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
@@ -32,8 +32,8 @@ use halo2_gadgets::{
 use orchard::circuit::gadget::assign_free_advice;
 use orchard::constants::OrchardFixedBases;
 
-use super::imt::IMT_DEPTH;
-use crate::circuit::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
+use crate::delegation::imt::IMT_DEPTH;
+use crate::gadgets::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
 use crate::protocol_hash::poseidon_hash_in_circuit;
 
 // ================================================================
@@ -227,7 +227,7 @@ impl PuncturedIntervalGate {
 
 /// Bundles the Merkle swap gate, punctured interval gate, and the columns they need.
 #[derive(Clone, Debug)]
-pub(super) struct ImtNonMembershipConfig {
+pub(in crate::delegation) struct ImtNonMembershipConfig {
     swap_gate: MerkleSwapGate,
     interval_gate: PuncturedIntervalGate,
     /// The first advice column, used for free-witness assignments.
@@ -237,7 +237,7 @@ pub(super) struct ImtNonMembershipConfig {
 impl ImtNonMembershipConfig {
     /// Configures IMT gates. Uses `advices[0..5]` for the swap gate and
     /// `advices[0..3]` for the interval gate (overlapping is fine — different selectors).
-    pub(super) fn configure(
+    pub(in crate::delegation) fn configure(
         meta: &mut plonk::ConstraintSystem<pallas::Base>,
         advices: &[Column<Advice>; 10],
     ) -> Self {
@@ -270,7 +270,7 @@ impl ImtNonMembershipConfig {
 ///
 /// Returns `imt_root` which the caller feeds into the `q_per_note` gate.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn synthesize_imt_non_membership(
+pub(in crate::delegation) fn synthesize_imt_non_membership(
     imt_config: &ImtNonMembershipConfig,
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
     ecc_config: &EccConfig<OrchardFixedBases>,
