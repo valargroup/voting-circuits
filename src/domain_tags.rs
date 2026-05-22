@@ -29,16 +29,16 @@ pub const DOMAIN_VC: u64 = 1;
 ///
 /// Distinct from Zcash's `"Zcash_ExpandSeed"` personalization to avoid
 /// collisions with Zcash key-derivation streams that use similar inputs.
-pub(crate) const VOTE_PRF_PERSONALIZATION: &[u8; 16] = b"ZcashVote_Expand";
+pub const VOTE_PRF_PERSONALIZATION: &[u8; 16] = b"ZcashVote_Expand";
 
 /// PRF domain for vote-proof El Gamal encryption randomness.
-pub(crate) const VOTE_PRF_DOMAIN_ELGAMAL: u8 = 0x00;
+pub const VOTE_PRF_DOMAIN_ELGAMAL: u8 = 0x00;
 /// PRF domain for vote-proof share commitment blind factors.
-pub(crate) const VOTE_PRF_DOMAIN_BLIND: u8 = 0x01;
+pub const VOTE_PRF_DOMAIN_BLIND: u8 = 0x01;
 /// PRF domain for vote-proof share-order shuffle seed.
-pub(crate) const VOTE_PRF_DOMAIN_SHUFFLE: u8 = 0x02;
+pub const VOTE_PRF_DOMAIN_SHUFFLE: u8 = 0x02;
 /// PRF domain for vote-proof remainder distribution weights.
-pub(crate) const VOTE_PRF_DOMAIN_REMAINDER: u8 = 0x03;
+pub const VOTE_PRF_DOMAIN_REMAINDER: u8 = 0x03;
 
 /// Encodes a short ASCII tag as a canonical Pallas base-field element.
 ///
@@ -61,7 +61,7 @@ pub fn vote_authority_spend() -> pallas::Base {
 }
 
 /// Domain tag for ZKP #1 governance alternate-nullifier domains.
-pub(crate) fn governance_authorization() -> pallas::Base {
+pub fn governance_authorization() -> pallas::Base {
     string_domain_tag(b"governance authorization")
 }
 
