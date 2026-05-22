@@ -1,8 +1,7 @@
 //! Vote proof builder (ZKP #2).
 //!
 //! Constructs a vote proof from delegation key material, a vote commitment
-//! tree witness, and vote parameters. Lives inside the orchard crate to
-//! access `pub(crate)` key internals.
+//! tree witness, and vote parameters.
 //!
 //! El Gamal encryption randomness and share blind factors are derived
 //! deterministically via a Blake2b-512 PRF keyed by the spending key

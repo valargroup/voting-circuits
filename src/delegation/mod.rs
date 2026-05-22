@@ -18,8 +18,8 @@ pub use builder::{
     PaddedNoteData, PrecomputedRandomness, RealNoteInput, SyntheticPaddingNoteParts,
 };
 pub use circuit::{
-    rho_binding_hash, van_commitment_hash, Circuit, Config, Instance, CMX_NEW_PUBLIC_OFFSET,
-    DOM_PUBLIC_OFFSET, GOV_NULL_1_PUBLIC_OFFSET, GOV_NULL_2_PUBLIC_OFFSET,
+    rho_binding_hash, van_commitment_hash, Circuit, Config, Instance, InstanceError,
+    CMX_NEW_PUBLIC_OFFSET, DOM_PUBLIC_OFFSET, GOV_NULL_1_PUBLIC_OFFSET, GOV_NULL_2_PUBLIC_OFFSET,
     GOV_NULL_3_PUBLIC_OFFSET, GOV_NULL_4_PUBLIC_OFFSET, GOV_NULL_5_PUBLIC_OFFSET,
     GOV_NULL_PUBLIC_OFFSETS, K, NC_ROOT_PUBLIC_OFFSET, NF_IMT_ROOT_PUBLIC_OFFSET,
     NF_SIGNED_PUBLIC_OFFSET, RK_X_PUBLIC_OFFSET, RK_Y_PUBLIC_OFFSET, VAN_COMM_PUBLIC_OFFSET,
