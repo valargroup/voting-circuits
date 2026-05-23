@@ -16,6 +16,7 @@ mod prove_error;
 mod shares_hash;
 
 pub use gadgets::elgamal::spend_auth_g_affine;
+pub use params::VOTE_COMM_TREE_DEPTH;
 pub use protocol_hash::poseidon_hash_2;
 pub use prove_error::ProveError;
 pub use shares_hash::{share_commitment, shares_hash, shares_hash_from_comms};

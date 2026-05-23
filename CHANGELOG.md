@@ -2,12 +2,6 @@
 
 ## Unreleased
 
-### Added
-
-- New top-level `voting_circuits::params` module holding protocol-wide
-  constants shared across the three ZKP circuits: `BALLOT_DIVISOR` and
-  `VOTE_COMM_TREE_DEPTH`.
-
 ### Changed
 
 - **Breaking:** Moved shared protocol items out of `vote_proof` to the crate
@@ -16,7 +10,7 @@
   - `voting_circuits::vote_proof::shares_hash` → `voting_circuits::shares_hash`
   - `voting_circuits::vote_proof::share_commitment` → `voting_circuits::share_commitment`
   - `voting_circuits::vote_proof::poseidon_hash_2` → `voting_circuits::poseidon_hash_2`
-  - `voting_circuits::vote_proof::VOTE_COMM_TREE_DEPTH` → `voting_circuits::params::VOTE_COMM_TREE_DEPTH`
+  - `voting_circuits::vote_proof::VOTE_COMM_TREE_DEPTH` → `voting_circuits::VOTE_COMM_TREE_DEPTH`
 
 ## v0.6.0
 
