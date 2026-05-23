@@ -43,7 +43,7 @@ use pasta_curves::pallas;
 /// ciphertext sign-malleability. The blind factor prevents anyone who sees the
 /// encrypted shares on-chain from recomputing `shares_hash` and linking it to a
 /// specific vote commitment.
-pub fn share_commitment(
+pub(crate) fn share_commitment(
     blind: pallas::Base,
     c1_x: pallas::Base,
     c2_x: pallas::Base,

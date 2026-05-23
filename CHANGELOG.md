@@ -8,8 +8,6 @@
   root so they no longer appear to belong to a single proof module.
   - `voting_circuits::vote_proof::spend_auth_g_affine` → `voting_circuits::spend_auth_g_affine`
   - `voting_circuits::vote_proof::shares_hash` → `voting_circuits::shares_hash`
-  - `voting_circuits::vote_proof::share_commitment` → `voting_circuits::share_commitment`
-  - `voting_circuits::vote_proof::poseidon_hash_2` → `voting_circuits::poseidon_hash_2`
   - `voting_circuits::vote_proof::VOTE_COMM_TREE_DEPTH` → `voting_circuits::VOTE_COMM_TREE_DEPTH`
 
 ## v0.6.0

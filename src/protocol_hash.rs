@@ -23,7 +23,7 @@ fn poseidon_hash<const N: usize>(inputs: [pallas::Base; N]) -> pallas::Base {
 ///
 /// Used for Poseidon Merkle path computation and tests. This is the same hash
 /// function used by `vote_commitment_tree::MerkleHashVote::combine`.
-pub fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base {
+pub(crate) fn poseidon_hash_2(a: pallas::Base, b: pallas::Base) -> pallas::Base {
     poseidon_hash([a, b])
 }
 
