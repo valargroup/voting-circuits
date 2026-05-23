@@ -1484,7 +1484,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 /// Returns `(cmx_cell, v_cell, gov_null_cell)` — the extracted commitment,
 /// value, and governance nullifier for use in the rho binding (condition 3),
 /// gov commitment (condition 7), and gov nullifier (public input).
-#[allow(clippy::too_many_arguments, non_snake_case)]
+#[allow(non_snake_case)]
 fn synthesize_note_slot(
     config: &Config,
     layouter: &mut impl Layouter<pallas::Base>,
@@ -2780,7 +2780,7 @@ mod tests {
             .iter()
             .filter(|r| r.row_count() > 0)
             .collect();
-        regions.sort_by(|a, b| b.row_count().cmp(&a.row_count()));
+        regions.sort_by_key(|r| std::cmp::Reverse(r.row_count()));
 
         std::println!(
             "\n=== Delegation Circuit Cost Breakdown (K={}, {} total rows) ===",
@@ -2808,10 +2808,7 @@ mod tests {
                 continue;
             }
             let key = if r.name.starts_with("note ")
-                && r.name
-                    .as_bytes()
-                    .get(5)
-                    .map_or(false, |b| b.is_ascii_digit())
+                && r.name.as_bytes().get(5).is_some_and(|b| b.is_ascii_digit())
             {
                 if let Some(slash) = r.name.find('/') {
                     let rest = &r.name[slash + 1..];

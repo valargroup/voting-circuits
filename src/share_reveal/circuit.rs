@@ -938,7 +938,6 @@ impl Instance {
     /// fields are proof-attested outputs derived outside the circuit but
     /// constrained in-circuit against authenticated inputs and private
     /// witnesses.
-    #[allow(clippy::too_many_arguments)]
     pub fn from_parts(
         share_nullifier: pallas::Base,
         enc_share_c1_x: pallas::Base,
@@ -996,8 +995,8 @@ mod tests {
 
     use crate::gadgets::elgamal::{elgamal_encrypt, spend_auth_g_affine};
     use crate::gadgets::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
-    use crate::shares_hash::{share_commitment, shares_hash as compute_shares_hash};
     use crate::protocol_hash::poseidon_hash_2;
+    use crate::shares_hash::{share_commitment, shares_hash as compute_shares_hash};
 
     #[test]
     fn instance_to_halo2_instance_uses_public_input_offsets() {

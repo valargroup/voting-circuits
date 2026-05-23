@@ -111,7 +111,7 @@ fn make_real_note_inputs(
     rng: &mut impl RngCore,
 ) -> (Vec<RealNoteInput>, pallas::Base) {
     let n = values.len();
-    assert!(n >= 1 && n <= 4);
+    assert!((1..=4).contains(&n));
 
     let recipient = fvk.address_at(0u32, Scope::External);
     let mut notes = Vec::with_capacity(n);
@@ -236,7 +236,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         plonk::create_proof(
             &params,
             &pk,
-            &[bundle.circuit.clone()],
+            std::slice::from_ref(&bundle.circuit),
             &instances,
             &mut OsRng,
             &mut transcript,
@@ -267,7 +267,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 plonk::create_proof(
                     &params,
                     &pk,
-                    &[circuit.clone()],
+                    std::slice::from_ref(&circuit),
                     &instances,
                     &mut OsRng,
                     &mut transcript,

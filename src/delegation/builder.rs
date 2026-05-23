@@ -69,6 +69,7 @@ pub struct PrecomputedRandomness {
 
 /// Which precomputed note input failed validation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum PrecomputedRandomnessLocation {
     /// A padded note entry by index in `PrecomputedRandomness::padded_notes`.
     PaddedNote(usize),
@@ -404,7 +405,6 @@ struct PaddingSlot {
     real_nf: pallas::Base,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_padding_slot(
     slot_index: usize,
     pad_idx: usize,
@@ -663,7 +663,6 @@ impl std::fmt::Display for PrecomputedRandomnessLocation {
 /// or governance announcement. `rng` is used for note seed material and dummy
 /// Merkle paths when randomness is not supplied via `precomputed`; the
 /// security-critical blinding scalars remain caller-supplied.
-#[allow(clippy::too_many_arguments)]
 pub fn build_delegation_bundle(
     real_notes: Vec<RealNoteInput>,
     fvk: &FullViewingKey,
@@ -1045,7 +1044,7 @@ mod tests {
         rng: &mut impl RngCore,
     ) -> (Vec<RealNoteInput>, pallas::Base) {
         let n = values.len();
-        assert!(n >= 1 && n <= circuit::MAX_REAL_NOTES);
+        assert!((1..=circuit::MAX_REAL_NOTES).contains(&n));
         assert_eq!(n, scopes.len());
 
         // Create notes.

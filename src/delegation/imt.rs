@@ -268,6 +268,12 @@ pub struct SpacedLeafImtProvider {
     subtree_levels: Vec<Vec<pallas::Base>>,
 }
 
+impl Default for SpacedLeafImtProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpacedLeafImtProvider {
     /// Create a new spaced-leaf IMT provider (K=2 punctured-range model).
     ///
@@ -348,9 +354,7 @@ impl ImtProvider for SpacedLeafImtProvider {
             idx >>= 1;
         }
 
-        for l in 5..IMT_DEPTH {
-            path[l] = empty[l];
-        }
+        path[5..IMT_DEPTH].copy_from_slice(&empty[5..IMT_DEPTH]);
 
         Ok(ImtProofData {
             root: self.root,

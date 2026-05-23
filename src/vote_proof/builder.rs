@@ -525,7 +525,6 @@ fn deterministic_shuffle(
 /// persisting them.
 ///
 /// **Expensive**: K=13 proof generation takes ~30-60 seconds in release mode.
-#[allow(clippy::too_many_arguments)]
 pub fn build_vote_proof_from_delegation(
     sk: &SpendingKey,
     address_index: u32,

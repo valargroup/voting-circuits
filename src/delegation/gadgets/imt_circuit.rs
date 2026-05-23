@@ -142,7 +142,6 @@ impl PuncturedIntervalGate {
 
     /// Assigns the punctured interval check region.
     /// Returns `(x_lo, x_hi)` for external range checking.
-    #[allow(clippy::too_many_arguments)]
     fn assign(
         &self,
         region: &mut halo2_proofs::circuit::Region<'_, pallas::Base>,
@@ -269,7 +268,6 @@ impl ImtNonMembershipConfig {
 /// 5. Range checks on x_lo, x_hi to [0, 2^250)
 ///
 /// Returns `imt_root` which the caller feeds into the `q_per_note` gate.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::delegation) fn synthesize_imt_non_membership(
     imt_config: &ImtNonMembershipConfig,
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,

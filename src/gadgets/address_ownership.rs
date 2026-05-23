@@ -79,7 +79,6 @@ pub(crate) fn spend_auth_g_mul(
 ///
 /// Returns the ivk cell so callers (e.g. delegation) can reuse it for per-note
 /// diversified address checks.
-#[allow(clippy::type_complexity)]
 pub(crate) fn prove_address_ownership(
     sinsemilla_chip: SinsemillaChip<OrchardHashDomains, OrchardCommitDomains, OrchardFixedBases>,
     ecc_chip: EccChip<OrchardFixedBases>,

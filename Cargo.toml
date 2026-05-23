@@ -39,6 +39,15 @@ criterion = "0.8"
 rand = "0.8"
 incrementalmerkletree = "0.8.1"
 
+[lints.clippy]
+# Halo2 circuit helpers naturally take many `AssignedCell` parameters and
+# return nested tuples of them.
+too_many_arguments = "allow"
+type_complexity = "allow"
+# Fixed-depth range loops (`for i in 0..DEPTH`) over witness arrays are
+# clearer than `.iter().enumerate()` chains in circuit synthesis code.
+needless_range_loop = "allow"
+
 [lib]
 bench = false
 

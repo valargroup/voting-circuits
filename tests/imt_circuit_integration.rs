@@ -39,7 +39,7 @@ fn make_real_note_inputs(
     rng: &mut impl rand::RngCore,
 ) -> (Vec<RealNoteInput>, pallas::Base) {
     let n = values.len();
-    assert!(n >= 1 && n <= 4);
+    assert!((1..=4).contains(&n));
     assert_eq!(n, scopes.len());
 
     let mut notes = Vec::with_capacity(n);

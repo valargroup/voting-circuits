@@ -57,7 +57,6 @@ pub struct ShareRevealBundle {
 /// the share-commitment constraint and can invalidate the reveal. `proposal_id`,
 /// `vote_decision`, `voting_round_id`, and the vote commitment tree witness are
 /// authenticated session parameters supplied by the caller.
-#[allow(clippy::too_many_arguments)]
 pub fn build_share_reveal(
     merkle_auth_path: [pallas::Base; VOTE_COMM_TREE_DEPTH],
     merkle_position: u32,

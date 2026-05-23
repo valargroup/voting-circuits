@@ -59,13 +59,13 @@ use halo2_proofs::{
 use pasta_curves::{pallas, vesta};
 
 use super::gadgets::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
+use crate::domain_tags;
 use crate::gadgets::address_ownership::{prove_address_ownership, spend_auth_g_mul};
 use crate::gadgets::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
 use crate::gadgets::nonzero::NonZeroConfig;
 use crate::gadgets::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
 use crate::gadgets::van_integrity;
 use crate::gadgets::vote_commitment;
-use crate::domain_tags;
 use crate::params::VOTE_COMM_TREE_DEPTH;
 #[cfg(test)]
 use crate::protocol_hash::poseidon_hash_2;
@@ -505,7 +505,6 @@ impl Circuit {
 /// Uses the same parameters as the out-of-circuit
 /// [`crate::shares_hash::share_commitment`] (P128Pow5T3, ConstantLength<5>,
 /// width 3, rate 2) so that native and in-circuit hashes match.
-
 impl plonk::Circuit<pallas::Base> for Circuit {
     type Config = Config;
     type FloorPlanner = floor_planner::V1;
@@ -3602,9 +3601,9 @@ mod tests {
         let (_, instance) = make_test_data();
         let circuit = Circuit::default();
 
-        match MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]) {
-            Ok(prover) => assert!(prover.verify().is_err()),
-            Err(_) => {} // Synthesis failed — acceptable.
+        // Synthesis failure is also acceptable.
+        if let Ok(prover) = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]) {
+            assert!(prover.verify().is_err());
         }
     }
 
