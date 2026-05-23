@@ -17,16 +17,16 @@
 //!         sel_one=1      |             |              |            |                 |              |             |             |        |
 //! -----------------------+-------------+--------------+------------+-----------------+--------------+-------------+-------------+--------+
 //!
-//! Abbreviations:
+//! Abbreviations (doc-side names; the corresponding code-side struct fields are in parens):
 //!   b_i          = i-th bit of the old authority value (authority old). b_i ∈ {0, 1}
 //!   sel_i        = one-hot selector bit that marks which bit position corresponds to proposal_id.
 //!   b_new_i      = i-th bit of the new (decremented) authority value — it's b_i with the selected permission bit cleared.
 //!   pid_inv      = proposal_id^-1              advices[2] repurposed on row 0 only; b_new_i occupies advices[2] on rows 1–16.
 //!   Note: a[0] holds proposal_id on row 0 (for lookup) and b_i on rows 1–16.
-//!   rsel_pow[i]  = Sum sel_j*2^j  (j=0..i)   running weighted sum of selector; equals one_shifted at last row.
-//!   rseld[i]     = Sum sel_j*b_j  (j=0..i)   running sum of selected bit
-//!   rold[i]      = Sum b_j*2^j    (j=0..i)   running recomposition of authority_old
-//!   rnew[i]      = Sum b_new_j*2^j (j=0..i)  running recomposition of authority_new
+//!   rsel_pow[i]  (code: `run_sel_pow`)  = Sum sel_j*2^j  (j=0..i)   running weighted sum of selector; equals one_shifted at last row.
+//!   rseld[i]     (code: `run_selected`) = Sum sel_j*b_j  (j=0..i)   running sum of selected bit
+//!   rold[i]      (code: `run_old`)      = Sum b_j*2^j    (j=0..i)   running recomposition of authority_old
+//!   rnew[i]      (code: `run_new`)      = Sum b_new_j*2^j (j=0..i)  running recomposition of authority_new
 //!   rnew[15]     is returned directly as the new authority value (no separate output row needed)
 //!
 //! ## Constraints and Invariants
@@ -47,40 +47,50 @@
 //!   + shared constraints below
 //!
 //! Shared constraints (rows 1-16, enforced on every bit row):
-//!   (8)  b_i in {0, 1}
-//!   (9)  sel_i in {0, 1}
-//!   (10) b_new_i = b_i * (1 - sel_i)
+//!   (6)  b_i in {0, 1}
+//!   (7)  sel_i in {0, 1}
+//!   (8)  b_new_i = b_i * (1 - sel_i)
 //!          => b_new_i equals b_i everywhere except it is forced to 0 at the
-//!             selected index, clearing that permission bit
-//!   (11) rsel_pow[i] = rsel_pow[i-1] + sel_i * two_pow_i
+//!             selected index, clearing that permission bit. With (6)+(7) this
+//!             also implies b_new_i ∈ {0,1} — no separate bool_check is needed.
+//!   (9)  rsel_pow[i] = rsel_pow[i-1] + sel_i * two_pow_i
 //!          => accumulates the power-of-two weight of the selected bit
-//!   (12) rseld[i] = rseld[i-1] + sel_i * b_i
-//!   (13) rold[i]  = rold[i-1]  + b_i * two_pow_i
-//!   (14) rnew[i]  = rnew[i-1]  + b_new_i * two_pow_i
+//!   (10) rseld[i] = rseld[i-1] + sel_i * b_i
+//!   (11) rold[i]  = rold[i-1]  + b_i * two_pow_i
+//!   (12) rnew[i]  = rnew[i-1]  + b_new_i * two_pow_i
 //!
 //! Row 16 — terminal gate (q_cond_6_selected_one = 1):
-//!   (15) rseld = 1  => the bit at the selected position was 1
-//!                      (voter actually held the permission)
+//!   (13) rseld = 1  => ∑ sel_i * b_i = 1. Combined with the one-hot property
+//!                      of sel from (14), this forces b_{proposal_id} = 1
+//!                      (voter actually held the permission).
 //!
 //! Post-region copy constraints:
-//!   (16) rsel_pow[15] = one_shifted
+//!   (14) rsel_pow[15] = one_shifted
 //!          => since each sel_i ∈ {0,1} and the 2^i weights are distinct, the
 //!             uniqueness of binary representations implies exactly one sel_i = 1,
 //!             at position i = proposal_id (one-hot, anchored to proposal_id).
-//!   (17) rold[15] = proposal_authority_old
+//!   (15) rold[15] = proposal_authority_old
 //!          => the bit decomposition is consistent with the claimed old value.
 //!          rold[15] is the advices[5] cell at row 16, the final step of the
 //!          accumulation; it is in the same permutation cycle as all preceding
-//!          run_old steps, so it cannot be forged independently.
+//!          run_old steps, so it cannot be forged independently. Side effect:
+//!          because rold[15] = ∑ b_j*2^j with b_j ∈ {0,1}, the equality
+//!          implicitly range-checks `proposal_authority_old` to 16 bits.
 //!
 //! rnew[15] (advices[6] at row 16) is returned directly as the circuit output.
 //! No separate output row or equality constraint is needed — the accumulation gates
-//! already fully constrain its value.
+//! already fully constrain its value. The output is implicitly 16-bit-range-checked
+//! by the same argument as (15): rnew[15] = ∑ b_new_j*2^j with b_new_j ∈ {0,1}.
 //!
-//! Together (1)+(16) prove proposal_id is a valid index in [1,15].
-//! Together (9)+(11)+(16) prove sel_i is a one-hot vector with the single 1 at position proposal_id.
-//! Together (10)+(15) prove the old authority had that bit set.
-//! Together (13)+(14)+(17) prove auth_new = auth_old - 2^proposal_id.
+//! Together (1)+(2) prove proposal_id is a valid index in [1,15]:
+//!   (1) gives proposal_id ∈ [0,15] (and one_shifted = 2^proposal_id);
+//!   (2) excludes proposal_id = 0 via the field-inverse witness.
+//! Together (7)+(9)+(14), given the two_pow_i ladder from (4)+(5), prove sel_i
+//!   is a one-hot vector with the single 1 at position proposal_id.
+//! Together (10)+(13), given one-hot sel from above, prove the old authority had
+//!   that bit set: b_{proposal_id} = 1.
+//! Together (8)+(11)+(12)+(15), given one-hot sel and b_{proposal_id} = 1,
+//!   prove auth_new = auth_old - 2^proposal_id.
 //!
 //! ## Worked Example
 //!
@@ -139,6 +149,14 @@ use crate::vote_proof::circuit::MAX_PROPOSAL_ID;
 // Maps each proposal_id `i` to the authority bit mask `1 << i` used to
 // clear that proposal's permission bit. Keep this literal so range or mapping
 // changes are reviewed as fixture changes rather than hidden behind a formula.
+//
+// Load-bearing entry: `(0, 1)`. The lookup expression evaluates to `(0, 1)` on
+// every row where `q_cond_6 = 0` (i.e. every row of the proof except this
+// chip's row 0). That pair therefore MUST remain in the table — removing it,
+// even though `proposal_id = 0` is forbidden by the separate non-zero gate,
+// would cause the lookup to fail globally. The non-zero gate is what excludes
+// `proposal_id = 0` from authentic chip uses; `(0, 1)`'s role here is the
+// selector-gated lookup fallback.
 const AUTHORITY_DECREMENT_LOOKUP_TABLE: [(u64, u64); MAX_PROPOSAL_ID] = [
     (0, 1),
     (1, 2),
@@ -163,31 +181,40 @@ const AUTHORITY_DECREMENT_LOOKUP_TABLE: [(u64, u64); MAX_PROPOSAL_ID] = [
 // ================================================================
 
 /// Configuration for the [`AuthorityDecrementChip`].
+///
+/// Fields are intentionally private: outside this file no caller needs (or
+/// should need) to enable a selector or read a column directly — the chip's
+/// `configure` / `load_table` / `assign` API encapsulates every interaction
+/// with these wires.
 #[derive(Clone, Debug)]
 pub(in crate::vote_proof) struct AuthorityDecrementConfig {
     /// Complex selector for the lookup row (row 0 of the chip region).
     /// When 1 the `(proposal_id, one_shifted)` lookup is enforced;
     /// when 0 the lookup input is `(0, 1)` which always passes.
-    pub(in crate::vote_proof) q_cond_6: Selector,
+    q_cond_6: Selector,
     /// Lookup table column for `proposal_id` in `(proposal_id, 2^proposal_id)`.
     /// Rows: `(0,1), (1,2), ..., (15, 32768)`.
-    pub(in crate::vote_proof) table_proposal_id: TableColumn,
+    table_proposal_id: TableColumn,
     /// Lookup table column for `one_shifted = 2^proposal_id`.
-    pub(in crate::vote_proof) table_one_shifted: TableColumn,
+    table_one_shifted: TableColumn,
     /// Selector for the init row (i=0): enforces `index=0, two_pow_i=1`.
-    pub(in crate::vote_proof) q_cond_6_init: Selector,
+    q_cond_6_init: Selector,
     /// Selector for bit rows i=1..15: recurrence `index++, two_pow_i*=2`.
-    pub(in crate::vote_proof) q_cond_6_bits: Selector,
+    q_cond_6_bits: Selector,
     /// Selector for the last bit row (i=15): enforces `run_sel=1, run_selected=1`.
-    pub(in crate::vote_proof) q_cond_6_selected_one: Selector,
+    q_cond_6_selected_one: Selector,
     /// Advice column that holds `proposal_id^-1` on row 0.
+    ///
+    /// This is an **alias for `advices[2]`** (not an additional column). It is
+    /// stored explicitly for readability at the assignment site; on rows 1–16
+    /// the same column holds `b_new_i` instead, and the `proposal_id != 0`
+    /// gate is selector-gated so the two roles never collide.
     ///
     /// Used by the `proposal_id != 0` gate:
     /// `q_cond_6 * (1 - proposal_id * proposal_id_inv) = 0`.
-    /// This is `advices[2]`, which is otherwise unused on row 0.
-    pub(in crate::vote_proof) proposal_id_inv: Column<Advice>,
+    proposal_id_inv: Column<Advice>,
     /// The 10 shared advice columns passed in by the outer circuit.
-    pub(in crate::vote_proof) advices: [Column<Advice>; 10],
+    advices: [Column<Advice>; 10],
 }
 
 // ================================================================
@@ -292,8 +319,20 @@ pub(in crate::vote_proof) struct AuthorityDecrementChip;
 impl AuthorityDecrementChip {
     /// Creates gates and lookup for the chip.
     ///
-    /// `advices` must be the same 10-column slice used by the outer circuit
-    /// (equality must already be enabled on each column by the caller).
+    /// # Required caller setup
+    ///
+    /// - `advices` must be a 10-column slice (typically the same one used by
+    ///   the outer circuit). Only columns `advices[0..=7]` are read by this
+    ///   chip; `advices[8..=9]` are untouched.
+    /// - **Equality must already be enabled on every column** the caller
+    ///   passes in (`meta.enable_equality(col)`). The chip relies on this for
+    ///   permutation-based copy constraints between the recomposed running
+    ///   sums and the caller's `proposal_authority_old` / `one_shifted` cells.
+    /// - **A fixed column with `enable_constant` must exist** in the parent
+    ///   `ConstraintSystem`. `Self::assign` uses `assign_advice_from_constant`
+    ///   to seed the row-0 running-sum cells to 0; without an enabled constant
+    ///   column synthesis fails with a non-obvious
+    ///   "no fixed column with `enable_constant` set" error.
     pub(in crate::vote_proof) fn configure(
         meta: &mut ConstraintSystem<pallas::Base>,
         advices: [Column<Advice>; 10],
@@ -344,7 +383,7 @@ impl AuthorityDecrementChip {
         // Condition 6 (Proposal Authority Decrement) bit-decomposition gates.
         // Row 1: init (index=0, two_pow_i=1, running sums from first bit).
         let q_cond_6_init = meta.selector();
-        // Rows 2..17: recurrence (index++, two_pow_i *= 2, running sums).
+        // Rows 2..=16: recurrence (index++, two_pow_i *= 2, running sums).
         let q_cond_6_bits = meta.selector();
 
         let one_expr = Expression::Constant(pallas::Base::one());
@@ -470,8 +509,10 @@ impl AuthorityDecrementChip {
                         || one_shifted,
                     )?;
                     // Witness proposal_id^-1 for the `proposal_id != 0` gate.
-                    // If proposal_id = 0 the inverse does not exist and the gate
-                    // will reject the proof; the fallback zero is irrelevant.
+                    // If proposal_id = 0 the inverse does not exist; the gate
+                    // `q · (1 - pid · inv) = 0` then reduces to `q · 1 ≠ 0`
+                    // for ANY choice of `inv`, so any fallback value is sound.
+                    // Zero is picked here purely because it's a convenient default.
                     region.assign_advice(
                         || "proposal_id_inv",
                         config.proposal_id_inv,
@@ -883,6 +924,13 @@ mod tests {
         );
     }
 
+    /// Freezes the lookup table contents to catch accidental edits.
+    ///
+    /// Particular attention to the `(0, 1)` row: it is **not** a usable
+    /// `proposal_id` (the non-zero gate forbids `pid = 0`) but it IS the
+    /// q_cond_6 = 0 fallback target — the lookup expression evaluates to
+    /// `(0, 1)` on every non-chip row of every proof, so removing it would
+    /// break the lookup globally. This test enforces it stays.
     #[test]
     fn lookup_table_contents_frozen() {
         const EXPECTED: [(u64, u64); 16] = [
@@ -906,6 +954,37 @@ mod tests {
 
         assert_eq!(MAX_PROPOSAL_ID, 16);
         assert_eq!(AUTHORITY_DECREMENT_LOOKUP_TABLE, EXPECTED);
+    }
+
+    /// `proposal_authority_old` is implicitly range-checked to 16 bits by the
+    /// copy constraint `run_old[15] = proposal_authority_old`: since
+    /// `run_old[15] = ∑ b_j*2^j` with `b_j ∈ {0,1}` and `j ∈ [0,15]`, any
+    /// 17+-bit `proposal_authority_old` is structurally unsatisfiable.
+    ///
+    /// This load-bearing side effect is asserted here so a future change to
+    /// the bit decomposition (e.g. dropping the equality, widening the range,
+    /// or changing the bit count) cannot silently drop the range check.
+    #[test]
+    fn auth_old_above_16_bits_fails() {
+        // Bit 16 set, bit 1 also set so the run_selected=1 gate would otherwise
+        // succeed for proposal_id=1 — isolating the bit-width failure.
+        assert!(
+            run_chip(0x1_0002, 1, None).is_err(),
+            "auth_old = 0x1_0002 (17 bits) must be rejected by the 16-bit recomposition",
+        );
+
+        // Pure high bit: only bit 16 is set.
+        assert!(
+            run_chip(0x1_0000, 1, None).is_err(),
+            "auth_old = 0x1_0000 (bit 16 only) must be rejected",
+        );
+
+        // Far-out-of-range: anything in the field can be a witness, but the
+        // recomposition still has to fit in 16 bits.
+        assert!(
+            run_chip(u64::MAX, 1, None).is_err(),
+            "auth_old = u64::MAX must be rejected",
+        );
     }
 
     #[test]
