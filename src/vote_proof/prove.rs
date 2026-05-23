@@ -231,6 +231,34 @@ mod tests {
         );
     }
 
+    // TODO(sean): VK-stability tripwire. Hashes the `PinnedVerificationKey`
+    // debug repr and compares against a baked-in fingerprint. A mismatch means
+    // either the circuit shape changed (and the VK must be regenerated and
+    // redistributed) or an unintended drift has been introduced.
+    #[test]
+    #[ignore = "TODO(sean): runs K=13 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
+    fn vk_fingerprint_unchanged() {
+        let (_, _, vk) = vote_proof_cached_keys().expect("vote proof keys");
+        let pinned = format!("{:?}", vk.pinned());
+        let fingerprint = blake2b_simd::Params::new()
+            .hash_length(32)
+            .hash(pinned.as_bytes());
+        let actual: &[u8] = fingerprint.as_bytes();
+
+        let expected: [u8; 32] = [
+            0x72, 0xfc, 0x08, 0xf2, 0x18, 0xf9, 0xfb, 0x37, 0x20, 0x40, 0x0f, 0xd1, 0xf0, 0x30,
+            0x96, 0xe8, 0x5a, 0xd2, 0xef, 0x1e, 0xaa, 0x23, 0xb6, 0x40, 0x2c, 0x07, 0x98, 0xc6,
+            0x6d, 0x5d, 0xe9, 0x76,
+        ];
+
+        assert_eq!(
+            actual,
+            expected.as_slice(),
+            "vote proof VK fingerprint changed; if intentional, update `expected` to:\n{:02x?}",
+            actual,
+        );
+    }
+
     #[test]
     #[ignore = "expensive end-to-end proof generation; run with --ignored when touching verification"]
     fn typed_verify_accepts_proof_created_by_typed_builder() {

@@ -206,4 +206,32 @@ mod tests {
 
         assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
     }
+
+    // TODO(sean): VK-stability tripwire. Hashes the `PinnedVerificationKey`
+    // debug repr and compares against a baked-in fingerprint. A mismatch means
+    // either the circuit shape changed (and the VK must be regenerated and
+    // redistributed) or an unintended drift has been introduced.
+    #[test]
+    #[ignore = "TODO(sean): runs K=11 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
+    fn vk_fingerprint_unchanged() {
+        let (_, _, vk) = share_reveal_cached_keys().expect("share reveal keys");
+        let pinned = format!("{:?}", vk.pinned());
+        let fingerprint = blake2b_simd::Params::new()
+            .hash_length(32)
+            .hash(pinned.as_bytes());
+        let actual: &[u8] = fingerprint.as_bytes();
+
+        let expected: [u8; 32] = [
+            0xed, 0x17, 0x19, 0xda, 0xf7, 0x90, 0x4f, 0xd8, 0x2f, 0xe6, 0x93, 0x53, 0x52, 0x55,
+            0x29, 0xb4, 0x4e, 0xa4, 0x96, 0x29, 0x29, 0xb0, 0x3e, 0x26, 0x72, 0xe7, 0xae, 0xdc,
+            0xbd, 0x69, 0xd9, 0x8b,
+        ];
+
+        assert_eq!(
+            actual,
+            expected.as_slice(),
+            "share reveal VK fingerprint changed; if intentional, update `expected` to:\n{:02x?}",
+            actual,
+        );
+    }
 }

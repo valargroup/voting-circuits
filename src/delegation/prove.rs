@@ -216,6 +216,34 @@ mod prove_tests {
         assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
     }
 
+    // TODO(sean): VK-stability tripwire. Hashes the `PinnedVerificationKey`
+    // debug repr and compares against a baked-in fingerprint. A mismatch means
+    // either the circuit shape changed (and the VK must be regenerated and
+    // redistributed) or an unintended drift has been introduced.
+    #[test]
+    #[ignore = "TODO(sean): runs K=14 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
+    fn vk_fingerprint_unchanged() {
+        let (_, _, vk) = delegation_cached_keys().expect("delegation keys");
+        let pinned = format!("{:?}", vk.pinned());
+        let fingerprint = blake2b_simd::Params::new()
+            .hash_length(32)
+            .hash(pinned.as_bytes());
+        let actual: &[u8] = fingerprint.as_bytes();
+
+        let expected: [u8; 32] = [
+            0xc4, 0xfc, 0xa7, 0xc2, 0x23, 0x3c, 0x48, 0x65, 0x86, 0x25, 0x4a, 0x4c, 0xca, 0xf5,
+            0x03, 0x98, 0xd3, 0x72, 0x1b, 0x49, 0xe1, 0x49, 0xa5, 0x5b, 0xf2, 0x10, 0x93, 0xcf,
+            0xb6, 0xb1, 0x34, 0x7c,
+        ];
+
+        assert_eq!(
+            actual,
+            expected.as_slice(),
+            "delegation VK fingerprint changed; if intentional, update `expected` to:\n{:02x?}",
+            actual,
+        );
+    }
+
     #[test]
     #[ignore = "long-running real proof roundtrip; run with `cargo test -- --ignored`"]
     fn real_proof_roundtrip() {
