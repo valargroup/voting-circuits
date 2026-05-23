@@ -484,7 +484,9 @@ fn deterministic_shuffle(
 /// * `address_index` - The diversifier index of the output recipient
 ///   address used in delegation (typically 1).
 /// * `total_note_value` - Sum of delegated note values in raw zatoshi (e.g. 15_000_000).
-///   Internally converted to ballot count via floor-division by BALLOT_DIVISOR.
+///   Internally converted to ballot count via floor-division by BALLOT_DIVISOR
+///   (the delegation circuit's condition 8 constrains this relation; see the
+///   delegation README §8 for the precise proven statement).
 /// * `van_comm_rand` - The blinding factor used for the VAN in delegation.
 /// * `voting_round_id` - The active governance round identifier (Pallas base
 ///   field element). The caller must authenticate it from the round

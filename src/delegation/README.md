@@ -68,8 +68,8 @@ in `imt.rs` for delegation-only hashes.
    * **van_comm_rand**: a random blinding factor for the governance commitment.
 
 - Private (ballot scaling — condition 8)
-   * **num_ballots**: the ballot count `floor(v_total / 12,500,000)`, witnessed as a free advice.
-   * **remainder**: `v_total mod 12,500,000`, witnessed as a free advice.
+   * **num_ballots**: the ballot count — honestly `floor(v_total / 12,500,000)` — witnessed as a free advice. The circuit constrains this approximately (see §8 "Soundness scope").
+   * **remainder**: honestly `v_total mod 12,500,000`, witnessed as a free advice. Range-checked to `[0, 2^24)` rather than `[0, BALLOT_DIVISOR)` (see §8 "Soundness scope").
 
 - Internal wires (not public inputs, not free witnesses)
    * **ivk**: derived in condition 5 (CommitIvk with external `rivk`), shared with condition 11.
@@ -295,7 +295,7 @@ Where:
 - **DOMAIN_VAN**: `0`. Domain separation tag for Vote Authority Notes (vs `DOMAIN_VC = 1` for Vote Commitments). Assigned via `assign_constant` so the value is baked into the verification key.
 - **g_d_new_x**: the x-coordinate of the output note's diversified generator. Reuses the ECC point from condition 6.
 - **pk_d_new_x**: the x-coordinate of the output note's diversified transmission key. Reuses the ECC point from condition 6.
-- **num_ballots**: the ballot count `floor(v_total / 12,500,000)`, computed in condition 8. `v_total` is the sum `v_1 + v_2 + v_3 + v_4 + v_5`, computed in-circuit via four `AddChip` additions. **Each `v_i` is an internal wire** — produced by per-note condition 9 (note commitment integrity), not a free witness. The value is bound to the actual note commitment.
+- **num_ballots**: the ballot count (honestly `floor(v_total / 12,500,000)`; the precise proven relation is defined by condition 8 — see §8 "Soundness scope"). `v_total` is the sum `v_1 + v_2 + v_3 + v_4 + v_5`, computed in-circuit via four `AddChip` additions. **Each `v_i` is an internal wire** — produced by per-note condition 9 (note commitment integrity), not a free witness. The value is bound to the actual note commitment.
 - **vote_round_id**: the vote round identifier (public input, same cell as condition 3).
 - **MAX_PROPOSAL_AUTHORITY**: `2^16 - 1 = 65535`. A 16-bit bitmask authorizing voting on all 16 proposals. Assigned via `assign_constant` so the value is baked into the verification key.
 - **van_comm_rand**: a random blinding factor. Prevents observers from brute-forcing the address or weight from the public `van_comm`.
@@ -312,7 +312,7 @@ The same two-layer hash structure is used by ZKP #2 (vote proof, conditions 2 an
 
 ## 8. Ballot Scaling
 
-Purpose: convert the total delegated value into a ballot count via floor-division, simultaneously enforcing a minimum voting weight (at least 1 ballot = 0.125 ZEC).
+Purpose: convert the total delegated value into a ballot count (1 ballot = 0.125 ZEC) and simultaneously enforce a minimum voting weight (at least 1 ballot). The Euclidean-style decomposition below is one constraint short of pinning `num_ballots` to exact floor-division — see *Soundness scope* below for the precise statement and the documented under-claim window.
 
 ```
 num_ballots = floor(v_total / 12,500,000)
@@ -322,11 +322,33 @@ num_ballots = floor(v_total / 12,500,000)
 
 1. **Euclidean division**: `num_ballots * BALLOT_DIVISOR + remainder == v_total` — via `MulChip` (product) and `AddChip` (sum), then equality constraint against `v_total`.
 
-2. **Remainder range**: `remainder < 2^24` — since 24 is not a multiple of 10 (the lookup table word size), the circuit multiplies by `2^6` and range-checks the shifted value to 30 bits (3 words × 10 bits). If `remainder >= 2^24`, the shifted value `>= 2^30`, failing the check. Since `BALLOT_DIVISOR = 12,500,000 < 2^24`, this suffices.
+2. **Remainder range**: `remainder < 2^24` — since 24 is not a multiple of 10 (the lookup table word size), the circuit multiplies by `2^6` and range-checks the shifted value to 30 bits (3 words × 10 bits). If `remainder >= 2^24`, the shifted value `>= 2^30`, failing the check. The bound `2^24` is the tightest power-of-two-aligned bound that does not break completeness — every honest `remainder < BALLOT_DIVISOR = 12,500,000` fits in `[0, 2^24)`. The bound is *looser* than `BALLOT_DIVISOR`, however, and that slack admits an alternative witness; see *Soundness scope* below.
 
 3. **Non-zero and upper bound**: `0 < num_ballots <= 2^30` — via `nb_minus_one = num_ballots - 1`, constrained by `nb_minus_one + 1 == num_ballots`, with a 30-bit range check on `nb_minus_one` (3 words × 10 bits, no shift needed). This single check enforces both bounds: if `nb_minus_one < 2^30` then `num_ballots ∈ [1, 2^30]`. If `num_ballots = 0`, `nb_minus_one` wraps to `p - 1 ≈ 2^254`, which fails the range check. `2^30` ballots × 0.125 ZEC ≈ 134M ZEC, well above the 21M ZEC supply.
 
 **Constructions:** `MulChip`, `AddChip`, `LookupRangeCheckConfig`.
+
+### Soundness scope: one-ballot under-claim window
+
+The three constraints above do not pin `(num_ballots, remainder)` to the unique pair returned by Euclidean floor-division. Given the honest witness `(q, r) = (floor(v_total / D), v_total mod D)` with `D = BALLOT_DIVISOR = 12,500,000`, the alternative `(q - 1, r + D)` also satisfies every constraint whenever:
+
+- `r + D < 2^24`, i.e. `r < 2^24 - D = 4,277,216`, **and**
+- `q - 1 >= 1`, i.e. honest `q >= 2`.
+
+Modeling `r` as uniform over `[0, D)`, the window covers `4,277,216 / 12,500,000 ≈ 34.22%` of `v_total` values. The opposite direction (`(q + 1, r - D)`) requires `r - D` as a near-`p` field element, which fails the 30-bit shifted range check — so **over-claim is impossible**.
+
+**Proof sketch.** Suppose `(q_1, r_1) ≠ (q_2, r_2)` both satisfy the constraints for the same `v_total`. Then `(q_1 - q_2) * D ≡ r_2 - r_1 (mod p)`. The range checks give `|q_1 - q_2| * D ≤ (2^30 - 1) * D < 2^54 << p`, so the equation holds in integers. Combined with `|r_2 - r_1| < 2^24`, that forces `|q_1 - q_2| < 2^24 / D < 2`, so `|q_1 - q_2| ∈ {0, 1}`. The `= 1` case yields the under-claim above; the field representation of `r - D` for an honest `r ∈ [0, D)` is `≥ p - D`, which fails the 30-bit range check, ruling out over-claim.
+
+**Impact.** The deviation is self-harming: a voter can choose to commit to one fewer ballot than their stake entitles them to, losing voting power. The VAN binding (condition 7) hashes whatever `num_ballots` the prover chose, and ZKP #2 (vote proof) opens the VAN with that same value — no downstream check re-derives `num_ballots` from `v_total`. There is no over-claim path.
+
+### Tightening options (not implemented)
+
+Either of the following constraints, added alongside the existing remainder range check, would pin `remainder` to `[0, BALLOT_DIVISOR)` exactly and close the under-claim window:
+
+- Range-check `delta = (BALLOT_DIVISOR - 1) - remainder` to 24 bits (via the same `× 2^6 → 30-bit` shift), with an equality constraint `delta + remainder == BALLOT_DIVISOR - 1`. If `remainder ≥ BALLOT_DIVISOR`, `delta` wraps to a near-`p` element and fails the check.
+- Range-check `remainder + (2^24 - BALLOT_DIVISOR)` to 24 bits directly. If `remainder ≥ BALLOT_DIVISOR`, the value exceeds `2^24`.
+
+Either approach adds ~1 `MulChip` + 1 `AddChip` + 1 30-bit range check (≈3-4 rows). The current circuit ships without this tightening; the self-harming under-claim window is documented as a known limitation rather than fixed.
 
 ## 9. Note Commitment Integrity (x5)
 

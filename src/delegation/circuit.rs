@@ -20,7 +20,7 @@
 //! - **Condition 5**: CommitIvk & diversified address integrity.
 //! - **Condition 6**: Output note commitment integrity.
 //! - **Condition 7**: Governance commitment integrity (hashes `num_ballots`).
-//! - **Condition 8**: Ballot scaling (`num_ballots = floor(v_total / 12,500,000)`).
+//! - **Condition 8**: Ballot scaling (approximately `num_ballots = floor(v_total / 12,500,000)`; the remainder range check admits a documented one-ballot under-claim window — see delegation README §8 "Soundness scope" for the precise relation).
 //! - **Condition 9** (×5): Note commitment integrity.
 //! - **Condition 10** (×5): Merkle path validity (gated by value; dummy notes skip).
 //! - **Condition 11** (×5): Diversified address integrity.
@@ -396,8 +396,10 @@ pub struct Circuit {
     notes: [NoteSlotWitness; 5],
     // Gov commitment blinding factor (condition 7).
     van_comm_rand: Value<pallas::Base>,
-    // Condition 8 (ballot scaling) witnesses.
+    // Condition 8 (ballot scaling) witnesses. Honest values:
     // num_ballots = floor(v_total / BALLOT_DIVISOR), remainder = v_total % BALLOT_DIVISOR.
+    // See delegation/README.md §8 ("Soundness scope") for the precise proven
+    // relation — a one-ballot under-claim witness is also admissible.
     num_ballots: Value<pallas::Base>,
     remainder: Value<pallas::Base>,
 }
@@ -1279,20 +1281,29 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // ---------------------------------------------------------------
         // Condition 8: Ballot scaling.
-        // num_ballots = floor(v_total / BALLOT_DIVISOR)
-        // Proved by: num_ballots * BALLOT_DIVISOR + remainder == v_total,
-        //            range checks on num_ballots and remainder,
-        //            and a non-zero check on num_ballots.
+        // Approximately num_ballots = floor(v_total / BALLOT_DIVISOR).
+        // The remainder range check below (< 2^24) is looser than
+        // BALLOT_DIVISOR, which admits a one-ballot under-claim window
+        // (over-claim is impossible). Proved by:
+        //   num_ballots * BALLOT_DIVISOR + remainder == v_total,
+        //   range checks on num_ballots and remainder,
+        //   and a non-zero check on num_ballots.
+        // See delegation/README.md §8 ("Soundness scope") for the precise
+        // proven relation and the available tightening approaches.
         // ---------------------------------------------------------------
 
         // Ballot scaling (condition 8).
         //
-        // Converts the raw zatoshi balance into a ballot count via floor-division:
+        // Converts the raw zatoshi balance into a ballot count via Euclidean
+        // decomposition (slightly weaker than exact floor-division — see the
+        // delegation README §8 "Soundness scope" for the documented
+        // one-ballot under-claim window):
         //   num_ballots = floor(v_total / 12,500,000)
         //
         // Constraints:
         //   1. num_ballots * BALLOT_DIVISOR + remainder == v_total
-        //   2. remainder < 2^24   (24-bit range check via shift-by-2^6)
+        //   2. remainder < 2^24   (24-bit range check via shift-by-2^6;
+        //                          loose vs. BALLOT_DIVISOR — see README)
         //   3. 0 < num_ballots <= 2^30  (via nb_minus_one 30-bit range check)
         //
         // Range check implementation: the lookup table operates in 10-bit words,
@@ -1422,9 +1433,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         //
         // Proves that the governance commitment (public input) is correctly derived
         // from the domain tag, the output note's voting hotkey address, the ballot
-        // count (floor-divided from v_total), the vote round identifier, a blinding
-        // factor, and the proposal authority bitmask (MAX_PROPOSAL_AUTHORITY = 65535
-        // for full authority).
+        // count (approximately floor-divided from v_total; see condition 8), the
+        // vote round identifier, a blinding factor, and the proposal authority
+        // bitmask (MAX_PROPOSAL_AUTHORITY = 65535 for full authority).
         //
         // Uses two Poseidon invocations over even arities (6 then 2).
         {

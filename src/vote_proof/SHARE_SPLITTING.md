@@ -6,6 +6,8 @@ When casting a vote (ZKP2), a voter's total delegated weight (`num\_ballots`) is
 
 The share-splitting algorithm is a **defense-in-depth** layer: if unlinkability were somehow broken (EA + helper collusion, side-channel, etc.), individual share values should not fingerprint the voter's exact balance. The algorithm creates *anonymity tiers* — many voters at different balances produce identical individual share values, so a decrypted share may reveal the tier but not the position within it.
 
+> The conversion from raw zatoshi to `num_ballots` is performed by ZKP #1's condition 8. The delegation README §8 documents the precise relation it proves (slightly weaker than exact floor-division, in a documented one-ballot under-claim window). The share-splitting argument below treats `num_ballots` as given — whichever value the voter committed to during delegation is the input to share splitting.
+
 ## Algorithm overview
 
 **Phase 1 — Greedy fill (up to 9 slots).** Repeatedly subtract the largest standard denomination from `[10M, 1M, 100K, 10K, 1K, 100, 10, 1]` (in ballots) that fits. Stop after 9 slots or when balance is zero.

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Documented
+
+- Clarified that the delegation circuit's condition 8 ("Ballot Scaling")
+  proves `num_ballots ∈ { floor(v_total / BALLOT_DIVISOR), floor(v_total /
+  BALLOT_DIVISOR) − 1 }` in a documented under-claim window, rather than
+  exact floor-division. The remainder range check is `< 2^24` rather than
+  `< BALLOT_DIVISOR`, admitting one-sided under-claim of one ballot in ~34%
+  of `v_total` values. Over-claim is impossible, and the deviation is
+  self-harming (the voter under-claims their own voting power). The circuit
+  itself is unchanged in this release; see `src/delegation/README.md` §8
+  ("Soundness scope") for the analysis and the available tightening
+  approaches.
+
 ### Changed
 
 - **Breaking:** Moved shared protocol items out of `vote_proof` to the crate

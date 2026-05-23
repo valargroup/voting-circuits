@@ -29,7 +29,7 @@ Domain-tag encoding is owned by `crate::domain_tags`.
 - Private (VAN ownership — conditions 1–4, 5)
    * **vpk_g_d**: voting public key — diversified base point (full affine point from DiversifyHash(d)). Witnessed as `NonIdentityPoint`; x-coordinate extracted for Poseidon hashing (conditions 2, 7). This is the `vpk_d` component of the voting hotkey address. Matches ZKP 1 (delegation) VAN structure.
    * **vpk_pk_d**: voting public key — diversified transmission key (full affine point, pk_d = [ivk_v] * g_d). Witnessed as `NonIdentityPoint`; x-coordinate extracted for Poseidon hashing (conditions 2, 7). Condition 3 (Diversified Address Integrity) constrains this to equal `[ivk_v] * vpk_g_d`. Matches ZKP 1 VAN structure.
-   * **total_note_value**: the voter's total delegated weight, denominated in ballots (1 ballot = 0.125 ZEC; converted from zatoshi by ZKP #1 condition 8).
+   * **total_note_value**: the voter's total delegated weight, denominated in ballots (1 ballot = 0.125 ZEC; converted from zatoshi by ZKP #1 condition 8 — see the delegation README §8 for the proven relation).
    * **proposal_authority_old**: remaining proposal authority bitmask in the old VAN.
    * **van_comm_rand**: blinding randomness for the VAN commitment.
    * **vote_authority_note_old**: the old VAN commitment (two-layer Poseidon hash, same structure as ZKP 1 van_comm).
@@ -324,7 +324,7 @@ Where:
 
 Secondary benefit: after accumulation the EA decrypts to `total_value * G` and must solve a bounded DLOG (baby-step giant-step, O(√n)) to recover `total_value`. Bounded shares keep the per-decision aggregate small enough for efficient recovery.
 
-**Bound:** `[0, 2^30)` via 3 × 10-bit words with strict mode. Shares are denominated in ballots (1 ballot = 0.125 ZEC, converted from zatoshi by ZKP #1's condition 8). halo2_gadgets v0.3's `short_range_check` is `pub(crate)` (private to the gadget crate), so exact non-10-bit-aligned bounds (e.g. 24-bit) are unavailable. 2^30 ballots ≈ 134M ZEC — well above the 21M ZEC supply — so the bound is never binding in practice.
+**Bound:** `[0, 2^30)` via 3 × 10-bit words with strict mode. Shares are denominated in ballots (1 ballot = 0.125 ZEC, converted from zatoshi by ZKP #1's condition 8; see the delegation README §8 for the proven relation). halo2_gadgets v0.3's `short_range_check` is `pub(crate)` (private to the gadget crate), so exact non-10-bit-aligned bounds (e.g. 24-bit) are unavailable. 2^30 ballots ≈ 134M ZEC — well above the 21M ZEC supply — so the bound is never binding in practice.
 
 **Structure:** For each share, one `copy_check` call (16 calls total, ~64 rows):
 - `copy_check(share_i, 3, true)` — decomposes the share into 3 × 10-bit lookup words. Each word is range-checked via the 10-bit lookup table. The `true` (strict) flag constrains the final running sum `z_3` to equal 0, enforcing `share < 2^30`.

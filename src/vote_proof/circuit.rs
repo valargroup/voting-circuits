@@ -370,7 +370,8 @@ pub struct Circuit {
     /// Condition 3 (Diversified Address Integrity) constrains this to equal `[ivk_v] * vpk_g_d`.
     pub(super) vpk_pk_d: Value<pallas::Affine>,
     /// The voter's total delegated weight, denominated in ballots
-    /// (1 ballot = 0.125 ZEC; converted from zatoshi by ZKP #1 condition 8).
+    /// (1 ballot = 0.125 ZEC; converted from zatoshi by ZKP #1 condition 8 —
+    /// see the delegation README §8 for the proven relation).
     pub(super) total_note_value: Value<pallas::Base>,
     // Condition 6:
     /// Remaining proposal authority bitmask in the old VAN.
