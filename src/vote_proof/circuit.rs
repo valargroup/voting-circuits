@@ -8,7 +8,7 @@
 //! - **Condition 3**: Diversified Address Integrity (`vpk_pk_d = [ivk_v] * vpk_g_d` via CommitIvk).
 //! - **Condition 4**: Spend Authority — `r_vpk = vsk.ak + [alpha_v] * G` (fixed-base mul + point add, `constrain_instance`).
 //! - **Condition 5**: VAN Nullifier Integrity (nested Poseidon, `constrain_instance`).
-//! - **Condition 6**: Proposal Authority Decrement (custom bit-decomposition chip with a `(proposal_id, 2^proposal_id)` lookup; see `authority_decrement.rs`).
+//! - **Condition 6**: Proposal Authority Decrement (custom bit-decomposition chip with a `(proposal_id, 2^proposal_id)` lookup; see `gadgets/authority_decrement.rs`).
 //! - **Condition 7**: New VAN Integrity (Poseidon hash, `constrain_instance`).
 //! - **Condition 8**: Shares Sum Correctness (AddChip, `constrain_equal`).
 //! - **Condition 9**: Shares Range (LookupRangeCheck, `[0, 2^30)`).
@@ -230,7 +230,7 @@ pub(super) fn van_nullifier_hash(
 /// Holds chip configs for Poseidon (conditions 1, 2, 5, 7, 10, 12), AddChip
 /// (condition 8), LookupRangeCheck (condition 9), ECC (conditions 3, 4, 11),
 /// the Merkle swap gate (condition 1), and the custom
-/// `AuthorityDecrementChip` (condition 6; see `authority_decrement.rs` —
+/// `AuthorityDecrementChip` (condition 6; see `gadgets/authority_decrement.rs` —
 /// uses neither AddChip nor LookupRangeCheck).
 #[derive(Clone, Debug)]
 pub struct Config {
