@@ -13,8 +13,7 @@ mod gadgets;
 mod protocol_hash;
 mod prove_error;
 mod shares_hash;
-
-pub mod params;
+mod params;
 
 pub use gadgets::elgamal::spend_auth_g_affine;
 pub use protocol_hash::poseidon_hash_2;
@@ -22,7 +21,5 @@ pub use prove_error::ProveError;
 pub use shares_hash::{share_commitment, shares_hash, shares_hash_from_comms};
 
 pub mod delegation;
-
 pub mod vote_proof;
-
 pub mod share_reveal;
