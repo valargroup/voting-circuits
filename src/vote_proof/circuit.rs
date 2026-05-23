@@ -147,18 +147,18 @@ pub(super) const MAX_PROPOSAL_ID: usize = 16;
 // ================================================================
 
 /// Public input offset for the VAN nullifier (prevents double-vote).
-pub const VAN_NULLIFIER_PUBLIC_OFFSET: usize = 0;
+const VAN_NULLIFIER_PUBLIC_OFFSET: usize = 0;
 /// Public input offset for the randomized voting public key (condition 4: Spend Authority).
 /// x-coordinate of r_vpk = vsk.ak + [alpha_v] * G.
-pub const R_VPK_X_PUBLIC_OFFSET: usize = 1;
+const R_VPK_X_PUBLIC_OFFSET: usize = 1;
 /// Public input offset for r_vpk y-coordinate.
-pub const R_VPK_Y_PUBLIC_OFFSET: usize = 2;
+const R_VPK_Y_PUBLIC_OFFSET: usize = 2;
 /// Public input offset for the new VAN commitment (with decremented authority).
-pub const VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET: usize = 3;
+const VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET: usize = 3;
 /// Public input offset for the vote commitment hash.
-pub const VOTE_COMMITMENT_PUBLIC_OFFSET: usize = 4;
+const VOTE_COMMITMENT_PUBLIC_OFFSET: usize = 4;
 /// Public input offset for the vote commitment tree root.
-pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 5;
+const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 5;
 /// Public input offset for the tree anchor height.
 // The circuit does not constrain this slot to a witness cell. It is
 // transcript-bound metadata whose meaning is authenticated by the verifier's
@@ -167,23 +167,23 @@ pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 5;
 // which the circuit does constrain. This keeps the binding between height and
 // root in the chain state lookup rather than in this proof.
 #[allow(dead_code)]
-pub const VOTE_COMM_TREE_ANCHOR_HEIGHT_PUBLIC_OFFSET: usize = 6;
+const VOTE_COMM_TREE_ANCHOR_HEIGHT_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the proposal identifier.
 ///
 /// In-circuit constraint: `proposal_id` is in `[1, MAX_PROPOSAL_ID)` via the
 /// authority-decrement lookup. The caller must additionally verify that this
 /// ID is in the active proposal set for `voting_round_id`.
-pub const PROPOSAL_ID_PUBLIC_OFFSET: usize = 7;
+const PROPOSAL_ID_PUBLIC_OFFSET: usize = 7;
 /// Public input offset for the governance voting round identifier.
 ///
 /// The circuit binds this value into the VAN nullifier, new VAN, and vote
 /// commitment, but the caller must authenticate it from the active round's
 /// governance announcement.
-pub const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
+const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
 /// Public input offset for the election authority public key x-coordinate.
-pub const EA_PK_X_PUBLIC_OFFSET: usize = 9;
+const EA_PK_X_PUBLIC_OFFSET: usize = 9;
 /// Public input offset for the election authority public key y-coordinate.
-pub const EA_PK_Y_PUBLIC_OFFSET: usize = 10;
+const EA_PK_Y_PUBLIC_OFFSET: usize = 10;
 
 // ================================================================
 // Out-of-circuit helpers
@@ -473,7 +473,7 @@ impl Circuit {
     /// - Condition 7 reuses all condition 2 witnesses except
     ///   `proposal_authority_old`, which is replaced by the
     ///   in-circuit `proposal_authority_new` from condition 6.
-    pub fn with_van_witnesses(
+    pub(super) fn with_van_witnesses(
         vote_comm_tree_path: Value<[pallas::Base; VOTE_COMM_TREE_DEPTH]>,
         vote_comm_tree_position: Value<u32>,
         vpk_g_d: Value<pallas::Affine>,

@@ -106,14 +106,14 @@ pub const K: u32 = 11;
 // ================================================================
 
 /// Public input offset for the share nullifier (prevents double-counting).
-pub const SHARE_NULLIFIER_PUBLIC_OFFSET: usize = 0;
+const SHARE_NULLIFIER_PUBLIC_OFFSET: usize = 0;
 /// Public input offset for the revealed share's C1 x-coordinate.
 ///
 /// This is caller-supplied. Condition 4 binds it transitively to the committed
 /// vote by proving `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` equals the
 /// selected private `share_comm`; ZKP #2 does not publish per-share
 /// ciphertext coordinates as public inputs.
-pub const ENC_SHARE_C1_X_PUBLIC_OFFSET: usize = 1;
+const ENC_SHARE_C1_X_PUBLIC_OFFSET: usize = 1;
 /// Public input offset for the revealed share's C1 y-coordinate.
 ///
 /// Binds the proof to the exact curve point (not just x-coordinate),
@@ -121,23 +121,23 @@ pub const ENC_SHARE_C1_X_PUBLIC_OFFSET: usize = 1;
 /// negates ElGamal ciphertext points without invalidating the ZKP. Like the
 /// x-coordinate, this is caller-supplied and bound through the selected
 /// `share_comm` Poseidon preimage.
-pub const ENC_SHARE_C1_Y_PUBLIC_OFFSET: usize = 2;
+const ENC_SHARE_C1_Y_PUBLIC_OFFSET: usize = 2;
 /// Public input offset for the revealed share's C2 x-coordinate.
 ///
 /// Caller-supplied and bound through condition 4's selected share-commitment
 /// equality; not directly published by ZKP #2.
-pub const ENC_SHARE_C2_X_PUBLIC_OFFSET: usize = 3;
+const ENC_SHARE_C2_X_PUBLIC_OFFSET: usize = 3;
 /// Public input offset for the revealed share's C2 y-coordinate.
 ///
 /// Caller-supplied y-coordinate for exact-point binding, transitively tied to
 /// the committed vote through the selected `share_comm`.
-pub const ENC_SHARE_C2_Y_PUBLIC_OFFSET: usize = 4;
+const ENC_SHARE_C2_Y_PUBLIC_OFFSET: usize = 4;
 /// Public input offset for the proposal identifier.
-pub const PROPOSAL_ID_PUBLIC_OFFSET: usize = 5;
+const PROPOSAL_ID_PUBLIC_OFFSET: usize = 5;
 /// Public input offset for the vote decision.
-pub const VOTE_DECISION_PUBLIC_OFFSET: usize = 6;
+const VOTE_DECISION_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the vote commitment tree root.
-pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 7;
+const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 7;
 /// Public input offset for the voting round identifier.
 ///
 /// Constrained in-circuit: `voting_round_id` is hashed into `vote_commitment`
@@ -147,7 +147,7 @@ pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 7;
 /// `vote_comm_tree_root` alone does not provide round scoping. The chain also
 /// validates that `voting_round_id` matches an active session (Gov Steps V1
 /// §5.4 "Out-of-circuit checks").
-pub const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
+const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
 
 // ================================================================
 // Out-of-circuit helpers

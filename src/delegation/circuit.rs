@@ -115,30 +115,30 @@ pub const K: u32 = 14;
 // ================================================================
 
 /// Public input offset for the derived nullifier.
-pub const NF_SIGNED_PUBLIC_OFFSET: usize = 0;
+const NF_SIGNED_PUBLIC_OFFSET: usize = 0;
 /// Public input offset for rk (x-coordinate).
-pub const RK_X_PUBLIC_OFFSET: usize = 1;
+const RK_X_PUBLIC_OFFSET: usize = 1;
 /// Public input offset for rk (y-coordinate).
-pub const RK_Y_PUBLIC_OFFSET: usize = 2;
+const RK_Y_PUBLIC_OFFSET: usize = 2;
 /// Public input offset for the output note's extracted commitment (condition 6).
-pub const CMX_NEW_PUBLIC_OFFSET: usize = 3;
+const CMX_NEW_PUBLIC_OFFSET: usize = 3;
 /// Public input offset for the governance commitment.
-pub const VAN_COMM_PUBLIC_OFFSET: usize = 4;
+const VAN_COMM_PUBLIC_OFFSET: usize = 4;
 /// Public input offset for the vote round identifier.
-pub const VOTE_ROUND_ID_PUBLIC_OFFSET: usize = 5;
+const VOTE_ROUND_ID_PUBLIC_OFFSET: usize = 5;
 /// Public input offset for the note commitment tree root.
-pub const NC_ROOT_PUBLIC_OFFSET: usize = 6;
+const NC_ROOT_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the nullifier IMT root.
-pub const NF_IMT_ROOT_PUBLIC_OFFSET: usize = 7;
+const NF_IMT_ROOT_PUBLIC_OFFSET: usize = 7;
 /// Public input offsets for per-note governance nullifiers (derived from real notes).
-pub const GOV_NULL_1_PUBLIC_OFFSET: usize = 8;
-pub const GOV_NULL_2_PUBLIC_OFFSET: usize = 9;
-pub const GOV_NULL_3_PUBLIC_OFFSET: usize = 10;
-pub const GOV_NULL_4_PUBLIC_OFFSET: usize = 11;
-pub const GOV_NULL_5_PUBLIC_OFFSET: usize = 12;
+const GOV_NULL_1_PUBLIC_OFFSET: usize = 8;
+const GOV_NULL_2_PUBLIC_OFFSET: usize = 9;
+const GOV_NULL_3_PUBLIC_OFFSET: usize = 10;
+const GOV_NULL_4_PUBLIC_OFFSET: usize = 11;
+const GOV_NULL_5_PUBLIC_OFFSET: usize = 12;
 
 /// Gov null offsets indexed by note slot.
-pub const GOV_NULL_PUBLIC_OFFSETS: [usize; 5] = [
+const GOV_NULL_PUBLIC_OFFSETS: [usize; 5] = [
     GOV_NULL_1_PUBLIC_OFFSET,
     GOV_NULL_2_PUBLIC_OFFSET,
     GOV_NULL_3_PUBLIC_OFFSET,
@@ -146,7 +146,7 @@ pub const GOV_NULL_PUBLIC_OFFSETS: [usize; 5] = [
     GOV_NULL_5_PUBLIC_OFFSET,
 ];
 /// Public input offset for the nullifier domain.
-pub const DOM_PUBLIC_OFFSET: usize = 13;
+const DOM_PUBLIC_OFFSET: usize = 13;
 
 /// Maximum proposal authority — the default for a fresh delegation.
 ///
