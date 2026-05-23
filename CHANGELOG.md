@@ -15,6 +15,15 @@
   ("Soundness scope") for the analysis and the available tightening
   approaches.
 
+### Added
+
+- Re-exported `delegation::InstanceError` at the `delegation` module root
+  so callers can name the error type returned by `delegation::Instance::from_parts`
+  and carried by `DelegationBuildError::Instance`.
+- Re-exported `delegation::Config` at the `delegation` module root for
+  consistency with `vote_proof::Config` and `share_reveal::Config`.
+- Added a `Default` impl for `delegation::SpacedLeafImtProvider`.
+
 ### Changed
 
 - **Breaking:** Moved shared protocol items out of `vote_proof` to the crate
@@ -22,6 +31,16 @@
   - `voting_circuits::vote_proof::spend_auth_g_affine` → `voting_circuits::spend_auth_g_affine`
   - `voting_circuits::vote_proof::shares_hash` → `voting_circuits::shares_hash`
   - `voting_circuits::vote_proof::VOTE_COMM_TREE_DEPTH` → `voting_circuits::VOTE_COMM_TREE_DEPTH`
+
+### Removed
+
+- **Breaking:** `voting_circuits::vote_proof::poseidon_hash_2` and
+  `voting_circuits::vote_proof::share_commitment` are no longer part of the
+  public API.
+- **Breaking:** Several builder-style methods on `delegation::Circuit`
+  (`from_note_unchecked`, `with_output_note`, `with_van_comm_rand`,
+  `with_ballot_scaling`) are no longer public. Construct delegation circuits
+  through `delegation::build_delegation_bundle` instead.
 
 ## v0.6.0
 
