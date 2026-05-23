@@ -182,7 +182,7 @@ fn non_identity_padding_point(
     slot_index: usize,
     component: &'static str,
 ) -> Result<NonIdentityPallasPoint, DelegationBuildError> {
-    NonIdentityPallasPoint::from_bytes(&point.to_affine().to_bytes())
+    NonIdentityPallasPoint::from_bytes(&point.to_bytes())
         .into_option()
         .ok_or(DelegationBuildError::InvalidPaddingPoint {
             slot_index,
@@ -256,8 +256,8 @@ fn note_commitment_point(
     domain
         .commit(
             iter::empty()
-                .chain(byte_bits(g_d.to_affine().to_bytes()))
-                .chain(byte_bits(pk_d.to_affine().to_bytes()))
+                .chain(byte_bits(g_d.to_bytes()))
+                .chain(byte_bits(pk_d.to_bytes()))
                 .chain(u64_bits(value.inner()).take(L_VALUE))
                 .chain(rho.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
                 .chain(psi.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE)),
@@ -274,7 +274,7 @@ fn derive_note_nullifier(
     nk: pallas::Base,
     rho: pallas::Base,
     psi: pallas::Base,
-    cm: pallas::Point,
+    cm: pallas::Affine,
 ) -> Option<pallas::Base> {
     let k = pallas::Point::hash_to_curve("z.cash:Orchard")(b"K");
     let prf_nf = poseidon_hash_2(nk, rho);
@@ -306,7 +306,7 @@ struct SyntheticPaddingDerivation {
     pk_d_pad: NonIdentityPallasPoint,
     psi: pallas::Base,
     rcm: orchard::note::NoteCommitTrapdoor,
-    cm: pallas::Point,
+    cm: pallas::Affine,
     cmx: pallas::Base,
     real_nf: pallas::Base,
 }
@@ -337,9 +337,13 @@ fn derive_synthetic_padding_note(
         psi,
         rcm.inner(),
     )
-    .ok_or(DelegationBuildError::InvalidPaddingNoteCommitment { location })?;
-    let cmx =
-        point_x_opt(&cm).ok_or(DelegationBuildError::InvalidPaddingNoteCommitment { location })?;
+    .ok_or(DelegationBuildError::InvalidPaddingNoteCommitment { location })?
+    .to_affine();
+    let cmx = *cm
+        .coordinates()
+        .into_option()
+        .ok_or(DelegationBuildError::InvalidPaddingNoteCommitment { location })?
+        .x();
     let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm)
         .ok_or(DelegationBuildError::InvalidPaddingNullifier { location })?;
 
@@ -723,7 +727,7 @@ pub fn build_delegation_bundle(
             rho: Value::known(rho.into_inner()),
             psi: Value::known(psi),
             rcm: Value::known(rcm),
-            cm: Value::known(cm.inner()),
+            cm: Value::known(cm.inner().to_affine()),
             path: Value::known(input.merkle_path.auth_path()),
             pos: Value::known(input.merkle_path.position()),
             imt_nf_bounds: Value::known(input.imt_proof.nf_bounds),
@@ -1002,11 +1006,12 @@ mod tests {
             psi,
             rcm.inner(),
         )
-        .expect("test padding commitment should be valid");
+        .expect("test padding commitment should be valid")
+        .to_affine();
         let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm)
             .expect("test padding nullifier should be valid");
 
-        assert_eq!(padding.cmx, point_x(&cm));
+        assert_eq!(padding.cmx, *cm.coordinates().unwrap().x());
         assert_eq!(padding.v_raw, 0);
         assert_eq!(padding.gov_null, gov_null_hash(nk, dom, real_nf));
         assert_eq!(requested_nfs, &[real_nf]);
@@ -1318,14 +1323,8 @@ mod tests {
             // coordinate access; the wrapper enforces the non-identity invariant
             // at construction (`padding_points` -> `assert_non_identity`).
             assert_eq!(*pk_d_pad, *g_d_pad * ivk);
-            assert_ne!(
-                g_d_pad.to_affine().to_bytes(),
-                real_orchard_addr.g_d().to_affine().to_bytes()
-            );
-            assert_ne!(
-                pk_d_pad.to_affine().to_bytes(),
-                real_orchard_addr.pk_d().to_bytes()
-            );
+            assert_ne!(*g_d_pad, *real_orchard_addr.g_d());
+            assert_ne!(*pk_d_pad, *real_orchard_addr.pk_d().inner());
         }
     }
 
@@ -1447,7 +1446,7 @@ mod tests {
             let nk = fvk.nk().inner();
             let rho = note.rho();
             let psi = note.rseed().psi(&rho);
-            let cm = note.commitment().inner();
+            let cm = note.commitment().inner().to_affine();
 
             let mirrored = derive_note_nullifier(nk, rho.into_inner(), psi, cm);
             let orchard = note.nullifier(&fvk).inner();
@@ -1533,12 +1532,13 @@ mod tests {
                     *psi,
                     rcm.inner(),
                 )
-                .expect("test padding commitment should be valid");
+                .expect("test padding commitment should be valid")
+                .to_affine();
                 let real_nf = derive_note_nullifier(nk, *rho_inner, *psi, cm)
                     .expect("test padding nullifier should be valid");
 
                 *cm_witness == cm
-                    && padding.cmx == point_x(&cm)
+                    && padding.cmx == *cm.coordinates().unwrap().x()
                     && padding.gov_null == gov_null_hash(nk, dom, real_nf)
                     && imt.requested_nfs.borrow().as_slice() == [real_nf]
             },
@@ -1628,7 +1628,8 @@ mod tests {
             expected_psi,
             expected_rcm.inner(),
         )
-        .expect("test padding commitment should be valid");
+        .expect("test padding commitment should be valid")
+        .to_affine();
         let expected_nf = derive_note_nullifier(nk, rho.into_inner(), expected_psi, expected_cm)
             .expect("test padding nullifier should be valid");
 
@@ -1637,7 +1638,7 @@ mod tests {
         assert_eq!(derived.psi, expected_psi);
         assert_eq!(derived.rcm.inner(), expected_rcm.inner());
         assert_eq!(derived.cm, expected_cm);
-        assert_eq!(derived.cmx, point_x(&expected_cm));
+        assert_eq!(derived.cmx, *expected_cm.coordinates().unwrap().x());
         assert_eq!(derived.real_nf, expected_nf);
     }
 

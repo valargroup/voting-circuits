@@ -1469,13 +1469,10 @@ mod tests {
     use orchard::constants::{fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
 
     /// Generates an El Gamal keypair for testing.
-    /// Returns `(ea_sk, ea_pk_point, ea_pk_affine)`.
-    fn generate_ea_keypair() -> (pallas::Scalar, pallas::Point, pallas::Affine) {
+    fn generate_ea_keypair() -> (pallas::Scalar, pallas::Affine) {
         let ea_sk = pallas::Scalar::from(42u64);
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let ea_pk = g * ea_sk;
-        let ea_pk_affine = ea_pk.to_affine();
-        (ea_sk, ea_pk, ea_pk_affine)
+        let ea_pk = (spend_auth_g_affine() * ea_sk).to_affine();
+        (ea_sk, ea_pk)
     }
 
     /// Computes real El Gamal encryptions for 16 shares.
@@ -1488,7 +1485,7 @@ mod tests {
     /// - `shares_hash_value` is the blinded Poseidon hash of all shares
     fn encrypt_shares(
         shares: [u64; 16],
-        ea_pk: pallas::Point,
+        ea_pk: pallas::Affine,
     ) -> (
         [pallas::Base; 16],
         [pallas::Base; 16],
@@ -1539,7 +1536,7 @@ mod tests {
         rivk_v: pallas::Scalar,
     ) -> (pallas::Affine, pallas::Affine) {
         // Step 1: ak = [vsk] * SpendAuthG
-        let g = pallas::Point::from(spend_auth_g_affine());
+        let g = spend_auth_g_affine();
         let ak_point = g * vsk;
         let ak_x = *ak_point.to_affine().coordinates().unwrap().x();
 
@@ -1646,8 +1643,7 @@ mod tests {
         proposal_id: u64,
         van_comm_rand: pallas::Base,
         shares_u64: [u64; 16],
-        ea_pk_point: pallas::Point,
-        ea_pk_affine: pallas::Affine,
+        ea_pk: pallas::Affine,
     }
 
     impl VoteReuseFixture {
@@ -1658,7 +1654,7 @@ mod tests {
             let rivk_v = pallas::Scalar::random(&mut rng);
             let alpha_v = pallas::Scalar::random(&mut rng);
             let (vpk_g_d_affine, vpk_pk_d_affine) = derive_voting_address(vsk, vsk_nk, rivk_v);
-            let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
+            let (_ea_sk, ea_pk) = generate_ea_keypair();
 
             Self {
                 vsk,
@@ -1672,8 +1668,7 @@ mod tests {
                 proposal_id: TEST_PROPOSAL_ID,
                 van_comm_rand: pallas::Base::random(&mut rng),
                 shares_u64: [625; 16],
-                ea_pk_point,
-                ea_pk_affine,
+                ea_pk,
             }
         }
 
@@ -1723,13 +1718,13 @@ mod tests {
             let van_nullifier =
                 van_nullifier_hash(self.vsk_nk, voting_round_id, vote_authority_note_old);
 
-            let g = pallas::Point::from(spend_auth_g_affine());
-            let r_vpk = (g * self.vsk + g * self.alpha_v).to_affine();
+            let g = spend_auth_g_affine();
+            let r_vpk = (g * (self.vsk + self.alpha_v)).to_affine();
             let r_vpk_x = *r_vpk.coordinates().unwrap().x();
             let r_vpk_y = *r_vpk.coordinates().unwrap().y();
 
             let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-                encrypt_shares(self.shares_u64, self.ea_pk_point);
+                encrypt_shares(self.shares_u64, self.ea_pk);
 
             let mut circuit = Circuit::with_van_witnesses(
                 Value::known(auth_path),
@@ -1753,7 +1748,7 @@ mod tests {
             circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
             circuit.share_blinds = share_blinds.map(Value::known);
             circuit.share_randomness = randomness.map(Value::known);
-            circuit.ea_pk = Value::known(self.ea_pk_affine);
+            circuit.ea_pk = Value::known(self.ea_pk);
             let vote_commitment = set_condition_11(
                 &mut circuit,
                 shares_hash_val,
@@ -1771,8 +1766,8 @@ mod tests {
                 pallas::Base::from(anchor_height),
                 pallas::Base::from(self.proposal_id),
                 voting_round_id,
-                *self.ea_pk_affine.coordinates().unwrap().x(),
-                *self.ea_pk_affine.coordinates().unwrap().y(),
+                *self.ea_pk.coordinates().unwrap().x(),
+                *self.ea_pk.coordinates().unwrap().y(),
             );
 
             (circuit, instance)
@@ -1798,10 +1793,9 @@ mod tests {
 
         let (vpk_g_d_affine, vpk_pk_d_affine) = derive_voting_address(vsk, vsk_nk, rivk_v);
 
-        // Condition 4: r_vpk = ak + [alpha_v] * G
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let ak_point = g * vsk;
-        let r_vpk = (ak_point + g * alpha_v).to_affine();
+        // Condition 4: r_vpk = ak + [alpha_v] * G = [vsk + alpha_v] * G
+        let g = spend_auth_g_affine();
+        let r_vpk = (g * (vsk + alpha_v)).to_affine();
         let r_vpk_x = *r_vpk.coordinates().unwrap().x();
         let r_vpk_y = *r_vpk.coordinates().unwrap().y();
 
@@ -1843,11 +1837,11 @@ mod tests {
         let shares_u64: [u64; 16] = [625; 16]; // sum = 10000
 
         // Condition 11: El Gamal encryption of shares under ea_pk.
-        let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
-        let ea_pk_x = *ea_pk_affine.coordinates().unwrap().x();
-        let ea_pk_y = *ea_pk_affine.coordinates().unwrap().y();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
+        let ea_pk_x = *ea_pk.coordinates().unwrap().x();
+        let ea_pk_y = *ea_pk.coordinates().unwrap().y();
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk_point);
+            encrypt_shares(shares_u64, ea_pk);
 
         let mut circuit = Circuit::with_van_witnesses(
             Value::known(auth_path),
@@ -1871,7 +1865,7 @@ mod tests {
         circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk_affine);
+        circuit.ea_pk = Value::known(ea_pk);
 
         // Condition 12: vote commitment from shares_hash + proposal + decision.
         let vote_commitment =
@@ -1943,15 +1937,15 @@ mod tests {
         let rivk_v = pallas::Scalar::random(&mut rng);
         let alpha_v = pallas::Scalar::random(&mut rng);
         let (vpk_g_d_affine, vpk_pk_d_affine) = derive_voting_address(vsk, vsk_nk, rivk_v);
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let r_vpk = (g * vsk + g * alpha_v).to_affine();
+        let g = spend_auth_g_affine();
+        let r_vpk = (g * (vsk + alpha_v)).to_affine();
         instance.r_vpk_x = *r_vpk.coordinates().unwrap().x();
         instance.r_vpk_y = *r_vpk.coordinates().unwrap().y();
 
         let shares_u64: [u64; 16] = [625; 16];
-        let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk_point);
+            encrypt_shares(shares_u64, ea_pk);
 
         // Use authority 13 (bit 3 set) and one_shifted = 8 so condition 6 is consistent;
         // only condition 2 (VAN hash) should fail due to wrong_van.
@@ -1979,7 +1973,7 @@ mod tests {
         circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk_affine);
+        circuit.ea_pk = Value::known(ea_pk);
         let vc = set_condition_11(
             &mut circuit,
             shares_hash_val,
@@ -1988,8 +1982,8 @@ mod tests {
         );
         instance.vote_commitment = vc;
         instance.proposal_id = pallas::Base::from(TEST_PROPOSAL_ID);
-        instance.ea_pk_x = *ea_pk_affine.coordinates().unwrap().x();
-        instance.ea_pk_y = *ea_pk_affine.coordinates().unwrap().y();
+        instance.ea_pk_x = *ea_pk.coordinates().unwrap().x();
+        instance.ea_pk_y = *ea_pk.coordinates().unwrap().y();
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         // Should fail: derived hash ≠ witnessed vote_authority_note_old.
@@ -2153,9 +2147,9 @@ mod tests {
         );
 
         let shares_u64: [u64; 16] = [625; 16];
-        let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk_point);
+            encrypt_shares(shares_u64, ea_pk);
 
         let wrong_vsk = pallas::Scalar::random(&mut rng);
         assert_ne!(
@@ -2163,8 +2157,8 @@ mod tests {
             "test assumes distinct vsk with high probability"
         );
         let alpha_v = pallas::Scalar::random(&mut rng);
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let r_vpk = (g * vsk + g * alpha_v).to_affine();
+        let g = spend_auth_g_affine();
+        let r_vpk = (g * (vsk + alpha_v)).to_affine();
         let r_vpk_x = *r_vpk.coordinates().unwrap().x();
         let r_vpk_y = *r_vpk.coordinates().unwrap().y();
 
@@ -2190,7 +2184,7 @@ mod tests {
         circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk_affine);
+        circuit.ea_pk = Value::known(ea_pk);
         let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
@@ -2203,8 +2197,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk_affine.coordinates().unwrap().x(),
-            *ea_pk_affine.coordinates().unwrap().y(),
+            *ea_pk.coordinates().unwrap().x(),
+            *ea_pk.coordinates().unwrap().y(),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -2261,13 +2255,13 @@ mod tests {
         );
 
         let shares_u64: [u64; 16] = [625; 16];
-        let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk_point);
+            encrypt_shares(shares_u64, ea_pk);
 
         let alpha_v = pallas::Scalar::random(&mut rng);
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let r_vpk = (g * vsk + g * alpha_v).to_affine();
+        let g = spend_auth_g_affine();
+        let r_vpk = (g * (vsk + alpha_v)).to_affine();
         let r_vpk_x = *r_vpk.coordinates().unwrap().x();
         let r_vpk_y = *r_vpk.coordinates().unwrap().y();
 
@@ -2293,7 +2287,7 @@ mod tests {
         circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk_affine);
+        circuit.ea_pk = Value::known(ea_pk);
         let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
@@ -2306,8 +2300,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk_affine.coordinates().unwrap().x(),
-            *ea_pk_affine.coordinates().unwrap().y(),
+            *ea_pk.coordinates().unwrap().x(),
+            *ea_pk.coordinates().unwrap().y(),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -2421,8 +2415,8 @@ mod tests {
         // Use a DIFFERENT vsk_nk in the circuit.
         let wrong_vsk_nk = pallas::Base::random(&mut rng);
         let alpha_v = pallas::Scalar::random(&mut rng);
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let r_vpk = (g * vsk + g * alpha_v).to_affine();
+        let g = spend_auth_g_affine();
+        let r_vpk = (g * (vsk + alpha_v)).to_affine();
         let r_vpk_x = *r_vpk.coordinates().unwrap().x();
         let r_vpk_y = *r_vpk.coordinates().unwrap().y();
 
@@ -2430,9 +2424,9 @@ mod tests {
         let shares_u64: [u64; 16] = [625; 16];
 
         // Condition 11: real El Gamal encryption.
-        let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk_point);
+            encrypt_shares(shares_u64, ea_pk);
 
         let mut circuit = Circuit::with_van_witnesses(
             Value::known(auth_path),
@@ -2456,7 +2450,7 @@ mod tests {
         circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk_affine);
+        circuit.ea_pk = Value::known(ea_pk);
         let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
@@ -2469,8 +2463,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk_affine.coordinates().unwrap().x(),
-            *ea_pk_affine.coordinates().unwrap().y(),
+            *ea_pk.coordinates().unwrap().x(),
+            *ea_pk.coordinates().unwrap().y(),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -2792,8 +2786,8 @@ mod tests {
         );
 
         let alpha_v = pallas::Scalar::random(&mut rng);
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let r_vpk = (g * vsk + g * alpha_v).to_affine();
+        let g = spend_auth_g_affine();
+        let r_vpk = (g * (vsk + alpha_v)).to_affine();
         let r_vpk_x = *r_vpk.coordinates().unwrap().x();
         let r_vpk_y = *r_vpk.coordinates().unwrap().y();
 
@@ -2801,9 +2795,9 @@ mod tests {
         let shares_u64: [u64; 16] = [625; 16];
 
         // Condition 11: real El Gamal encryption.
-        let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk_point);
+            encrypt_shares(shares_u64, ea_pk);
 
         let mut circuit = Circuit::with_van_witnesses(
             Value::known(auth_path),
@@ -2827,7 +2821,7 @@ mod tests {
         circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk_affine);
+        circuit.ea_pk = Value::known(ea_pk);
         let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
@@ -2840,8 +2834,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk_affine.coordinates().unwrap().x(),
-            *ea_pk_affine.coordinates().unwrap().y(),
+            *ea_pk.coordinates().unwrap().x(),
+            *ea_pk.coordinates().unwrap().y(),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -2931,13 +2925,13 @@ mod tests {
         // Condition 11: real El Gamal encryption with max-value shares.
         let max_share_u64 = (1u64 << 30) - 1;
         let shares_u64: [u64; 16] = [max_share_u64; 16];
-        let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk_point);
+            encrypt_shares(shares_u64, ea_pk);
 
         let alpha_v = pallas::Scalar::random(&mut rng);
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let r_vpk = (g * vsk + g * alpha_v).to_affine();
+        let g = spend_auth_g_affine();
+        let r_vpk = (g * (vsk + alpha_v)).to_affine();
         let r_vpk_x = *r_vpk.coordinates().unwrap().x();
         let r_vpk_y = *r_vpk.coordinates().unwrap().y();
 
@@ -2963,7 +2957,7 @@ mod tests {
         circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk_affine);
+        circuit.ea_pk = Value::known(ea_pk);
         let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
@@ -2976,8 +2970,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk_affine.coordinates().unwrap().x(),
-            *ea_pk_affine.coordinates().unwrap().y(),
+            *ea_pk.coordinates().unwrap().x(),
+            *ea_pk.coordinates().unwrap().y(),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -3071,12 +3065,12 @@ mod tests {
             arr[0] = 1u64 << 30;
             arr
         };
-        let (_ea_sk, ea_pk_point, ea_pk_affine) = generate_ea_keypair();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk_point);
+            encrypt_shares(shares_u64, ea_pk);
 
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let r_vpk = (g * vsk + g * alpha_v).to_affine();
+        let g = spend_auth_g_affine();
+        let r_vpk = (g * (vsk + alpha_v)).to_affine();
 
         let mut circuit = Circuit::with_van_witnesses(
             Value::known(auth_path),
@@ -3100,7 +3094,7 @@ mod tests {
         circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
         circuit.share_blinds = share_blinds.map(Value::known);
         circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk_affine);
+        circuit.ea_pk = Value::known(ea_pk);
 
         let vote_commitment =
             set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
@@ -3115,8 +3109,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk_affine.coordinates().unwrap().x(),
-            *ea_pk_affine.coordinates().unwrap().y(),
+            *ea_pk.coordinates().unwrap().x(),
+            *ea_pk.coordinates().unwrap().y(),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -3377,10 +3371,10 @@ mod tests {
     fn encryption_integrity_randomness_zero_is_rejected() {
         let (mut circuit, mut instance) = make_test_data();
         let shares_u64 = [625u64; 16];
-        let (_ea_sk, ea_pk_point, _ea_pk_affine) = generate_ea_keypair();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
         let (mut c1_x, mut c2_x, mut c1_y, mut c2_y, mut randomness, blinds, _) =
-            encrypt_shares(shares_u64, ea_pk_point);
-        let c2 = pallas::Point::from(spend_auth_g_affine()) * pallas::Scalar::from(shares_u64[0]);
+            encrypt_shares(shares_u64, ea_pk);
+        let c2 = spend_auth_g_affine() * pallas::Scalar::from(shares_u64[0]);
         let c2_coords = c2.to_affine().coordinates().unwrap();
 
         randomness[0] = pallas::Base::zero();
@@ -3469,20 +3463,20 @@ mod tests {
     /// The out-of-circuit elgamal_encrypt helper is deterministic.
     #[test]
     fn elgamal_encrypt_deterministic() {
-        let (_ea_sk, ea_pk_point, _ea_pk_affine) = generate_ea_keypair();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
 
         let v = pallas::Base::from(1000u64);
         let r = pallas::Base::from(42u64);
 
         let (c1_a, c2_a, _, _) =
-            elgamal_encrypt(v, r, ea_pk_point).expect("test encryption inputs should be valid");
+            elgamal_encrypt(v, r, ea_pk).expect("test encryption inputs should be valid");
         let (c1_b, c2_b, _, _) =
-            elgamal_encrypt(v, r, ea_pk_point).expect("test encryption inputs should be valid");
+            elgamal_encrypt(v, r, ea_pk).expect("test encryption inputs should be valid");
         assert_eq!(c1_a, c1_b);
         assert_eq!(c2_a, c2_b);
 
         // Different randomness → different C1.
-        let (c1_c, _, _, _) = elgamal_encrypt(v, pallas::Base::from(99u64), ea_pk_point)
+        let (c1_c, _, _, _) = elgamal_encrypt(v, pallas::Base::from(99u64), ea_pk)
             .expect("test encryption inputs should be valid");
         assert_ne!(c1_a, c1_c);
     }

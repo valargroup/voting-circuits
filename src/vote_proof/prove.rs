@@ -240,8 +240,7 @@ mod tests {
         use orchard::keys::SpendingKey;
 
         let sk = SpendingKey::from_bytes([0x42; 32]).expect("valid test spending key");
-        let ea_pk =
-            (pallas::Point::from(spend_auth_g_affine()) * pallas::Scalar::from(42u64)).to_affine();
+        let ea_pk = (spend_auth_g_affine() * pallas::Scalar::from(42u64)).to_affine();
         let bundle = build_vote_proof_from_delegation(
             &sk,
             1,

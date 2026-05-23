@@ -62,9 +62,7 @@ pub(crate) struct EaPkInstanceLoc {
 /// introducing a second generator point; the 22-window `SpendAuthGShort` tables
 /// share the same generator as the full-scalar SpendAuthG.
 pub fn spend_auth_g_affine() -> pallas::Affine {
-    use group::Curve;
-    let g = orchard::constants::fixed_bases::spend_auth_g::generator();
-    pallas::Point::from(g).to_affine()
+    orchard::constants::fixed_bases::spend_auth_g::generator()
 }
 
 /// Converts a `pallas::Base` field element to a `pallas::Scalar`.
@@ -125,11 +123,11 @@ impl std::error::Error for ElGamalEncryptError {}
 pub(crate) fn elgamal_encrypt(
     share_value: pallas::Base,
     randomness: pallas::Base,
-    ea_pk: pallas::Point,
+    ea_pk: pallas::Affine,
 ) -> Result<(pallas::Base, pallas::Base, pallas::Base, pallas::Base), ElGamalEncryptError> {
     use group::Curve;
 
-    let g = pallas::Point::from(spend_auth_g_affine());
+    let g = spend_auth_g_affine();
     if bool::from(randomness.is_zero()) {
         return Err(ElGamalEncryptError::ZeroRandomness);
     }
@@ -337,11 +335,11 @@ pub(crate) fn prove_elgamal_encryptions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use group::{Curve, Group};
+    use group::{prime::PrimeCurveAffine, Curve};
 
     #[test]
     fn elgamal_encrypt_rejects_zero_randomness() {
-        let ea_pk = pallas::Point::from(spend_auth_g_affine());
+        let ea_pk = spend_auth_g_affine();
         let err = elgamal_encrypt(pallas::Base::from(1), pallas::Base::zero(), ea_pk)
             .expect_err("zero randomness should be rejected without panicking");
 
@@ -352,8 +350,8 @@ mod tests {
     fn elgamal_encrypt_returns_slots_in_documented_order() {
         let share_value = pallas::Base::from(7u64);
         let randomness = pallas::Base::from(11u64);
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let ea_pk = g * pallas::Scalar::from(13u64);
+        let g = spend_auth_g_affine();
+        let ea_pk = (g * pallas::Scalar::from(13u64)).to_affine();
 
         let (c1_x, c2_x, c1_y, c2_y) = elgamal_encrypt(share_value, randomness, ea_pk)
             .expect("test encryption inputs should produce non-identity ciphertext points");
@@ -382,7 +380,7 @@ mod tests {
         let err = elgamal_encrypt(
             pallas::Base::zero(),
             pallas::Base::from(1),
-            pallas::Point::identity(),
+            pallas::Affine::identity(),
         )
         .expect_err("zero share under identity key should produce identity C2");
 

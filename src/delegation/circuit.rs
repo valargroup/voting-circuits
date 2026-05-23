@@ -361,7 +361,7 @@ pub(super) struct NoteSlotWitness {
     pub(super) rho: Value<pallas::Base>,
     pub(super) psi: Value<pallas::Base>,
     pub(super) rcm: Value<NoteCommitTrapdoor>,
-    pub(super) cm: Value<pallas::Point>,
+    pub(super) cm: Value<pallas::Affine>,
     pub(super) path: Value<[MerkleHashOrchard; MERKLE_DEPTH_ORCHARD]>,
     pub(super) pos: Value<u32>,
     pub(super) imt_nf_bounds: Value<[pallas::Base; 3]>,
@@ -732,11 +732,12 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // key with no cryptographic strength - any signature would trivially verify against it.
         // By constraining, we ensure that the delegated spend authority is backed by a real meaningful
         // public key.
-        let ak_P: Value<pallas::Point> = self.ak.as_ref().map(|ak| ak.into());
         let ak_P = NonIdentityPoint::new(
             ecc_chip.clone(),
             layouter.namespace(|| "witness ak_P"),
-            ak_P.map(|ak_P| ak_P.to_affine()),
+            self.ak
+                .as_ref()
+                .map(|ak| pallas::Point::from(ak).to_affine()),
         )?;
 
         // Witness g_d_signed (diversified generator from the note's address).
@@ -1577,7 +1578,7 @@ fn synthesize_note_slot(
     let cm = Point::new(
         ecc_chip.clone(),
         layouter.namespace(|| format!("note {s} witness cm")),
-        note.cm.as_ref().map(|cm| cm.to_affine()),
+        note.cm.as_ref().copied(),
     )?;
 
     // Defense-by-rejection: `psi` and `rcm` are witnessed rather than derived
@@ -1896,9 +1897,8 @@ impl Instance {
         }
 
         let rk_bytes: [u8; 32] = (&rk).into();
-        let rk_point = pallas::Point::from_bytes(&rk_bytes)
+        let rk_affine = pallas::Affine::from_bytes(&rk_bytes)
             .expect("VerificationKey constructor accepted on-curve bytes");
-        let rk_affine = rk_point.to_affine();
         let rk_coords = rk_affine
             .coordinates()
             .expect("identity rk rejected before coordinate extraction");
@@ -1988,7 +1988,7 @@ mod tests {
             rho: Value::known(rho.into_inner()),
             psi: Value::known(psi),
             rcm: Value::known(rcm),
-            cm: Value::known(cm.inner()),
+            cm: Value::known(cm.inner().to_affine()),
             path: Value::known(*auth_path),
             pos: Value::known(pos),
             imt_nf_bounds: Value::known(imt.nf_bounds),
@@ -2254,13 +2254,12 @@ mod tests {
 
         let mut instance = t.instance.clone();
         let rk_bytes: [u8; 32] = (&wrong_rk).into();
-        let wrong_rk_point = pallas::Point::from_bytes(&rk_bytes)
+        let wrong_rk_coords = pallas::Affine::from_bytes(&rk_bytes)
             .unwrap()
-            .to_affine()
             .coordinates()
             .unwrap();
-        instance.rk_x = *wrong_rk_point.x();
-        instance.rk_y = *wrong_rk_point.y();
+        instance.rk_x = *wrong_rk_coords.x();
+        instance.rk_y = *wrong_rk_coords.y();
 
         let pi = instance.to_halo2_instance();
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();

@@ -1045,18 +1045,16 @@ mod tests {
         );
     }
 
-    fn generate_ea_keypair() -> (pallas::Scalar, pallas::Point, pallas::Affine) {
+    fn generate_ea_keypair() -> (pallas::Scalar, pallas::Affine) {
         let ea_sk = pallas::Scalar::from(42u64);
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let ea_pk = g * ea_sk;
-        let ea_pk_affine = ea_pk.to_affine();
-        (ea_sk, ea_pk, ea_pk_affine)
+        let ea_pk = (spend_auth_g_affine() * ea_sk).to_affine();
+        (ea_sk, ea_pk)
     }
 
     /// Returns `(c1_x, c2_x, c1_y, c2_y, share_blinds, share_comms, shares_hash_value)`.
     fn encrypt_shares(
         shares: [u64; 16],
-        ea_pk: pallas::Point,
+        ea_pk: pallas::Affine,
     ) -> (
         [pallas::Base; 16],
         [pallas::Base; 16],
@@ -1103,9 +1101,9 @@ mod tests {
         let vote_decision = pallas::Base::from(1u64);
         let voting_round_id = pallas::Base::from(999u64);
 
-        let (_ea_sk, ea_pk_point, _ea_pk_affine) = generate_ea_keypair();
+        let (_ea_sk, ea_pk) = generate_ea_keypair();
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, share_blinds, share_comms, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk_point);
+            encrypt_shares(shares_u64, ea_pk);
 
         let vote_commitment = compute_vote_commitment_hash(
             voting_round_id,

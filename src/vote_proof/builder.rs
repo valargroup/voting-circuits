@@ -339,8 +339,7 @@ fn encrypted_share_coordinates(
 /// `ask = PRF_expand(sk)`, then negate if the resulting ak has ỹ = 1.
 fn extract_vsk(sk: &SpendingKey) -> pallas::Scalar {
     let ask_raw = SpendAuthorizingKey::derive_inner(sk);
-    let g = pallas::Point::from(spend_auth_g_affine());
-    let ak_point = (g * ask_raw).to_affine();
+    let ak_point = (spend_auth_g_affine() * ask_raw).to_affine();
     let ak_bytes = ak_point.to_bytes();
 
     // If the sign bit of ak is 1, the real ask was negated.
@@ -554,7 +553,6 @@ pub fn build_vote_proof_from_delegation(
         pallas_coordinates(ea_pk).ok_or(VoteProofBuildError::InvalidElectionPublicKey)?;
     let ea_pk_x = *ea_pk_coords.x();
     let ea_pk_y = *ea_pk_coords.y();
-    let ea_pk_point = pallas::Point::from(ea_pk);
 
     // ---- Key derivation (matches delegation's key hierarchy) ----
 
@@ -564,8 +562,10 @@ pub fn build_vote_proof_from_delegation(
     let rivk_v = fvk.rivk(Scope::External).inner();
 
     let address = fvk.address_at(address_index, Scope::External);
-    let vpk_g_d_affine = address.g_d().to_affine();
-    let vpk_pk_d_affine = address.pk_d().inner().to_affine();
+    let vpk_g_d = address.g_d();
+    let vpk_pk_d = address.pk_d().inner();
+    let vpk_g_d_affine = vpk_g_d.to_affine();
+    let vpk_pk_d_affine = vpk_pk_d.to_affine();
 
     let vpk_g_d_coords = pallas_coordinates(vpk_g_d_affine)
         .expect("orchard address g_d is non-identity by construction");
@@ -582,7 +582,7 @@ pub fn build_vote_proof_from_delegation(
         use orchard::constants::{fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
 
         // Check 1: [vsk] * SpendAuthG must match the ak from the FullViewingKey.
-        let ak_from_vsk = (pallas::Point::from(spend_auth_g_affine()) * vsk).to_affine();
+        let ak_from_vsk = (spend_auth_g_affine() * vsk).to_affine();
         let fvk_bytes = fvk.to_bytes();
         let ak_from_fvk_bytes: [u8; 32] = fvk_bytes[0..32].try_into().unwrap();
         let ak_from_fvk: pallas::Affine = {
@@ -608,7 +608,7 @@ pub fn build_vote_proof_from_delegation(
             )
             .expect("CommitIvk must not produce bottom");
         let ivk_scalar = base_to_scalar(ivk).expect("ivk must be convertible to scalar");
-        let pk_d_derived = (pallas::Point::from(vpk_g_d_affine) * ivk_scalar).to_affine();
+        let pk_d_derived = (*vpk_g_d * ivk_scalar).to_affine();
         assert_eq!(
             pk_d_derived, vpk_pk_d_affine,
             "CommitIvk chain mismatch: [ivk]*g_d != pk_d from address"
@@ -697,7 +697,7 @@ pub fn build_vote_proof_from_delegation(
     // Encrypts each share and captures both point coordinates for circuit
     // constraints plus the full compressed point bytes for reveal-share payloads.
 
-    let g = pallas::Point::from(spend_auth_g_affine());
+    let g = spend_auth_g_affine();
     let mut enc_c1_x = [pallas::Base::zero(); 16];
     let mut enc_c2_x = [pallas::Base::zero(); 16];
     let mut enc_c1_y = [pallas::Base::zero(); 16];
@@ -726,7 +726,7 @@ pub fn build_vote_proof_from_delegation(
         let v_scalar = base_to_scalar(shares_base[i]).expect("share value in range");
 
         let c1_point = (g * r_scalar).to_affine();
-        let c2_point = (g * v_scalar + ea_pk_point * r_scalar).to_affine();
+        let c2_point = (g * v_scalar + ea_pk * r_scalar).to_affine();
 
         let c1_coords = encrypted_share_coordinates(c1_point, i, "c1")?;
         let c2_coords = encrypted_share_coordinates(c2_point, i, "c2")?;
@@ -761,10 +761,9 @@ pub fn build_vote_proof_from_delegation(
     });
     let shares_hash_val = shares_hash(share_blinds, enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y);
 
-    // ---- Condition 4: r_vpk = ak + [alpha_v] * G ----
+    // ---- Condition 4: r_vpk = ak + [alpha_v] * G = [vsk + alpha_v] * G ----
     // alpha_v is now provided by the caller so they can sign with rsk_v.
-    let ak_point = pallas::Point::from(spend_auth_g_affine()) * vsk;
-    let r_vpk = (ak_point + pallas::Point::from(spend_auth_g_affine()) * alpha_v).to_affine();
+    let r_vpk = (spend_auth_g_affine() * (vsk + alpha_v)).to_affine();
     let r_vpk_coords =
         pallas_coordinates(r_vpk).ok_or(VoteProofBuildError::InvalidRandomizedVotingPublicKey)?;
     let r_vpk_x = *r_vpk_coords.x();
@@ -1001,7 +1000,7 @@ mod tests {
         let r_inv: Option<pallas::Scalar> = r_scalar.invert().into();
         let ea_pk_scalar =
             -pallas::Scalar::from(1u64) * r_inv.expect("test randomness should be non-zero");
-        let ea_pk = (pallas::Point::from(spend_auth_g_affine()) * ea_pk_scalar).to_affine();
+        let ea_pk = (spend_auth_g_affine() * ea_pk_scalar).to_affine();
 
         let err = build_vote_proof_from_delegation(
             &sk,
@@ -1031,8 +1030,7 @@ mod tests {
     #[test]
     fn build_vote_proof_rejects_identity_r_vpk() {
         let sk = test_sk();
-        let ea_pk =
-            (pallas::Point::from(spend_auth_g_affine()) * pallas::Scalar::from(42u64)).to_affine();
+        let ea_pk = (spend_auth_g_affine() * pallas::Scalar::from(42u64)).to_affine();
         let err = build_vote_proof_from_delegation(
             &sk,
             1,

@@ -124,6 +124,7 @@ pub fn build_share_reveal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use group::Curve;
     use halo2_proofs::dev::MockProver;
     use pasta_curves::pallas;
 
@@ -136,8 +137,7 @@ mod tests {
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_builder_round_trip() {
         let ea_sk = pallas::Scalar::from(42u64);
-        let g = pallas::Point::from(spend_auth_g_affine());
-        let ea_pk = g * ea_sk;
+        let ea_pk = (spend_auth_g_affine() * ea_sk).to_affine();
 
         let shares: [u64; 16] = [625; 16];
         let randomness: [pallas::Base; 16] =
