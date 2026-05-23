@@ -8,10 +8,11 @@
 
 use ff::{Field, PrimeField};
 use halo2_proofs::dev::MockProver;
+use imt_tree::tree::{
+    build_levels, build_punctured_ranges, commit_punctured_ranges, find_punctured_range_for_value,
+    precompute_empty_hashes, verify_punctured_range_spans, PuncturedRange, TREE_DEPTH,
+};
 use incrementalmerkletree::{Hashable, Level};
-use pasta_curves::pallas;
-use rand::rngs::OsRng;
-
 use orchard::{
     keys::{FullViewingKey, Scope, SpendingKey},
     note::{ExtractedNoteCommitment, Note, Rho},
@@ -19,14 +20,11 @@ use orchard::{
     value::NoteValue,
     NOTE_COMMITMENT_TREE_DEPTH,
 };
+use pasta_curves::pallas;
+use rand::rngs::OsRng;
 use voting_circuits::delegation::{
     build_delegation_bundle, build_nullifier_list, build_sentinel_list, ImtError, ImtProofData,
     ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
-};
-
-use imt_tree::tree::{
-    build_levels, build_punctured_ranges, commit_punctured_ranges, find_punctured_range_for_value,
-    precompute_empty_hashes, verify_punctured_range_spans, PuncturedRange, TREE_DEPTH,
 };
 
 /// Build a note commitment tree with up to 4 notes, returning

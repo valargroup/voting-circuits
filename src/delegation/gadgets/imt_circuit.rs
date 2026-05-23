@@ -15,26 +15,25 @@
 //! The Merkle conditional swap gate and path synthesis are provided by
 //! [`crate::gadgets::poseidon_merkle`].
 
-use halo2_proofs::{
-    circuit::{AssignedCell, Layouter, Value},
-    plonk::{self, Advice, Column, Constraints, Expression, Selector},
-    poly::Rotation,
-};
-use pasta_curves::pallas;
-
 use ff::Field;
 use halo2_gadgets::{
     ecc::chip::EccConfig,
     poseidon::{Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig},
     utilities::lookup_range_check::LookupRangeCheck,
 };
+use halo2_proofs::{
+    circuit::{AssignedCell, Layouter, Value},
+    plonk::{self, Advice, Column, Constraints, Expression, Selector},
+    poly::Rotation,
+};
+use orchard::{circuit::gadget::assign_free_advice, constants::OrchardFixedBases};
+use pasta_curves::pallas;
 
-use orchard::circuit::gadget::assign_free_advice;
-use orchard::constants::OrchardFixedBases;
-
-use crate::delegation::imt::IMT_DEPTH;
-use crate::gadgets::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
-use crate::protocol_hash::poseidon_hash_in_circuit;
+use crate::{
+    delegation::imt::IMT_DEPTH,
+    gadgets::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate},
+    protocol_hash::poseidon_hash_in_circuit,
+};
 
 // ================================================================
 // PuncturedIntervalGate

@@ -28,23 +28,9 @@
 //! - **Condition 13** (×5): IMT non-membership.
 //! - **Condition 14** (×5): Alternate nullifier integrity.
 
-use group::{Curve, GroupEncoding};
-use halo2_proofs::{
-    circuit::{floor_planner, AssignedCell, Layouter, Value},
-    plonk::{self, Advice, Column, Constraints, Instance as InstanceColumn, Selector},
-    poly::Rotation,
-};
-use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
 use std::vec::Vec;
 
-use super::gadgets::gadget::assign_constant;
-use super::gadgets::imt_circuit::{synthesize_imt_non_membership, ImtNonMembershipConfig};
-use super::gadgets::mul_chip::{MulChip, MulConfig, MulInstruction};
-use super::imt::{gov_auth_domain_tag, IMT_DEPTH};
-use crate::gadgets::address_ownership::prove_address_ownership;
-use crate::gadgets::van_integrity;
-use crate::params::BALLOT_DIVISOR;
-use crate::protocol_hash::poseidon_hash_in_circuit;
+use group::{Curve, GroupEncoding};
 use halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
@@ -66,7 +52,11 @@ use halo2_gadgets::{
         lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
     },
 };
-use orchard::constants::MERKLE_DEPTH_ORCHARD;
+use halo2_proofs::{
+    circuit::{floor_planner, AssignedCell, Layouter, Value},
+    plonk::{self, Advice, Column, Constraints, Instance as InstanceColumn, Selector},
+    poly::Rotation,
+};
 use orchard::{
     circuit::{
         commit_ivk::{CommitIvkChip, CommitIvkConfig},
@@ -76,7 +66,9 @@ use orchard::{
         },
         note_commit::{NoteCommitChip, NoteCommitConfig},
     },
-    constants::{OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains},
+    constants::{
+        OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains, MERKLE_DEPTH_ORCHARD,
+    },
     keys::{
         CommitIvkRandomness, DiversifiedTransmissionKey, FullViewingKey, NullifierDerivingKey,
         Scope, SpendValidatingKey,
@@ -90,6 +82,21 @@ use orchard::{
     spec::NonIdentityPallasPoint,
     tree::MerkleHashOrchard,
     value::NoteValue,
+};
+use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
+
+use super::{
+    gadgets::{
+        gadget::assign_constant,
+        imt_circuit::{synthesize_imt_non_membership, ImtNonMembershipConfig},
+        mul_chip::{MulChip, MulConfig, MulInstruction},
+    },
+    imt::{gov_auth_domain_tag, IMT_DEPTH},
+};
+use crate::{
+    gadgets::{address_ownership::prove_address_ownership, van_integrity},
+    params::BALLOT_DIVISOR,
+    protocol_hash::poseidon_hash_in_circuit,
 };
 
 // ================================================================

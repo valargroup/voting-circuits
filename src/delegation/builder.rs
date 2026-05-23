@@ -6,16 +6,11 @@
 //! Handles padding unused note slots with zero-value notes that still carry
 //! valid IMT non-membership proofs against the real tree root.
 
+use std::{iter, vec::Vec};
+
 use ff::{Field, PrimeField, PrimeFieldBits};
 use group::{Curve, GroupEncoding};
 use halo2_proofs::circuit::Value;
-use pasta_curves::{
-    arithmetic::{CurveAffine, CurveExt},
-    pallas,
-};
-use rand::{CryptoRng, RngCore};
-use std::{iter, vec::Vec};
-
 use orchard::{
     constants::{
         fixed_bases::{COMMIT_IVK_PERSONALIZATION, NOTE_COMMITMENT_PERSONALIZATION},
@@ -27,14 +22,19 @@ use orchard::{
     tree::MerklePath,
     value::NoteValue,
 };
+use pasta_curves::{
+    arithmetic::{CurveAffine, CurveExt},
+    pallas,
+};
+use rand::{CryptoRng, RngCore};
 
 use super::{
     circuit::{self, rho_binding_hash, van_commitment_hash, NoteSlotWitness},
     imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
 };
-use crate::gadgets::elgamal::base_to_scalar;
-use crate::params::BALLOT_DIVISOR;
-use crate::protocol_hash::poseidon_hash_2;
+use crate::{
+    gadgets::elgamal::base_to_scalar, params::BALLOT_DIVISOR, protocol_hash::poseidon_hash_2,
+};
 
 // Hash-to-curve personalization for synthetic padding `g_d_pad` points.
 //

@@ -52,26 +52,6 @@
 
 use std::vec::Vec;
 
-use halo2_proofs::{
-    circuit::{floor_planner, AssignedCell, Layouter, Value},
-    plonk::{self, Advice, Column, ConstraintSystem, Fixed, Instance as InstanceColumn},
-};
-use pasta_curves::{pallas, vesta};
-
-use super::gadgets::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
-use crate::domain_tags;
-use crate::gadgets::address_ownership::{prove_address_ownership, spend_auth_g_mul};
-use crate::gadgets::elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc};
-use crate::gadgets::nonzero::NonZeroConfig;
-use crate::gadgets::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
-use crate::gadgets::van_integrity;
-use crate::gadgets::vote_commitment;
-use crate::params::VOTE_COMM_TREE_DEPTH;
-#[cfg(test)]
-use crate::protocol_hash::poseidon_hash_2;
-use crate::shares_hash::compute_shares_hash_in_circuit;
-#[cfg(test)]
-use crate::shares_hash::{hash_share_commitment_in_circuit, share_commitment, shares_hash};
 use halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
@@ -84,12 +64,35 @@ use halo2_gadgets::{
     sinsemilla::chip::{SinsemillaChip, SinsemillaConfig},
     utilities::lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
 };
-use orchard::circuit::commit_ivk::{CommitIvkChip, CommitIvkConfig};
-use orchard::circuit::gadget::{
-    add_chip::{AddChip, AddConfig},
-    assign_free_advice, AddInstruction,
+use halo2_proofs::{
+    circuit::{floor_planner, AssignedCell, Layouter, Value},
+    plonk::{self, Advice, Column, ConstraintSystem, Fixed, Instance as InstanceColumn},
 };
-use orchard::constants::{OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains};
+use orchard::{
+    circuit::{
+        commit_ivk::{CommitIvkChip, CommitIvkConfig},
+        gadget::{
+            add_chip::{AddChip, AddConfig},
+            assign_free_advice, AddInstruction,
+        },
+    },
+    constants::{OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains},
+};
+use pasta_curves::{pallas, vesta};
+
+use super::gadgets::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
+use crate::{
+    domain_tags,
+    gadgets::{
+        address_ownership::{prove_address_ownership, spend_auth_g_mul},
+        elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc},
+        nonzero::NonZeroConfig,
+        poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate},
+        van_integrity, vote_commitment,
+    },
+    params::VOTE_COMM_TREE_DEPTH,
+    shares_hash::compute_shares_hash_in_circuit,
+};
 
 // ================================================================
 // Constants
@@ -1451,6 +1454,8 @@ impl Instance {
 mod tests {
     use super::*;
     use crate::gadgets::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
+    use crate::protocol_hash::poseidon_hash_2;
+    use crate::shares_hash::{hash_share_commitment_in_circuit, share_commitment, shares_hash};
     use core::iter;
     use ff::{Field, PrimeField};
     use group::ff::PrimeFieldBits;

@@ -11,18 +11,21 @@
 //! The same CommitIvk + pk_d derivation pattern is used in the main Orchard action
 //! circuit for spend authority and diversified address integrity.
 
+use halo2_gadgets::{
+    ecc::{chip::EccChip, NonIdentityPoint, Point, ScalarFixed, ScalarVar},
+    sinsemilla::chip::SinsemillaChip,
+};
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk::Error,
 };
+use orchard::{
+    circuit::commit_ivk::CommitIvkChip,
+    constants::{
+        OrchardCommitDomains, OrchardFixedBases, OrchardFixedBasesFull, OrchardHashDomains,
+    },
+};
 use pasta_curves::pallas;
-
-use halo2_gadgets::ecc::{chip::EccChip, NonIdentityPoint, Point, ScalarFixed, ScalarVar};
-use orchard::circuit::commit_ivk::CommitIvkChip;
-use orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
-
-use halo2_gadgets::sinsemilla::chip::SinsemillaChip;
-use orchard::constants::{OrchardCommitDomains, OrchardHashDomains};
 
 // ================================================================
 // SpendAuthG fixed-base multiplication

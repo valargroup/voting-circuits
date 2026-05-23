@@ -26,8 +26,6 @@
 //! blinds the result with a random scalar, preventing observers from
 //! brute-forcing the address or weight from the public commitment.
 
-use pasta_curves::pallas;
-
 use halo2_gadgets::poseidon::{
     primitives::{self as poseidon, ConstantLength},
     Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
@@ -36,6 +34,7 @@ use halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk,
 };
+use pasta_curves::pallas;
 
 use crate::protocol_hash::{poseidon_hash_2, poseidon_hash_in_circuit};
 

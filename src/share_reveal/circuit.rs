@@ -58,6 +58,13 @@
 
 use std::vec::Vec;
 
+use halo2_gadgets::{
+    poseidon::{
+        primitives::{self as poseidon, ConstantLength},
+        Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
+    },
+    utilities::bool_check,
+};
 use halo2_proofs::{
     circuit::{floor_planner, AssignedCell, Layouter, Value},
     plonk::{
@@ -67,23 +74,16 @@ use halo2_proofs::{
     poly::Rotation,
 };
 use itertools::Itertools;
+use orchard::circuit::gadget::assign_free_advice;
 use pasta_curves::{pallas, vesta};
 
-use halo2_gadgets::{
-    poseidon::{
-        primitives::{self as poseidon, ConstantLength},
-        Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
+use crate::{
+    gadgets::{
+        poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate},
+        vote_commitment,
     },
-    utilities::bool_check,
-};
-
-use orchard::circuit::gadget::assign_free_advice;
-
-use crate::gadgets::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate};
-use crate::gadgets::vote_commitment;
-use crate::params::VOTE_COMM_TREE_DEPTH;
-use crate::shares_hash::{
-    compute_shares_hash_from_comms_in_circuit, hash_share_commitment_in_circuit,
+    params::VOTE_COMM_TREE_DEPTH,
+    shares_hash::{compute_shares_hash_from_comms_in_circuit, hash_share_commitment_in_circuit},
 };
 
 // ================================================================

@@ -3,8 +3,7 @@
 //! Follows the same pattern as `sdk/circuits/src/toy.rs` but for the full
 //! 15-condition delegation circuit at K=14.
 
-use std::string::String;
-use std::vec::Vec;
+use std::{string::String, vec::Vec};
 
 use halo2_proofs::{
     pasta::EqAffine,
@@ -13,10 +12,8 @@ use halo2_proofs::{
     transcript::{Blake2bRead, Challenge255},
 };
 
-use crate::prove_error::create_proof_bytes;
-use crate::ProveError;
-
 use super::circuit::{Circuit, Instance, K};
+use crate::{prove_error::create_proof_bytes, ProveError};
 
 // ================================================================
 // Params / key generation

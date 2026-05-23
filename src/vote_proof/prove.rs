@@ -3,8 +3,7 @@
 //! Follows the same pattern as `delegation/prove.rs` but for the
 //! 12-condition vote proof circuit at K=13.
 
-use std::string::String;
-use std::vec::Vec;
+use std::{string::String, vec::Vec};
 
 use halo2_proofs::{
     pasta::EqAffine,
@@ -13,10 +12,8 @@ use halo2_proofs::{
     transcript::{Blake2bRead, Challenge255},
 };
 
-use crate::prove_error::create_proof_bytes;
-use crate::ProveError;
-
 use super::circuit::{Circuit, Instance, K};
+use crate::{prove_error::create_proof_bytes, ProveError};
 
 // ================================================================
 // Cached params + keys

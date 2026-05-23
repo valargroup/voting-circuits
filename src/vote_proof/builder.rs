@@ -8,28 +8,31 @@
 //! and bound to the specific VAN being spent, enabling crash recovery
 //! without persisting secrets and preventing nonce reuse across VANs.
 
-use std::string::String;
-use std::vec::Vec;
+use std::{string::String, vec::Vec};
 
 use ff::{Field, FromUniformBytes, PrimeField};
 use group::{Curve, GroupEncoding};
 use halo2_proofs::circuit::Value;
+use orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
 use pasta_curves::{
     arithmetic::{Coordinates, CurveAffine},
     pallas,
 };
 
-use orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
-
-use super::circuit::{
-    van_integrity_hash, van_nullifier_hash, vote_commitment_hash, Circuit, Instance,
-    MAX_PROPOSAL_ID,
+use super::{
+    circuit::{
+        van_integrity_hash, van_nullifier_hash, vote_commitment_hash, Circuit, Instance,
+        MAX_PROPOSAL_ID,
+    },
+    prove::create_vote_proof,
 };
-use super::prove::create_vote_proof;
-use crate::gadgets::elgamal::{base_to_scalar, spend_auth_g_affine};
-use crate::params::{BALLOT_DIVISOR, VOTE_COMM_TREE_DEPTH};
-use crate::shares_hash::{share_commitment, shares_hash};
-use crate::{domain_tags, ProveError};
+use crate::{
+    domain_tags,
+    gadgets::elgamal::{base_to_scalar, spend_auth_g_affine},
+    params::{BALLOT_DIVISOR, VOTE_COMM_TREE_DEPTH},
+    shares_hash::{share_commitment, shares_hash},
+    ProveError,
+};
 
 /// Number of shares per vote.
 const NUM_SHARES: usize = 16;

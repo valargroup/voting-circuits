@@ -19,19 +19,17 @@
 //! convention must be revisited and the level should become an explicit hash
 //! input, which would require regenerating verifying keys.
 
+use halo2_gadgets::{
+    poseidon::{Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig},
+    utilities::bool_check,
+};
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
     plonk::{self, Advice, Column, Constraints, Selector},
     poly::Rotation,
 };
-use pasta_curves::pallas;
-
-use halo2_gadgets::{
-    poseidon::{Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig},
-    utilities::bool_check,
-};
-
 use orchard::circuit::gadget::assign_free_advice;
+use pasta_curves::pallas;
 
 use crate::protocol_hash::poseidon_hash_in_circuit;
 

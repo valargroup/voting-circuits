@@ -1,18 +1,15 @@
-use criterion::{criterion_group, criterion_main, Criterion};
-use halo2_proofs::{
-    plonk::{self, SingleVerifier},
-    transcript::{Blake2bRead, Blake2bWrite},
-};
-use pasta_curves::{pallas, vesta};
-use rand::{rngs::OsRng, RngCore};
-
-use ff::{Field, PrimeField};
-use incrementalmerkletree::{Hashable, Level};
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use criterion::{criterion_group, criterion_main, Criterion};
+use ff::{Field, PrimeField};
+use halo2_proofs::{
+    plonk::{self, SingleVerifier},
+    transcript::{Blake2bRead, Blake2bWrite},
+};
+use incrementalmerkletree::{Hashable, Level};
 use orchard::{
     constants::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH,
     keys::{FullViewingKey, Scope, SpendingKey},
@@ -20,6 +17,8 @@ use orchard::{
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
 };
+use pasta_curves::{pallas, vesta};
+use rand::{rngs::OsRng, RngCore};
 use voting_circuits::delegation::{
     build_delegation_bundle, DelegationBundle, ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
 };

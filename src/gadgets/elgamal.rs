@@ -17,19 +17,18 @@
 
 #[cfg(test)]
 use ff::Field;
-use halo2_proofs::{
-    circuit::{AssignedCell, Layouter},
-    plonk::{Advice, Column, Error, Instance as InstanceColumn},
-};
-#[cfg(test)]
-use pasta_curves::arithmetic::CurveAffine;
-use pasta_curves::pallas;
-
 use halo2_gadgets::ecc::{
     chip::EccChip, FixedPointBaseField, FixedPointShort, NonIdentityPoint, ScalarFixedShort,
     ScalarVar,
 };
+use halo2_proofs::{
+    circuit::{AssignedCell, Layouter},
+    plonk::{Advice, Column, Error, Instance as InstanceColumn},
+};
 use orchard::constants::{OrchardBaseFieldBases, OrchardFixedBases, OrchardShortScalarBases};
+#[cfg(test)]
+use pasta_curves::arithmetic::CurveAffine;
+use pasta_curves::pallas;
 
 use super::nonzero::NonZeroConfig;
 
