@@ -163,6 +163,7 @@ pub fn create_share_reveal_proof(
 /// not need a separate trusted channel:
 ///
 /// - `instance.share_nullifier`
+#[allow(dead_code)]
 pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
     let (params, _pk, vk) = share_reveal_cached_keys().map_err(|error| error.to_string())?;
 

@@ -48,9 +48,20 @@ type_complexity = "allow"
 # clearer than `.iter().enumerate()` chains in circuit synthesis code.
 needless_range_loop = "allow"
 
+[features]
+default = []
+# Re-exports `delegation::build_nullifier_list`, used by the in-tree IMT
+# integration test. Not part of the stable public API; downstream consumers
+# should not enable this.
+unstable-internal-api = []
+
 [lib]
 bench = false
 
 [[bench]]
 name = "delegation"
 harness = false
+
+[[test]]
+name = "imt_circuit_integration"
+required-features = ["unstable-internal-api"]

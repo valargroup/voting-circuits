@@ -1665,7 +1665,7 @@ mod tests {
 
         assert_eq!(
             parts,
-            crate::delegation::SyntheticPaddingNoteParts {
+            SyntheticPaddingNoteParts {
                 cmx: padding.cmx.to_repr(),
                 nullifier: padding.real_nf.to_repr(),
             }

@@ -163,6 +163,7 @@ pub const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 5;
 // msg.VoteCommTreeAnchorHeight and passes that root as VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET,
 // which the circuit does constrain. This keeps the binding between height and
 // root in the chain state lookup rather than in this proof.
+#[allow(dead_code)]
 pub const VOTE_COMM_TREE_ANCHOR_HEIGHT_PUBLIC_OFFSET: usize = 6;
 /// Public input offset for the proposal identifier.
 ///

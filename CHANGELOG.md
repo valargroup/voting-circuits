@@ -17,12 +17,11 @@
 
 ### Added
 
-- Re-exported `delegation::InstanceError` at the `delegation` module root
-  so callers can name the error type returned by `delegation::Instance::from_parts`
-  and carried by `DelegationBuildError::Instance`.
-- Re-exported `delegation::Config` at the `delegation` module root for
-  consistency with `vote_proof::Config` and `share_reveal::Config`.
 - Added a `Default` impl for `delegation::SpacedLeafImtProvider`.
+- Added an `unstable-internal-api` Cargo feature that re-exposes
+  `delegation::build_nullifier_list` for the in-tree IMT integration test.
+  Downstream consumers should not enable this feature; the item it gates is
+  not covered by the stable public API.
 
 ### Changed
 
@@ -30,17 +29,58 @@
   root so they no longer appear to belong to a single proof module.
   - `voting_circuits::vote_proof::spend_auth_g_affine` → `voting_circuits::spend_auth_g_affine`
   - `voting_circuits::vote_proof::shares_hash` → `voting_circuits::shares_hash`
+  - `voting_circuits::vote_proof::share_commitment` → `voting_circuits::share_commitment`
   - `voting_circuits::vote_proof::VOTE_COMM_TREE_DEPTH` → `voting_circuits::VOTE_COMM_TREE_DEPTH`
 
 ### Removed
 
-- **Breaking:** `voting_circuits::vote_proof::poseidon_hash_2` and
-  `voting_circuits::vote_proof::share_commitment` are no longer part of the
-  public API.
+- **Breaking:** `voting_circuits::vote_proof::poseidon_hash_2` is no longer
+  part of the public API.
 - **Breaking:** Several builder-style methods on `delegation::Circuit`
-  (`from_note_unchecked`, `with_output_note`, `with_van_comm_rand`,
-  `with_ballot_scaling`) are no longer public. Construct delegation circuits
-  through `delegation::build_delegation_bundle` instead.
+  (`from_note_unchecked`, `with_output_note`, `with_notes`,
+  `with_van_comm_rand`, `with_ballot_scaling`) are no longer public.
+  Construct delegation circuits through `delegation::build_delegation_bundle`
+  instead.
+- **Breaking:** Trimmed the public API to the surface actually consumed by
+  known downstream clients. The following items remain implemented in-tree
+  but are no longer reachable from outside the crate. They can be re-exposed
+  in a future release if a consumer needs them.
+  - Halo2 `Config` associated types: `vote_proof::Config` and
+    `share_reveal::Config`. External code that drives Halo2 through the
+    bundle's `circuit` field never needs to name `Config` directly — halo2
+    resolves the type through the `Circuit` trait impl.
+  - Bundle-builder error enum: `vote_proof::VoteProofBuildError`.
+    `build_vote_proof_from_delegation` is still public; callers should
+    propagate via `Display` / `?` instead of matching on variants.
+  - Returned-bundle helper type: `delegation::SyntheticPaddingNoteParts`.
+    The `synthetic_padding_note_parts` function remains; callers should let
+    type inference name its return value.
+  - `vote_proof::create_vote_proof`. The high-level wrapper
+    `build_vote_proof_from_delegation` is the supported entry point;
+    delegation- and share-reveal-side `create_*_proof` are still exported.
+  - `share_reveal::verify_share_reveal_proof`. (The other share-reveal
+    prove/verify helpers remain.)
+  - Every `*_PUBLIC_OFFSET` constant across the three modules, plus the
+    grouped `delegation::GOV_NULL_PUBLIC_OFFSETS` array. Assemble public
+    inputs through `Instance::to_halo2_instance` instead of indexing by
+    offset.
+  - Delegation IMT sentinel helper `delegation::build_nullifier_list` (still
+    reachable under the `unstable-internal-api` Cargo feature for the
+    in-tree integration test).
+
+### Migration
+
+- Drop named imports of removed identifiers
+  (`vote_proof::Config`, `share_reveal::Config`,
+  `vote_proof::VoteProofBuildError`,
+  `delegation::SyntheticPaddingNoteParts`, `vote_proof::create_vote_proof`,
+  `share_reveal::verify_share_reveal_proof`, and every `*_PUBLIC_OFFSET` /
+  `GOV_NULL_PUBLIC_OFFSETS` constant). Build public inputs via
+  `Instance::to_halo2_instance`, propagate errors with `?` or `Display`,
+  let type inference name `synthetic_padding_note_parts`'s return value,
+  and prove votes via `build_vote_proof_from_delegation`.
+- If your in-tree tests need `delegation::build_nullifier_list`, enable the
+  `unstable-internal-api` Cargo feature on the `voting-circuits` dependency.
 
 ## v0.6.0
 

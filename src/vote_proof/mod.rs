@@ -22,17 +22,9 @@ mod circuit;
 mod gadgets;
 mod prove;
 
-pub use builder::{
-    build_vote_proof_from_delegation, EncryptedShareOutput, VoteProofBuildError, VoteProofBundle,
-};
-pub use circuit::{
-    Circuit, Config, Instance, EA_PK_X_PUBLIC_OFFSET, EA_PK_Y_PUBLIC_OFFSET, K,
-    PROPOSAL_ID_PUBLIC_OFFSET, R_VPK_X_PUBLIC_OFFSET, R_VPK_Y_PUBLIC_OFFSET,
-    VAN_NULLIFIER_PUBLIC_OFFSET, VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET,
-    VOTE_COMMITMENT_PUBLIC_OFFSET, VOTE_COMM_TREE_ANCHOR_HEIGHT_PUBLIC_OFFSET,
-    VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET, VOTING_ROUND_ID_PUBLIC_OFFSET,
-};
+pub use builder::{build_vote_proof_from_delegation, EncryptedShareOutput, VoteProofBundle};
+pub use circuit::{Circuit, Instance, K};
 pub use prove::{
-    create_vote_proof, verify_vote_proof, vote_proof_cached_keys, vote_proof_params,
-    vote_proof_proving_key, warm_vote_proof_keys,
+    verify_vote_proof, vote_proof_cached_keys, vote_proof_params, vote_proof_proving_key,
+    warm_vote_proof_keys,
 };
