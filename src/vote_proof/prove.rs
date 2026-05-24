@@ -7,13 +7,15 @@ use std::{string::String, vec::Vec};
 
 use halo2_proofs::{
     pasta::EqAffine,
-    plonk::{self, keygen_pk, keygen_vk, verify_proof, SingleVerifier},
+    plonk::{self, keygen_pk, keygen_vk},
     poly::commitment::Params,
-    transcript::{Blake2bRead, Challenge255},
 };
 
 use super::circuit::{Circuit, Instance, K};
-use crate::{prove_error::create_proof_bytes, ProveError};
+use crate::{
+    prove_error::{create_proof_bytes, verify_proof_bytes},
+    ProveError,
+};
 
 // ================================================================
 // Cached params + keys
@@ -164,11 +166,7 @@ pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String
 
     let public_inputs = instance.to_halo2_instance();
 
-    let strategy = SingleVerifier::new(params);
-    let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(proof);
-
-    verify_proof(params, vk, strategy, &[&[&public_inputs]], &mut transcript)
-        .map_err(|e| format!("vote proof verification failed: {:?}", e))
+    verify_proof_bytes("vote proof", params, vk, proof, &public_inputs)
 }
 
 #[cfg(test)]

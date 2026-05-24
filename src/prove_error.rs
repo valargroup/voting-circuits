@@ -1,8 +1,8 @@
 use halo2_proofs::{
     pasta::EqAffine,
-    plonk::{self, create_proof},
+    plonk::{self, create_proof, verify_proof, SingleVerifier},
     poly::commitment::Params,
-    transcript::{Blake2bWrite, Challenge255},
+    transcript::{Blake2bRead, Blake2bWrite, Challenge255},
 };
 use pasta_curves::vesta;
 use rand::rngs::OsRng;
@@ -27,6 +27,30 @@ where
         &mut transcript,
     )?;
     Ok(transcript.finalize())
+}
+
+pub(crate) fn verify_proof_bytes(
+    label: &str,
+    params: &Params<EqAffine>,
+    vk: &plonk::VerifyingKey<EqAffine>,
+    proof: &[u8],
+    public_inputs: &[vesta::Scalar],
+) -> Result<(), String> {
+    let strategy = SingleVerifier::new(params);
+    let mut proof_reader = proof;
+    let mut transcript = Blake2bRead::<_, EqAffine, Challenge255<_>>::init(&mut proof_reader);
+
+    verify_proof(params, vk, strategy, &[&[public_inputs]], &mut transcript)
+        .map_err(|e| format!("{label} verification failed: {:?}", e))?;
+
+    if !proof_reader.is_empty() {
+        return Err(format!(
+            "{label} verification failed: proof has {} trailing unread bytes",
+            proof_reader.len()
+        ));
+    }
+
+    Ok(())
 }
 
 /// Error returned when Halo2 proof creation fails.
@@ -140,5 +164,42 @@ mod tests {
         let err = create_proof_bytes(&params, &pk, empty_circuit, &public_inputs).unwrap_err();
 
         assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
+    }
+
+    #[test]
+    fn verify_proof_bytes_rejects_trailing_unread_bytes() {
+        let params = Params::<EqAffine>::new(4);
+        let empty_circuit = TinyCircuit {
+            witness: Value::unknown(),
+        };
+        let vk = plonk::keygen_vk(&params, &empty_circuit).expect("tiny keygen_vk should succeed");
+        let pk = plonk::keygen_pk(&params, vk.clone(), &empty_circuit)
+            .expect("tiny keygen_pk should succeed");
+        let public_inputs = [vesta::Scalar::from(1)];
+        let circuit = TinyCircuit {
+            witness: Value::known(public_inputs[0]),
+        };
+        let proof = create_proof_bytes(&params, &pk, circuit, &public_inputs)
+            .expect("tiny proof should succeed");
+
+        verify_proof_bytes("tiny", &params, &vk, &proof, &public_inputs)
+            .expect("canonical proof should verify");
+
+        let mut proof_with_trailing_bytes = proof;
+        proof_with_trailing_bytes.extend_from_slice(b"junk");
+
+        let err = verify_proof_bytes(
+            "tiny",
+            &params,
+            &vk,
+            &proof_with_trailing_bytes,
+            &public_inputs,
+        )
+        .expect_err("proof with trailing bytes must be rejected");
+
+        assert!(
+            err.contains("4 trailing unread bytes"),
+            "unexpected error: {err}"
+        );
     }
 }
