@@ -46,6 +46,9 @@ jobs:
       - name: Run short tests
         run: cargo test --locked
 
+      - name: Run IMT integration tests
+        run: cargo test --locked --features unstable-internal-api --test imt_circuit_integration
+
   full-suite:
     name: Full suite
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run == 'full-suite')
@@ -71,6 +74,12 @@ jobs:
 
       - name: Run long tests
         run: cargo test --locked -- --ignored --skip row_budget --skip cost_breakdown
+
+      - name: Run IMT integration tests
+        run: cargo test --locked --features unstable-internal-api --test imt_circuit_integration
+
+      - name: Run long IMT integration tests
+        run: cargo test --locked --features unstable-internal-api --test imt_circuit_integration -- --ignored --test-threads=1
 
   diagnostics:
     name: Diagnostics
