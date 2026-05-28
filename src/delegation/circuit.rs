@@ -2852,7 +2852,7 @@ mod tests {
             entry.1 += 1;
         }
         let mut agg_sorted: Vec<_> = aggregated.into_iter().collect();
-        agg_sorted.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        agg_sorted.sort_by_key(|entry| std::cmp::Reverse(entry.1 .0));
         for (name, (total, count)) in &agg_sorted {
             if *count > 1 {
                 std::println!(
