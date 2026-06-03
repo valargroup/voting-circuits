@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.7.0
+
 ### Documented
 
 - Clarified that the delegation circuit's condition 8 ("Ballot Scaling")
@@ -67,6 +69,11 @@
   - Delegation IMT sentinel helper `delegation::build_nullifier_list` (still
     reachable under the `unstable-internal-api` Cargo feature for the
     in-tree integration test).
+
+### Security
+
+- Reject Halo2 proofs that verify but leave trailing unread transcript bytes
+  after delegation, vote-proof, or share-reveal verification.
 
 ### Migration
 
