@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.8.0
+
+### Changed
+
+- Updated the Orchard circuit dependency line to `orchard 0.14` and
+  `halo2_gadgets =0.5.0`.
+- Updated the IMT reference dependency to published `imt-tree 0.2.0`.
+
 ## v0.7.0
 
 ### Documented

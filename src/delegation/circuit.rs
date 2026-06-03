@@ -34,7 +34,7 @@ use group::{Curve, GroupEncoding};
 use halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
-        NonIdentityPoint, Point, ScalarFixed, ScalarVar,
+        CircuitVersion, NonIdentityPoint, Point, ScalarFixed, ScalarVar,
     },
     poseidon::{
         primitives::{self as poseidon, ConstantLength},
@@ -296,7 +296,7 @@ impl Config {
     }
 
     fn ecc_chip(&self) -> EccChip<OrchardFixedBases> {
-        EccChip::construct(self.ecc_config.clone())
+        EccChip::construct(self.ecc_config.clone(), CircuitVersion::AnchoredBase)
     }
 
     // Operating over the Pallas base field, with a width of 3 (state size) and rate of 2

@@ -55,7 +55,7 @@ use std::vec::Vec;
 use halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
-        NonIdentityPoint, ScalarFixed,
+        CircuitVersion, NonIdentityPoint, ScalarFixed,
     },
     poseidon::{
         primitives::{self as poseidon, ConstantLength},
@@ -312,7 +312,7 @@ impl Config {
 
     /// Constructs an ECC chip for curve operations (conditions 3, 11).
     fn ecc_chip(&self) -> EccChip<OrchardFixedBases> {
-        EccChip::construct(self.ecc_config.clone())
+        EccChip::construct(self.ecc_config.clone(), CircuitVersion::AnchoredBase)
     }
 
     /// Constructs a Sinsemilla chip (condition 3: CommitIvk).
