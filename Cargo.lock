@@ -663,7 +663,8 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "imt-tree"
 version = "0.2.0"
-source = "git+https://github.com/valargroup/vote-nullifier-pir.git#d8891d369c697aac077fa40052ab9248e4957608"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d0a4887bb71d68b3d0c5db9d42bb76df38b0dff4d261b863dada6383b6c2012"
 dependencies = [
  "anyhow",
  "ff",

@@ -34,7 +34,7 @@ itertools = "0.14.0"
 # Reference IMT implementation used by integration tests to cross-check the
 # in-tree provider. Keep exact-pinned so patch releases cannot silently move
 # tree semantics without updating the equivalence tests.
-imt-tree = { git = "https://github.com/valargroup/vote-nullifier-pir.git", version = "=0.2.0" }
+imt-tree = "=0.2.0"
 criterion = "0.8"
 rand = "0.8"
 incrementalmerkletree = "0.8.1"
