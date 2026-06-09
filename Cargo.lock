@@ -865,8 +865,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "orchard"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a54f8d29bfb1e76a9d4e868a1a08cce2e57dd2bdc66232982822ad3114b91ab3"
+source = "git+https://github.com/valargroup/qr_orchard?branch=ironwood-qr#2b531b9d61a564a11cbdd9418a9788d1dd7d20de"
 dependencies = [
  "aes",
  "bitvec",
