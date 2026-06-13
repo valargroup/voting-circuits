@@ -17,7 +17,10 @@ use orchard::{
         L_ORCHARD_BASE, L_VALUE,
     },
     keys::{FullViewingKey, Scope, SpendValidatingKey},
-    note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, RandomSeed, Rho},
+    note::{
+        commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, NoteVersion, RandomSeed,
+        Rho,
+    },
     spec::NonIdentityPallasPoint,
     tree::MerklePath,
     value::NoteValue,
@@ -518,6 +521,12 @@ pub(super) fn build_padding_slot_for_testing(
 pub enum DelegationBuildError {
     /// Must have 1 to `circuit::MAX_REAL_NOTES` real notes.
     InvalidNoteCount(usize),
+    /// Delegation bundles cannot mix Orchard note versions.
+    MismatchedNoteVersion {
+        index: usize,
+        expected: NoteVersion,
+        actual: NoteVersion,
+    },
     /// Public input construction failed.
     Instance(circuit::InstanceError),
     /// Padding can only occupy circuit slots 1..`circuit::MAX_REAL_NOTES`.
@@ -572,6 +581,16 @@ impl std::fmt::Display for DelegationBuildError {
                     "invalid note count: {} (expected 1–{})",
                     n,
                     circuit::MAX_REAL_NOTES
+                )
+            }
+            DelegationBuildError::MismatchedNoteVersion {
+                index,
+                expected,
+                actual,
+            } => {
+                write!(
+                    f,
+                    "mismatched note version at index {index}: expected {expected:?}, got {actual:?}"
                 )
             }
             DelegationBuildError::Instance(e) => {
@@ -633,6 +652,53 @@ impl std::fmt::Display for PrecomputedRandomnessLocation {
     }
 }
 
+fn delegation_note_version(
+    real_notes: &[RealNoteInput],
+) -> Result<NoteVersion, DelegationBuildError> {
+    let expected = real_notes[0].note.version();
+    for (index, input) in real_notes.iter().enumerate().skip(1) {
+        let actual = input.note.version();
+        if actual != expected {
+            return Err(DelegationBuildError::MismatchedNoteVersion {
+                index,
+                expected,
+                actual,
+            });
+        }
+    }
+    Ok(expected)
+}
+
+fn note_from_parts_with_version(
+    recipient: orchard::Address,
+    value: NoteValue,
+    rho: Rho,
+    rseed: RandomSeed,
+    version: NoteVersion,
+    location: PrecomputedRandomnessLocation,
+) -> Result<Note, DelegationBuildError> {
+    Note::from_parts_with_version(recipient, value, rho, rseed, version)
+        .into_option()
+        .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })
+}
+
+fn random_note_with_version(
+    recipient: orchard::Address,
+    value: NoteValue,
+    rho: Rho,
+    rng: &mut impl RngCore,
+    version: NoteVersion,
+) -> Note {
+    loop {
+        let rseed = random_seed_for_rho(&rho, rng);
+        if let Some(note) = Option::<Note>::from(Note::from_parts_with_version(
+            recipient, value, rho, rseed, version,
+        )) {
+            break note;
+        }
+    }
+}
+
 /// Build a complete delegation bundle with 1 to `circuit::MAX_REAL_NOTES`
 /// real notes and padding.
 ///
@@ -685,6 +751,7 @@ pub fn build_delegation_bundle(
     if n_real == 0 || n_real > circuit::MAX_REAL_NOTES {
         return Err(DelegationBuildError::InvalidNoteCount(n_real));
     }
+    let note_version = delegation_note_version(&real_notes)?;
 
     // Snapshot the IMT root — all per-note non-membership proofs must be against this root.
     let nf_imt_root = imt_provider.root();
@@ -703,13 +770,14 @@ pub fn build_delegation_bundle(
     let mut v_values = Vec::with_capacity(circuit::MAX_REAL_NOTES);
     let mut gov_nulls = Vec::with_capacity(circuit::MAX_REAL_NOTES);
 
-    // Process real notes: derive psi/rcm from rseed, compute the note commitment,
-    // real nullifier, and gov nullifier, then pack everything into a NoteSlotWitness.
+    // Process real notes: derive psi and the version-aware rcm from rseed,
+    // compute the note commitment, real nullifier, and gov nullifier, then
+    // pack everything into a NoteSlotWitness.
     for input in &real_notes {
         let note = &input.note;
         let rho = note.rho();
         let psi = note.rseed().psi(&rho);
-        let rcm = note.rseed().rcm(&rho);
+        let rcm = note.rcm();
         let cm = note.commitment();
         let cmx = ExtractedNoteCommitment::from(cm.clone()).inner();
         let v_raw = note.value().inner();
@@ -816,15 +884,21 @@ pub fn build_delegation_bundle(
         let rseed = RandomSeed::from_bytes(pre.rseed_signed, &signed_rho)
             .into_option()
             .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
-        Note::from_parts(sender_address, NoteValue::from_raw(1), signed_rho, rseed)
-            .into_option()
-            .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
+        note_from_parts_with_version(
+            sender_address,
+            NoteValue::from_raw(1),
+            signed_rho,
+            rseed,
+            note_version,
+            location,
+        )?
     } else {
-        Note::new(
+        random_note_with_version(
             sender_address,
             NoteValue::from_raw(1),
             signed_rho,
             &mut *rng,
+            note_version,
         )
     };
 
@@ -839,11 +913,22 @@ pub fn build_delegation_bundle(
         let rseed = RandomSeed::from_bytes(pre.rseed_output, &output_rho)
             .into_option()
             .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
-        Note::from_parts(output_recipient, NoteValue::ZERO, output_rho, rseed)
-            .into_option()
-            .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
+        note_from_parts_with_version(
+            output_recipient,
+            NoteValue::ZERO,
+            output_rho,
+            rseed,
+            note_version,
+            location,
+        )?
     } else {
-        Note::new(output_recipient, NoteValue::ZERO, output_rho, &mut *rng)
+        random_note_with_version(
+            output_recipient,
+            NoteValue::ZERO,
+            output_rho,
+            &mut *rng,
+            note_version,
+        )
     };
     let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
 
@@ -1048,6 +1133,24 @@ mod tests {
         imt_provider: &impl ImtProvider,
         rng: &mut impl RngCore,
     ) -> (Vec<RealNoteInput>, pallas::Base) {
+        make_real_note_inputs_with_version(
+            fvk,
+            values,
+            scopes,
+            imt_provider,
+            rng,
+            NoteVersion::DEFAULT,
+        )
+    }
+
+    fn make_real_note_inputs_with_version(
+        fvk: &FullViewingKey,
+        values: &[u64],
+        scopes: &[Scope],
+        imt_provider: &impl ImtProvider,
+        rng: &mut impl RngCore,
+        note_version: NoteVersion,
+    ) -> (Vec<RealNoteInput>, pallas::Base) {
         let n = values.len();
         assert!((1..=circuit::MAX_REAL_NOTES).contains(&n));
         assert_eq!(n, scopes.len());
@@ -1058,11 +1161,12 @@ mod tests {
             let recipient = fvk.address_at(0u32, scopes[idx]);
             let note_value = NoteValue::from_raw(v);
             let (_, _, dummy_parent) = Note::dummy(&mut *rng, None);
-            let note = Note::new(
+            let note = random_note_with_version(
                 recipient,
                 note_value,
                 Rho::from_nf_old(dummy_parent.nullifier(fvk)),
                 &mut *rng,
+                note_version,
             );
             notes.push(note);
         }
@@ -1279,6 +1383,196 @@ mod tests {
             assert_known(&notes[slot_index].g_d, |actual| *actual == expected_g_d);
             assert_known(&notes[slot_index].pk_d, |actual| *actual == expected_pk_d);
         }
+    }
+
+    #[test]
+    fn test_ironwood_notes_use_v3_rcm_and_outputs() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let output_recipient = fvk.address_at(1u32, Scope::External);
+        let vote_round_id = pallas::Base::random(&mut rng);
+        let van_comm_rand = pallas::Base::random(&mut rng);
+        let alpha = pallas::Scalar::random(&mut rng);
+        let imt = SpacedLeafImtProvider::new();
+        let (inputs, nc_root) = make_real_note_inputs_with_version(
+            &fvk,
+            &[13_000_000],
+            &[Scope::External],
+            &imt,
+            &mut rng,
+            NoteVersion::V3,
+        );
+        let real_note = inputs[0].note.clone();
+
+        let padding: Vec<_> = (0..(circuit::MAX_REAL_NOTES - 1))
+            .map(|_| precomputed_padding_note(&mut rng))
+            .collect();
+        let padded_notes = padding
+            .iter()
+            .map(|(data, _, _)| data.clone())
+            .collect::<Vec<_>>();
+
+        let mut cmx_values = Vec::with_capacity(circuit::MAX_REAL_NOTES);
+        cmx_values.push(ExtractedNoteCommitment::from(real_note.commitment()).inner());
+        for (pad_idx, (_, rho, rseed)) in padding.iter().enumerate() {
+            let slot_index = pad_idx + 1;
+            let parts = synthetic_padding_note_parts(&fvk, slot_index, *rho, *rseed).unwrap();
+            cmx_values.push(pallas::Base::from_repr(parts.cmx).unwrap());
+        }
+
+        let g_d_new_x = *output_recipient
+            .g_d()
+            .to_affine()
+            .coordinates()
+            .unwrap()
+            .x();
+        let pk_d_new_x = *output_recipient
+            .pk_d()
+            .inner()
+            .to_affine()
+            .coordinates()
+            .unwrap()
+            .x();
+        let van_comm = van_commitment_hash(
+            g_d_new_x,
+            pk_d_new_x,
+            pallas::Base::from(1u64),
+            vote_round_id,
+            van_comm_rand,
+        );
+        let rho_signed = rho_binding_hash(
+            cmx_values[0],
+            cmx_values[1],
+            cmx_values[2],
+            cmx_values[3],
+            cmx_values[4],
+            van_comm,
+            vote_round_id,
+        );
+        let signed_rho = Rho::from_nf_old(Nullifier::from_inner(rho_signed));
+        let signed_rseed = random_seed_for_rho(&signed_rho, &mut rng);
+        let sender_address = fvk.address_at(0u32, Scope::External);
+        let signed_note_v3 = Note::from_parts_with_version(
+            sender_address,
+            NoteValue::from_raw(1),
+            signed_rho,
+            signed_rseed,
+            NoteVersion::V3,
+        )
+        .unwrap();
+        let signed_note_v2 = Note::from_parts_with_version(
+            sender_address,
+            NoteValue::from_raw(1),
+            signed_rho,
+            signed_rseed,
+            NoteVersion::V2,
+        )
+        .unwrap();
+        let output_rho = Rho::from_nf_old(signed_note_v3.nullifier(&fvk));
+        let output_rseed = random_seed_for_rho(&output_rho, &mut rng);
+        let output_note_v3 = Note::from_parts_with_version(
+            output_recipient,
+            NoteValue::ZERO,
+            output_rho,
+            output_rseed,
+            NoteVersion::V3,
+        )
+        .unwrap();
+        let output_note_v2 = Note::from_parts_with_version(
+            output_recipient,
+            NoteValue::ZERO,
+            output_rho,
+            output_rseed,
+            NoteVersion::V2,
+        )
+        .unwrap();
+        let precomputed = PrecomputedRandomness {
+            padded_notes,
+            rseed_signed: *signed_rseed.as_bytes(),
+            rseed_output: *output_rseed.as_bytes(),
+        };
+
+        let bundle = build_delegation_bundle(
+            inputs,
+            &fvk,
+            alpha,
+            output_recipient,
+            vote_round_id,
+            nc_root,
+            van_comm_rand,
+            &imt,
+            &mut rng,
+            Some(&precomputed),
+        )
+        .unwrap();
+
+        let real_note_old_rcm = real_note.rseed().rcm(&real_note.rho());
+        let notes = bundle.circuit.notes_for_testing();
+        assert_known(&notes[0].rcm, |actual| {
+            actual.inner() == real_note.rcm().inner()
+        });
+        assert_known(&notes[0].rcm, |actual| {
+            actual.inner() != real_note_old_rcm.inner()
+        });
+
+        assert_eq!(bundle.instance.nf_signed, signed_note_v3.nullifier(&fvk));
+        assert_ne!(bundle.instance.nf_signed, signed_note_v2.nullifier(&fvk));
+        assert_eq!(
+            bundle.instance.cmx_new,
+            ExtractedNoteCommitment::from(output_note_v3.commitment()).inner()
+        );
+        assert_ne!(
+            bundle.instance.cmx_new,
+            ExtractedNoteCommitment::from(output_note_v2.commitment()).inner()
+        );
+    }
+
+    #[test]
+    fn test_mixed_note_versions_are_rejected() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let output_recipient = fvk.address_at(1u32, Scope::External);
+        let imt = SpacedLeafImtProvider::new();
+        let (mut inputs, nc_root) = make_real_note_inputs(
+            &fvk,
+            &[7_000_000, 7_000_000],
+            &[Scope::External, Scope::External],
+            &imt,
+            &mut rng,
+        );
+        let recipient = fvk.address_at(0u32, Scope::External);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
+        inputs[1].note = random_note_with_version(
+            recipient,
+            NoteValue::from_raw(7_000_000),
+            Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
+            &mut rng,
+            NoteVersion::V3,
+        );
+
+        let result = build_delegation_bundle(
+            inputs,
+            &fvk,
+            pallas::Scalar::random(&mut rng),
+            output_recipient,
+            pallas::Base::random(&mut rng),
+            nc_root,
+            pallas::Base::random(&mut rng),
+            &imt,
+            &mut rng,
+            None,
+        );
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::MismatchedNoteVersion {
+                index: 1,
+                expected: NoteVersion::V2,
+                actual: NoteVersion::V3,
+            })
+        ));
     }
 
     #[test]

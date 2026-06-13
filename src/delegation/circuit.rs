@@ -421,7 +421,7 @@ impl Circuit {
         let sender_address = note.recipient();
         let rho_signed = note.rho();
         let psi_signed = note.rseed().psi(&rho_signed);
-        let rcm_signed = note.rseed().rcm(&rho_signed);
+        let rcm_signed = note.rcm();
         Circuit {
             nk: Value::known(*fvk.nk()),
             rho_signed: Value::known(rho_signed.into_inner()),
@@ -442,7 +442,7 @@ impl Circuit {
     pub(super) fn with_output_note(mut self, output_note: &Note) -> Self {
         let rho_new = output_note.rho();
         let psi_new = output_note.rseed().psi(&rho_new);
-        let rcm_new = output_note.rseed().rcm(&rho_new);
+        let rcm_new = output_note.rcm();
         self.g_d_new = Value::known(output_note.recipient().g_d());
         self.pk_d_new = Value::known(*output_note.recipient().pk_d());
         self.psi_new = Value::known(psi_new);
@@ -1977,7 +1977,7 @@ mod tests {
     ) -> NoteSlotWitness {
         let rho = note.rho();
         let psi = note.rseed().psi(&rho);
-        let rcm = note.rseed().rcm(&rho);
+        let rcm = note.rcm();
         let cm = note.commitment();
         let recipient = note.recipient();
 
