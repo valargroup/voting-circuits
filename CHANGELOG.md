@@ -6,6 +6,8 @@
 
 - Pinned `orchard` to the Valar `qr_orchard` protocol API fork and made the
   note version explicit at Orchard note construction sites.
+- Updated the delegation bundle builder to require V3 delegated notes and to
+  construct its synthetic signed and output notes as V3.
 
 ## v0.8.0
 

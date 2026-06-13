@@ -44,13 +44,13 @@ fn make_real_note_inputs(
     for (idx, &v) in values.iter().enumerate() {
         let recipient = fvk.address_at(0u32, scopes[idx]);
         let note_value = NoteValue::from_raw(v);
-        let (_, _, dummy_parent) = Note::dummy(&mut *rng, None, NoteVersion::DEFAULT);
+        let (_, _, dummy_parent) = Note::dummy(&mut *rng, None, NoteVersion::V3);
         let note = Note::new(
             recipient,
             note_value,
             Rho::from_nf_old(dummy_parent.nullifier(fvk)),
             &mut *rng,
-            NoteVersion::DEFAULT,
+            NoteVersion::V3,
         );
         notes.push(note);
     }

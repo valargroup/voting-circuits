@@ -16,7 +16,7 @@ Orchard Notes ──► Delegation (ZKP 1) ──► Vote Authority Notes (VANs)
                   Share Reveal (ZKP 3) ──► Revealed shares for tally
 ```
 
-1. [**Delegation**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) spends Orchard notes and mints VANs that carry delegated voting weight.
+1. [**Delegation**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) spends Ironwood V3 notes and mints VANs that carry delegated voting weight.
 2. [**Vote Proof**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) spends a VAN to cast a vote, producing El Gamal-encrypted shares and a vote commitment.
 3. [**Share Reveal**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) opens a single encrypted share and proves it belongs to a registered vote commitment.
 
@@ -97,6 +97,8 @@ Reusable halo2 gadgets that appear in more than one circuit:
 ## Dependency on `orchard`
 
 This crate depends on Valar's `qr_orchard` fork of `orchard 0.14`, pinned to a specific protocol API revision, with the `unstable-voting-circuits` feature enabled to expose the governance-visibility APIs the voting circuits rely on.
+The delegation bundle builder expects Ironwood V3 notes and constructs its
+synthetic signed and output notes with the same note version.
 
 ## Building
 

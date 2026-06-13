@@ -32,7 +32,10 @@ use pasta_curves::{
 use rand::{CryptoRng, RngCore};
 
 use super::{
-    circuit::{self, rho_binding_hash, van_commitment_hash, NoteSlotWitness},
+    circuit::{
+        self, note_rcm_scalar, rcm_scalar_for_note_parts, rho_binding_hash, van_commitment_hash,
+        NoteSlotWitness,
+    },
     imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
 };
 use crate::{
@@ -47,6 +50,7 @@ use crate::{
 // bases. Any accidental point collision is treated as a negligible hash-to-curve
 // collision rather than a burned diversifier-index overlap.
 const PADDING_PERSONALIZATION: &str = "shielded-vote/padding-v1";
+const DELEGATION_NOTE_VERSION: NoteVersion = NoteVersion::V3;
 
 /// Rho and rseed for a single padded note, captured during Phase 1 (PCZT construction).
 #[derive(Clone, Debug)]
@@ -308,7 +312,7 @@ struct SyntheticPaddingDerivation {
     g_d_pad: NonIdentityPallasPoint,
     pk_d_pad: NonIdentityPallasPoint,
     psi: pallas::Base,
-    rcm: orchard::note::NoteCommitTrapdoor,
+    rcm: pallas::Scalar,
     cm: pallas::Affine,
     cmx: pallas::Base,
     real_nf: pallas::Base,
@@ -328,7 +332,15 @@ fn derive_synthetic_padding_note(
     // rho-scoped seed then supplies the Orchard commitment randomness.
     let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk)?;
     let psi = rseed.psi(&rho);
-    let rcm = rseed.rcm(&rho);
+    let rcm = rcm_scalar_for_note_parts(
+        DELEGATION_NOTE_VERSION,
+        &rseed,
+        &rho,
+        &g_d_pad,
+        &pk_d_pad,
+        NoteValue::ZERO,
+        psi,
+    );
 
     // Commitment and nullifier derivation can bottom out only in negligible
     // group edge cases; surface those as build errors at the caller's location.
@@ -338,7 +350,7 @@ fn derive_synthetic_padding_note(
         NoteValue::ZERO,
         rho.into_inner(),
         psi,
-        rcm.inner(),
+        rcm,
     )
     .ok_or(DelegationBuildError::InvalidPaddingNoteCommitment { location })?
     .to_affine();
@@ -521,6 +533,13 @@ pub(super) fn build_padding_slot_for_testing(
 pub enum DelegationBuildError {
     /// Must have 1 to `circuit::MAX_REAL_NOTES` real notes.
     InvalidNoteCount(usize),
+    /// Delegation is only supported for Ironwood/V3 notes.
+    UnsupportedNoteVersion {
+        /// Index of the delegated note that used the wrong version.
+        index: usize,
+        /// Version carried by the delegated note.
+        note_version: NoteVersion,
+    },
     /// Public input construction failed.
     Instance(circuit::InstanceError),
     /// Padding can only occupy circuit slots 1..`circuit::MAX_REAL_NOTES`.
@@ -575,6 +594,16 @@ impl std::fmt::Display for DelegationBuildError {
                     "invalid note count: {} (expected 1–{})",
                     n,
                     circuit::MAX_REAL_NOTES
+                )
+            }
+            DelegationBuildError::UnsupportedNoteVersion {
+                index,
+                note_version,
+            } => {
+                write!(
+                    f,
+                    "unsupported note version {note_version:?} for delegated note {index} \
+                     (expected V3)"
                 )
             }
             DelegationBuildError::Instance(e) => {
@@ -688,6 +717,15 @@ pub fn build_delegation_bundle(
     if n_real == 0 || n_real > circuit::MAX_REAL_NOTES {
         return Err(DelegationBuildError::InvalidNoteCount(n_real));
     }
+    for (index, input) in real_notes.iter().enumerate() {
+        let note_version = input.note.version();
+        if note_version != DELEGATION_NOTE_VERSION {
+            return Err(DelegationBuildError::UnsupportedNoteVersion {
+                index,
+                note_version,
+            });
+        }
+    }
 
     // Snapshot the IMT root — all per-note non-membership proofs must be against this root.
     let nf_imt_root = imt_provider.root();
@@ -712,7 +750,7 @@ pub fn build_delegation_bundle(
         let note = &input.note;
         let rho = note.rho();
         let psi = note.rseed().psi(&rho);
-        let rcm = note.rseed().rcm(&rho);
+        let rcm = note_rcm_scalar(note);
         let cm = note.commitment();
         let cmx = ExtractedNoteCommitment::from(cm.clone()).inner();
         let v_raw = note.value().inner();
@@ -824,7 +862,7 @@ pub fn build_delegation_bundle(
             NoteValue::from_raw(1),
             signed_rho,
             rseed,
-            NoteVersion::DEFAULT,
+            DELEGATION_NOTE_VERSION,
         )
         .into_option()
         .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
@@ -834,7 +872,7 @@ pub fn build_delegation_bundle(
             NoteValue::from_raw(1),
             signed_rho,
             &mut *rng,
-            NoteVersion::DEFAULT,
+            DELEGATION_NOTE_VERSION,
         )
     };
 
@@ -854,7 +892,7 @@ pub fn build_delegation_bundle(
             NoteValue::ZERO,
             output_rho,
             rseed,
-            NoteVersion::DEFAULT,
+            DELEGATION_NOTE_VERSION,
         )
         .into_option()
         .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
@@ -864,7 +902,7 @@ pub fn build_delegation_bundle(
             NoteValue::ZERO,
             output_rho,
             &mut *rng,
-            NoteVersion::DEFAULT,
+            DELEGATION_NOTE_VERSION,
         )
     };
     let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
@@ -1019,14 +1057,22 @@ mod tests {
         let (g_d_pad, pk_d_pad) =
             padding_points(slot_index, ivk).expect("test padding points should be valid");
         let psi = rseed.psi(&rho);
-        let rcm = rseed.rcm(&rho);
+        let rcm = rcm_scalar_for_note_parts(
+            DELEGATION_NOTE_VERSION,
+            &rseed,
+            &rho,
+            &g_d_pad,
+            &pk_d_pad,
+            NoteValue::ZERO,
+            psi,
+        );
         let cm = note_commitment_point(
             *g_d_pad,
             *pk_d_pad,
             NoteValue::ZERO,
             rho.into_inner(),
             psi,
-            rcm.inner(),
+            rcm,
         )
         .expect("test padding commitment should be valid")
         .to_affine();
@@ -1043,7 +1089,7 @@ mod tests {
         assert_known(&padding.witness.v, |actual| *actual == NoteValue::ZERO);
         assert_known(&padding.witness.rho, |actual| *actual == rho.into_inner());
         assert_known(&padding.witness.psi, |actual| *actual == psi);
-        assert_known(&padding.witness.rcm, |actual| actual.inner() == rcm.inner());
+        assert_known(&padding.witness.rcm, |actual| *actual == rcm);
         assert_known(&padding.witness.cm, |actual| *actual == cm);
         assert_known(&padding.witness.imt_nf_bounds, |actual| {
             *actual == imt_proof.nf_bounds
@@ -1063,10 +1109,11 @@ mod tests {
     /// Notes are placed at positions 0..n in the commitment tree. Returns
     /// `(inputs, nc_root)` where `nc_root` is the shared anchor.
     ///
-    fn make_real_note_inputs(
+    fn make_real_note_inputs_with_version(
         fvk: &FullViewingKey,
         values: &[u64],
         scopes: &[Scope],
+        note_version: NoteVersion,
         imt_provider: &impl ImtProvider,
         rng: &mut impl RngCore,
     ) -> (Vec<RealNoteInput>, pallas::Base) {
@@ -1079,13 +1126,13 @@ mod tests {
         for (idx, &v) in values.iter().enumerate() {
             let recipient = fvk.address_at(0u32, scopes[idx]);
             let note_value = NoteValue::from_raw(v);
-            let (_, _, dummy_parent) = Note::dummy(&mut *rng, None, NoteVersion::DEFAULT);
+            let (_, _, dummy_parent) = Note::dummy(&mut *rng, None, note_version);
             let note = Note::new(
                 recipient,
                 note_value,
                 Rho::from_nf_old(dummy_parent.nullifier(fvk)),
                 &mut *rng,
-                NoteVersion::DEFAULT,
+                note_version,
             );
             notes.push(note);
         }
@@ -1142,6 +1189,23 @@ mod tests {
         }
 
         (inputs, nc_root)
+    }
+
+    fn make_real_note_inputs(
+        fvk: &FullViewingKey,
+        values: &[u64],
+        scopes: &[Scope],
+        imt_provider: &impl ImtProvider,
+        rng: &mut impl RngCore,
+    ) -> (Vec<RealNoteInput>, pallas::Base) {
+        make_real_note_inputs_with_version(
+            fvk,
+            values,
+            scopes,
+            DELEGATION_NOTE_VERSION,
+            imt_provider,
+            rng,
+        )
     }
 
     /// Helper: build a bundle with explicit scopes.
@@ -1415,13 +1479,13 @@ mod tests {
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
         let recipient = fvk.address_at(0u32, scope);
-        let (_, _, dummy_parent) = Note::dummy(rng, None, NoteVersion::DEFAULT);
+        let (_, _, dummy_parent) = Note::dummy(rng, None, DELEGATION_NOTE_VERSION);
         let note = Note::new(
             recipient,
             NoteValue::from_raw(12_500_000),
             Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
             rng,
-            NoteVersion::DEFAULT,
+            DELEGATION_NOTE_VERSION,
         );
         (fvk, ak, note)
     }
@@ -1438,7 +1502,7 @@ mod tests {
             let recipient = note.recipient();
             let rho = note.rho();
             let psi = note.rseed().psi(&rho);
-            let rcm = note.rseed().rcm(&rho);
+            let rcm = note_rcm_scalar(&note);
 
             let mirrored = note_commitment_point(
                 *recipient.g_d(),
@@ -1446,7 +1510,7 @@ mod tests {
                 note.value(),
                 rho.into_inner(),
                 psi,
-                rcm.inner(),
+                rcm,
             );
             let orchard = note.commitment().inner();
 
@@ -1543,7 +1607,7 @@ mod tests {
             .as_ref()
             .copied()
             .zip(padding.witness.psi.as_ref().copied())
-            .zip(padding.witness.rcm.as_ref().cloned())
+            .zip(padding.witness.rcm.as_ref().copied())
             .zip(padding.witness.cm.as_ref().copied());
         assert_known(
             &generated_padding_values,
@@ -1554,7 +1618,7 @@ mod tests {
                     NoteValue::ZERO,
                     *rho_inner,
                     *psi,
-                    rcm.inner(),
+                    *rcm,
                 )
                 .expect("test padding commitment should be valid")
                 .to_affine();
@@ -1643,14 +1707,22 @@ mod tests {
         let (expected_g_d, expected_pk_d) =
             padding_points(slot_index, ivk).expect("test padding points should be valid");
         let expected_psi = rseed.psi(&rho);
-        let expected_rcm = rseed.rcm(&rho);
+        let expected_rcm = rcm_scalar_for_note_parts(
+            DELEGATION_NOTE_VERSION,
+            &rseed,
+            &rho,
+            &expected_g_d,
+            &expected_pk_d,
+            NoteValue::ZERO,
+            expected_psi,
+        );
         let expected_cm = note_commitment_point(
             *expected_g_d,
             *expected_pk_d,
             NoteValue::ZERO,
             rho.into_inner(),
             expected_psi,
-            expected_rcm.inner(),
+            expected_rcm,
         )
         .expect("test padding commitment should be valid")
         .to_affine();
@@ -1660,7 +1732,7 @@ mod tests {
         assert_eq!(derived.g_d_pad, expected_g_d);
         assert_eq!(derived.pk_d_pad, expected_pk_d);
         assert_eq!(derived.psi, expected_psi);
-        assert_eq!(derived.rcm.inner(), expected_rcm.inner());
+        assert_eq!(derived.rcm, expected_rcm);
         assert_eq!(derived.cm, expected_cm);
         assert_eq!(derived.cmx, *expected_cm.coordinates().unwrap().x());
         assert_eq!(derived.real_nf, expected_nf);
@@ -1872,6 +1944,44 @@ mod tests {
     }
 
     #[test]
+    fn test_v2_notes_are_rejected() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let output_recipient = fvk.address_at(1u32, Scope::External);
+        let imt = SpacedLeafImtProvider::new();
+        let (inputs, nc_root) = make_real_note_inputs_with_version(
+            &fvk,
+            &[13_000_000],
+            &[Scope::External],
+            NoteVersion::V2,
+            &imt,
+            &mut rng,
+        );
+
+        let result = build_delegation_bundle(
+            inputs,
+            &fvk,
+            pallas::Scalar::random(&mut rng),
+            output_recipient,
+            pallas::Base::random(&mut rng),
+            nc_root,
+            pallas::Base::random(&mut rng),
+            &imt,
+            &mut rng,
+            None,
+        );
+
+        assert!(matches!(
+            result,
+            Err(DelegationBuildError::UnsupportedNoteVersion {
+                index: 0,
+                note_version: NoteVersion::V2
+            })
+        ));
+    }
+
+    #[test]
     fn test_five_real_notes_builds_expected_output_shape() {
         // 2,500,000 x 5 = 12,500,000 → num_ballots = 1, remainder = 0.
         build_bundle(
@@ -1994,6 +2104,122 @@ mod tests {
             result,
             Err(DelegationBuildError::InvalidPrecomputedRho { index: 0 })
         ));
+    }
+
+    #[test]
+    fn test_precomputed_delegation_notes_are_v3() {
+        let mut rng = OsRng;
+        let sk = SpendingKey::random(&mut rng);
+        let fvk: FullViewingKey = (&sk).into();
+        let ak: SpendValidatingKey = fvk.clone().into();
+        let output_recipient = fvk.address_at(1u32, Scope::External);
+        let vote_round_id = pallas::Base::random(&mut rng);
+        let van_comm_rand = pallas::Base::random(&mut rng);
+        let alpha = pallas::Scalar::random(&mut rng);
+        let imt = SpacedLeafImtProvider::new();
+        let (inputs, nc_root) =
+            make_real_note_inputs(&fvk, &[13_000_000], &[Scope::External], &imt, &mut rng);
+
+        let mut cmx_values =
+            vec![ExtractedNoteCommitment::from(inputs[0].note.commitment()).inner()];
+        let mut padded_notes = Vec::with_capacity(circuit::MAX_REAL_NOTES - 1);
+        let ivk = external_ivk_scalar(&fvk, &ak);
+        for (pad_idx, slot_index) in (1..circuit::MAX_REAL_NOTES).enumerate() {
+            let (padded_note, rho, rseed) = precomputed_padding_note(&mut rng);
+            let padding = derive_synthetic_padding_note(
+                fvk.nk().inner(),
+                ivk,
+                slot_index,
+                rho,
+                rseed,
+                PrecomputedRandomnessLocation::PaddedNote(pad_idx),
+            )
+            .unwrap();
+            cmx_values.push(padding.cmx);
+            padded_notes.push(padded_note);
+        }
+
+        let g_d_new_x = *output_recipient
+            .g_d()
+            .to_affine()
+            .coordinates()
+            .unwrap()
+            .x();
+        let pk_d_new_x = *output_recipient
+            .pk_d()
+            .inner()
+            .to_affine()
+            .coordinates()
+            .unwrap()
+            .x();
+        let van_comm = van_commitment_hash(
+            g_d_new_x,
+            pk_d_new_x,
+            pallas::Base::from(1u64),
+            vote_round_id,
+            van_comm_rand,
+        );
+        let rho = rho_binding_hash(
+            cmx_values[0],
+            cmx_values[1],
+            cmx_values[2],
+            cmx_values[3],
+            cmx_values[4],
+            van_comm,
+            vote_round_id,
+        );
+
+        let sender_address = fvk.address_at(0u32, Scope::External);
+        let signed_rho = Rho::from_nf_old(Nullifier::from_inner(rho));
+        let rseed_signed = random_seed_for_rho(&signed_rho, &mut rng);
+        let expected_signed_note = Note::from_parts(
+            sender_address,
+            NoteValue::from_raw(1),
+            signed_rho,
+            rseed_signed,
+            DELEGATION_NOTE_VERSION,
+        )
+        .into_option()
+        .unwrap();
+        let nf_signed = expected_signed_note.nullifier(&fvk);
+
+        let output_rho = Rho::from_nf_old(nf_signed);
+        let rseed_output = random_seed_for_rho(&output_rho, &mut rng);
+        let expected_output_note = Note::from_parts(
+            output_recipient,
+            NoteValue::ZERO,
+            output_rho,
+            rseed_output,
+            DELEGATION_NOTE_VERSION,
+        )
+        .into_option()
+        .unwrap();
+        let cmx_new = ExtractedNoteCommitment::from(expected_output_note.commitment()).inner();
+
+        assert_eq!(expected_signed_note.version(), NoteVersion::V3);
+        assert_eq!(expected_output_note.version(), NoteVersion::V3);
+
+        let precomputed = PrecomputedRandomness {
+            padded_notes,
+            rseed_signed: *rseed_signed.as_bytes(),
+            rseed_output: *rseed_output.as_bytes(),
+        };
+        let bundle = build_delegation_bundle(
+            inputs,
+            &fvk,
+            alpha,
+            output_recipient,
+            vote_round_id,
+            nc_root,
+            van_comm_rand,
+            &imt,
+            &mut rng,
+            Some(&precomputed),
+        )
+        .unwrap();
+
+        assert_eq!(bundle.instance.nf_signed, nf_signed);
+        assert_eq!(bundle.instance.cmx_new, cmx_new);
     }
 
     #[test]

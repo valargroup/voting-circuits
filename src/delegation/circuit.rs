@@ -30,6 +30,8 @@
 
 use std::vec::Vec;
 
+use blake2b_simd::Params as Blake2bParams;
+use ff::{FromUniformBytes, PrimeField};
 use group::{Curve, GroupEncoding};
 use halo2_gadgets::{
     ecc::{
@@ -73,11 +75,7 @@ use orchard::{
         CommitIvkRandomness, DiversifiedTransmissionKey, FullViewingKey, NullifierDerivingKey,
         Scope, SpendValidatingKey,
     },
-    note::{
-        commitment::{NoteCommitTrapdoor, NoteCommitment},
-        nullifier::Nullifier,
-        Note,
-    },
+    note::{commitment::NoteCommitment, nullifier::Nullifier, Note, NoteVersion, RandomSeed, Rho},
     primitives::redpallas::{SpendAuth, VerificationKey},
     spec::NonIdentityPallasPoint,
     tree::MerkleHashOrchard,
@@ -99,6 +97,9 @@ use crate::{
     protocol_hash::poseidon_hash_in_circuit,
 };
 
+const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
+const ZIP2005_ORCHARD_QR_RCM_DOMAIN_SEPARATOR: u8 = 0x0B;
+
 // ================================================================
 // Circuit size
 // ================================================================
@@ -109,6 +110,53 @@ use crate::{
 /// with Sinsemilla NoteCommit, Merkle paths, IMT non-membership, and
 /// ECC operations.
 pub const K: u32 = 14;
+
+pub(super) fn rcm_scalar_for_note_parts(
+    version: NoteVersion,
+    rseed: &RandomSeed,
+    rho: &Rho,
+    g_d: &NonIdentityPallasPoint,
+    pk_d: &NonIdentityPallasPoint,
+    value: NoteValue,
+    psi: pallas::Base,
+) -> pallas::Scalar {
+    match version {
+        NoteVersion::V2 => rseed.rcm(rho).inner(),
+        NoteVersion::V3 => {
+            let mut h = Blake2bParams::new()
+                .hash_length(64)
+                .personal(PRF_EXPAND_PERSONALIZATION)
+                .to_state();
+            h.update(rseed.as_bytes());
+            h.update(&[ZIP2005_ORCHARD_QR_RCM_DOMAIN_SEPARATOR]);
+            h.update(&g_d.to_bytes());
+            h.update(&pk_d.to_bytes());
+            h.update(&value.inner().to_le_bytes());
+            h.update(&rho.to_bytes());
+            h.update(&psi.to_repr());
+
+            pallas::Scalar::from_uniform_bytes(h.finalize().as_array())
+        }
+    }
+}
+
+pub(super) fn note_rcm_scalar(note: &Note) -> pallas::Scalar {
+    let rho = note.rho();
+    let psi = note.rseed().psi(&rho);
+    let recipient = note.recipient();
+    let g_d = recipient.g_d();
+    let pk_d = recipient.pk_d().inner();
+
+    rcm_scalar_for_note_parts(
+        note.version(),
+        note.rseed(),
+        &rho,
+        &g_d,
+        &pk_d,
+        note.value(),
+        psi,
+    )
+}
 
 // ================================================================
 // Public input offsets (14 field elements).
@@ -360,7 +408,7 @@ pub(super) struct NoteSlotWitness {
     pub(super) v: Value<NoteValue>,
     pub(super) rho: Value<pallas::Base>,
     pub(super) psi: Value<pallas::Base>,
-    pub(super) rcm: Value<NoteCommitTrapdoor>,
+    pub(super) rcm: Value<pallas::Scalar>,
     pub(super) cm: Value<pallas::Affine>,
     pub(super) path: Value<[MerkleHashOrchard; MERKLE_DEPTH_ORCHARD]>,
     pub(super) pos: Value<u32>,
@@ -390,7 +438,7 @@ pub struct Circuit {
     alpha: Value<pallas::Scalar>,
     rivk: Value<CommitIvkRandomness>,
     rivk_internal: Value<CommitIvkRandomness>,
-    rcm_signed: Value<NoteCommitTrapdoor>,
+    rcm_signed: Value<pallas::Scalar>,
     g_d_signed: Value<NonIdentityPallasPoint>,
     pk_d_signed: Value<DiversifiedTransmissionKey>,
     // Output note witnesses (condition 6).
@@ -398,7 +446,7 @@ pub struct Circuit {
     g_d_new: Value<NonIdentityPallasPoint>,
     pk_d_new: Value<DiversifiedTransmissionKey>,
     psi_new: Value<pallas::Base>,
-    rcm_new: Value<NoteCommitTrapdoor>,
+    rcm_new: Value<pallas::Scalar>,
     // Per-note slots (conditions 9–14).
     notes: [NoteSlotWitness; 5],
     // Gov commitment blinding factor (condition 7).
@@ -421,7 +469,7 @@ impl Circuit {
         let sender_address = note.recipient();
         let rho_signed = note.rho();
         let psi_signed = note.rseed().psi(&rho_signed);
-        let rcm_signed = note.rseed().rcm(&rho_signed);
+        let rcm_signed = note_rcm_scalar(note);
         Circuit {
             nk: Value::known(*fvk.nk()),
             rho_signed: Value::known(rho_signed.into_inner()),
@@ -442,7 +490,7 @@ impl Circuit {
     pub(super) fn with_output_note(mut self, output_note: &Note) -> Self {
         let rho_new = output_note.rho();
         let psi_new = output_note.rseed().psi(&rho_new);
-        let rcm_new = output_note.rseed().rcm(&rho_new);
+        let rcm_new = note_rcm_scalar(output_note);
         self.g_d_new = Value::known(output_note.recipient().g_d());
         self.pk_d_new = Value::known(*output_note.recipient().pk_d());
         self.psi_new = Value::known(psi_new);
@@ -942,7 +990,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let rcm_signed = ScalarFixed::new(
                 ecc_chip.clone(),
                 layouter.namespace(|| "rcm_signed"),
-                self.rcm_signed.as_ref().map(|rcm| rcm.inner()),
+                self.rcm_signed.as_ref().copied(),
             )?;
 
             // The keystone note's value is 1 zatoshi by convention, so Keystone-class
@@ -1220,7 +1268,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let rcm_new = ScalarFixed::new(
                 ecc_chip.clone(),
                 layouter.namespace(|| "rcm_new"),
-                self.rcm_new.as_ref().map(|rcm_new| rcm_new.inner()),
+                self.rcm_new.as_ref().copied(),
             )?;
 
             // The output note's value is always 0.
@@ -1571,7 +1619,7 @@ fn synthesize_note_slot(
     let rcm = ScalarFixed::new(
         ecc_chip.clone(),
         layouter.namespace(|| format!("note {s} rcm")),
-        note.rcm.as_ref().map(|rcm| rcm.inner()),
+        note.rcm.as_ref().copied(),
     )?;
 
     // Witness the claimed commitment as a curve point.
@@ -1977,7 +2025,7 @@ mod tests {
     ) -> NoteSlotWitness {
         let rho = note.rho();
         let psi = note.rseed().psi(&rho);
-        let rcm = note.rseed().rcm(&rho);
+        let rcm = note_rcm_scalar(note);
         let cm = note.commitment();
         let recipient = note.recipient();
 
@@ -2436,7 +2484,7 @@ mod tests {
             &mut rng,
             NoteVersion::DEFAULT,
         );
-        circuit.notes[0].rcm = Value::known(replacement_note.rseed().rcm(&replacement_note.rho()));
+        circuit.notes[0].rcm = Value::known(note_rcm_scalar(&replacement_note));
 
         let prover = MockProver::run(K, &circuit, vec![pi]).unwrap();
         assert_rejects(prover);
