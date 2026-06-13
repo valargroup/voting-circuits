@@ -17,7 +17,10 @@ use orchard::{
         L_ORCHARD_BASE, L_VALUE,
     },
     keys::{FullViewingKey, Scope, SpendValidatingKey},
-    note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, RandomSeed, Rho},
+    note::{
+        commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, NoteVersion, RandomSeed,
+        Rho,
+    },
     spec::NonIdentityPallasPoint,
     tree::MerklePath,
     value::NoteValue,
@@ -816,15 +819,22 @@ pub fn build_delegation_bundle(
         let rseed = RandomSeed::from_bytes(pre.rseed_signed, &signed_rho)
             .into_option()
             .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
-        Note::from_parts(sender_address, NoteValue::from_raw(1), signed_rho, rseed)
-            .into_option()
-            .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
+        Note::from_parts(
+            sender_address,
+            NoteValue::from_raw(1),
+            signed_rho,
+            rseed,
+            NoteVersion::DEFAULT,
+        )
+        .into_option()
+        .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
     } else {
         Note::new(
             sender_address,
             NoteValue::from_raw(1),
             signed_rho,
             &mut *rng,
+            NoteVersion::DEFAULT,
         )
     };
 
@@ -839,11 +849,23 @@ pub fn build_delegation_bundle(
         let rseed = RandomSeed::from_bytes(pre.rseed_output, &output_rho)
             .into_option()
             .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
-        Note::from_parts(output_recipient, NoteValue::ZERO, output_rho, rseed)
-            .into_option()
-            .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
+        Note::from_parts(
+            output_recipient,
+            NoteValue::ZERO,
+            output_rho,
+            rseed,
+            NoteVersion::DEFAULT,
+        )
+        .into_option()
+        .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
     } else {
-        Note::new(output_recipient, NoteValue::ZERO, output_rho, &mut *rng)
+        Note::new(
+            output_recipient,
+            NoteValue::ZERO,
+            output_rho,
+            &mut *rng,
+            NoteVersion::DEFAULT,
+        )
     };
     let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
 
@@ -1057,12 +1079,13 @@ mod tests {
         for (idx, &v) in values.iter().enumerate() {
             let recipient = fvk.address_at(0u32, scopes[idx]);
             let note_value = NoteValue::from_raw(v);
-            let (_, _, dummy_parent) = Note::dummy(&mut *rng, None);
+            let (_, _, dummy_parent) = Note::dummy(&mut *rng, None, NoteVersion::DEFAULT);
             let note = Note::new(
                 recipient,
                 note_value,
                 Rho::from_nf_old(dummy_parent.nullifier(fvk)),
                 &mut *rng,
+                NoteVersion::DEFAULT,
             );
             notes.push(note);
         }
@@ -1392,12 +1415,13 @@ mod tests {
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
         let recipient = fvk.address_at(0u32, scope);
-        let (_, _, dummy_parent) = Note::dummy(rng, None);
+        let (_, _, dummy_parent) = Note::dummy(rng, None, NoteVersion::DEFAULT);
         let note = Note::new(
             recipient,
             NoteValue::from_raw(12_500_000),
             Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
             rng,
+            NoteVersion::DEFAULT,
         );
         (fvk, ak, note)
     }

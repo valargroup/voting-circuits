@@ -172,7 +172,7 @@ mod prove_tests {
     use incrementalmerkletree::{Hashable, Level};
     use orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
-        note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, Rho},
+        note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, NoteVersion, Rho},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
@@ -255,12 +255,13 @@ mod prove_tests {
 
         // Create a single real note
         let recipient = fvk.address_at(0u32, Scope::External);
-        let (_, _, dummy) = Note::dummy(&mut rng, None);
+        let (_, _, dummy) = Note::dummy(&mut rng, None, NoteVersion::DEFAULT);
         let note = Note::new(
             recipient,
             NoteValue::from_raw(13_000_000),
             Rho::from_nf_old(dummy.nullifier(&fvk)),
             &mut rng,
+            NoteVersion::DEFAULT,
         );
         let cmx = ExtractedNoteCommitment::from(note.commitment());
         let leaf = MerkleHashOrchard::from_cmx(&cmx);

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Pinned `orchard` to the Valar `qr_orchard` protocol API fork and made the
+  note version explicit at Orchard note construction sites.
+
 ## v0.8.0
 
 ### Changed

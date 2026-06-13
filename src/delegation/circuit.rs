@@ -1958,7 +1958,7 @@ mod tests {
     use incrementalmerkletree::{Hashable, Level};
     use orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
-        note::{commitment::ExtractedNoteCommitment, Note, Rho},
+        note::{commitment::ExtractedNoteCommitment, Note, NoteVersion, Rho},
     };
     use pasta_curves::{arithmetic::CurveAffine, pallas};
     use rand::rngs::OsRng;
@@ -2029,12 +2029,13 @@ mod tests {
         // Real note (slot 0) with value = 13,000,000.
         let recipient = fvk.address_at(0u32, Scope::External);
         let note_value = NoteValue::from_raw(13_000_000);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::DEFAULT);
         let real_note = Note::new(
             recipient,
             note_value,
             Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
             &mut rng,
+            NoteVersion::DEFAULT,
         );
 
         // Build Merkle tree with real note at position 0.
@@ -2147,6 +2148,7 @@ mod tests {
             NoteValue::from_raw(1),
             Rho::from_nf_old(Nullifier::from_inner(rho)),
             &mut rng,
+            NoteVersion::DEFAULT,
         );
         let nf_signed = signed_note.nullifier(&fvk);
 
@@ -2156,6 +2158,7 @@ mod tests {
             NoteValue::ZERO,
             Rho::from_nf_old(nf_signed),
             &mut rng,
+            NoteVersion::DEFAULT,
         );
         let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
 
@@ -2369,6 +2372,7 @@ mod tests {
             NoteValue::ZERO,
             Rho::from_nf_old(t.instance.nf_signed),
             &mut rng,
+            NoteVersion::DEFAULT,
         );
         circuit = circuit.with_output_note(&attacker_output);
 
@@ -2423,13 +2427,14 @@ mod tests {
 
         let replacement_sk = SpendingKey::random(&mut rng);
         let replacement_fvk = FullViewingKey::from(&replacement_sk);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::DEFAULT);
         let rho = Rho::from_nf_old(dummy_parent.nullifier(&replacement_fvk));
         let replacement_note = Note::new(
             replacement_fvk.address_at(0u32, Scope::External),
             NoteValue::ZERO,
             rho,
             &mut rng,
+            NoteVersion::DEFAULT,
         );
         circuit.notes[0].rcm = Value::known(replacement_note.rseed().rcm(&replacement_note.rho()));
 
@@ -2522,12 +2527,13 @@ mod tests {
         let sk2 = SpendingKey::random(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let addr2 = fvk2.address_at(0u32, Scope::External);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::DEFAULT);
         let fake_note = Note::new(
             addr2,
             NoteValue::from_raw(100), // v > 0: not a zero-value padded note
             Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
             &mut rng,
+            NoteVersion::DEFAULT,
         );
 
         let imt_provider = SpacedLeafImtProvider::new();
@@ -2567,12 +2573,13 @@ mod tests {
         let sk2 = SpendingKey::random(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let addr2 = fvk2.address_at(100u32, Scope::External);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::DEFAULT);
         let foreign_note = Note::new(
             addr2,
             NoteValue::ZERO,
             Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
             &mut rng,
+            NoteVersion::DEFAULT,
         );
 
         let imt_provider = SpacedLeafImtProvider::new();

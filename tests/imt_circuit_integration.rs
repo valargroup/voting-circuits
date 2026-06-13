@@ -15,7 +15,7 @@ use imt_tree::tree::{
 use incrementalmerkletree::{Hashable, Level};
 use orchard::{
     keys::{FullViewingKey, Scope, SpendingKey},
-    note::{ExtractedNoteCommitment, Note, Rho},
+    note::{ExtractedNoteCommitment, Note, NoteVersion, Rho},
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
     NOTE_COMMITMENT_TREE_DEPTH,
@@ -44,12 +44,13 @@ fn make_real_note_inputs(
     for (idx, &v) in values.iter().enumerate() {
         let recipient = fvk.address_at(0u32, scopes[idx]);
         let note_value = NoteValue::from_raw(v);
-        let (_, _, dummy_parent) = Note::dummy(&mut *rng, None);
+        let (_, _, dummy_parent) = Note::dummy(&mut *rng, None, NoteVersion::DEFAULT);
         let note = Note::new(
             recipient,
             note_value,
             Rho::from_nf_old(dummy_parent.nullifier(fvk)),
             &mut *rng,
+            NoteVersion::DEFAULT,
         );
         notes.push(note);
     }

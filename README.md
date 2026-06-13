@@ -96,7 +96,7 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 ## Dependency on `orchard`
 
-This crate depends on upstream [`zcash/orchard`](https://github.com/zcash/orchard) `0.14` from crates.io, allowing compatible patch releases, with the `unstable-voting-circuits` feature enabled to expose the governance-visibility APIs the voting circuits rely on. The previous `valar-orchard` fork has been retired.
+This crate depends on Valar's `qr_orchard` fork of `orchard 0.14`, pinned to a specific protocol API revision, with the `unstable-voting-circuits` feature enabled to expose the governance-visibility APIs the voting circuits rely on.
 
 ## Building
 

@@ -13,7 +13,7 @@ use incrementalmerkletree::{Hashable, Level};
 use orchard::{
     constants::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH,
     keys::{FullViewingKey, Scope, SpendingKey},
-    note::{ExtractedNoteCommitment, Note, RandomSeed, Rho},
+    note::{ExtractedNoteCommitment, Note, NoteVersion, RandomSeed, Rho},
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
 };
@@ -90,7 +90,7 @@ fn make_note(recipient: orchard::Address, value: NoteValue, rng: &mut impl RngCo
         if bool::from(rseed.is_none()) {
             continue;
         }
-        let note = Note::from_parts(recipient, value, rho, rseed.unwrap());
+        let note = Note::from_parts(recipient, value, rho, rseed.unwrap(), NoteVersion::DEFAULT);
         if bool::from(note.is_some()) {
             return note.unwrap();
         }
