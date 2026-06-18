@@ -10,7 +10,7 @@ readme = "README.md"
 
 [dependencies]
 # orchard 0.14 declares the MSRV and exposes the unstable governance circuit APIs.
-orchard = { version = "0.14", git = "https://github.com/valargroup/qr_orchard", rev = "dbb735363f5df02d9201c380e04c45ba1f7d3a2c", features = ["circuit", "unstable-voting-circuits"] }
+orchard = { version = "0.14", git = "https://github.com/valargroup/qr_orchard", rev = "723d2f73c56e9fec292259ae1939755626cc26ca", features = ["circuit", "unstable-voting-circuits"] }
 # halo2_proofs 0.3 fixes the proof-system API and batch verifier used by all circuits.
 halo2_proofs = { version = "0.3", default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
 # halo2_gadgets 0.5 supplies ECC, Sinsemilla, Poseidon helpers, bool_check, and range checks that shape the verifying keys.
