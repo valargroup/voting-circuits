@@ -871,8 +871,8 @@ pub fn build_delegation_bundle(
             sender_address,
             NoteValue::from_raw(1),
             signed_rho,
-            &mut *rng,
             DELEGATION_NOTE_VERSION,
+            &mut *rng,
         )
     };
 
@@ -901,8 +901,8 @@ pub fn build_delegation_bundle(
             output_recipient,
             NoteValue::ZERO,
             output_rho,
-            &mut *rng,
             DELEGATION_NOTE_VERSION,
+            &mut *rng,
         )
     };
     let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
@@ -1131,8 +1131,8 @@ mod tests {
                 recipient,
                 note_value,
                 Rho::from_nf_old(dummy_parent.nullifier(fvk)),
-                &mut *rng,
                 note_version,
+                &mut *rng,
             );
             notes.push(note);
         }
@@ -1484,8 +1484,8 @@ mod tests {
             recipient,
             NoteValue::from_raw(12_500_000),
             Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
-            rng,
             DELEGATION_NOTE_VERSION,
+            rng,
         );
         (fvk, ak, note)
     }

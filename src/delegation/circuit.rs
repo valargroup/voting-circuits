@@ -121,7 +121,7 @@ pub(super) fn rcm_scalar_for_note_parts(
     psi: pallas::Base,
 ) -> pallas::Scalar {
     match version {
-        NoteVersion::V2 => rseed.rcm(rho).inner(),
+        NoteVersion::V2 => rseed.rcm_v2(rho).inner(),
         NoteVersion::V3 => {
             let mut h = Blake2bParams::new()
                 .hash_length(64)
@@ -2077,13 +2077,13 @@ mod tests {
         // Real note (slot 0) with value = 13,000,000.
         let recipient = fvk.address_at(0u32, Scope::External);
         let note_value = NoteValue::from_raw(13_000_000);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::DEFAULT);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V2);
         let real_note = Note::new(
             recipient,
             note_value,
             Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
+            NoteVersion::V2,
             &mut rng,
-            NoteVersion::DEFAULT,
         );
 
         // Build Merkle tree with real note at position 0.
@@ -2195,8 +2195,8 @@ mod tests {
             sender_address,
             NoteValue::from_raw(1),
             Rho::from_nf_old(Nullifier::from_inner(rho)),
+            NoteVersion::V2,
             &mut rng,
-            NoteVersion::DEFAULT,
         );
         let nf_signed = signed_note.nullifier(&fvk);
 
@@ -2205,8 +2205,8 @@ mod tests {
             output_recipient,
             NoteValue::ZERO,
             Rho::from_nf_old(nf_signed),
+            NoteVersion::V2,
             &mut rng,
-            NoteVersion::DEFAULT,
         );
         let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
 
@@ -2419,8 +2419,8 @@ mod tests {
             attacker_recipient,
             NoteValue::ZERO,
             Rho::from_nf_old(t.instance.nf_signed),
+            NoteVersion::V2,
             &mut rng,
-            NoteVersion::DEFAULT,
         );
         circuit = circuit.with_output_note(&attacker_output);
 
@@ -2475,14 +2475,14 @@ mod tests {
 
         let replacement_sk = SpendingKey::random(&mut rng);
         let replacement_fvk = FullViewingKey::from(&replacement_sk);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::DEFAULT);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V2);
         let rho = Rho::from_nf_old(dummy_parent.nullifier(&replacement_fvk));
         let replacement_note = Note::new(
             replacement_fvk.address_at(0u32, Scope::External),
             NoteValue::ZERO,
             rho,
+            NoteVersion::V2,
             &mut rng,
-            NoteVersion::DEFAULT,
         );
         circuit.notes[0].rcm = Value::known(note_rcm_scalar(&replacement_note));
 
@@ -2575,13 +2575,13 @@ mod tests {
         let sk2 = SpendingKey::random(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let addr2 = fvk2.address_at(0u32, Scope::External);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::DEFAULT);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V2);
         let fake_note = Note::new(
             addr2,
             NoteValue::from_raw(100), // v > 0: not a zero-value padded note
             Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
+            NoteVersion::V2,
             &mut rng,
-            NoteVersion::DEFAULT,
         );
 
         let imt_provider = SpacedLeafImtProvider::new();
@@ -2621,13 +2621,13 @@ mod tests {
         let sk2 = SpendingKey::random(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let addr2 = fvk2.address_at(100u32, Scope::External);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::DEFAULT);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V2);
         let foreign_note = Note::new(
             addr2,
             NoteValue::ZERO,
             Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
+            NoteVersion::V2,
             &mut rng,
-            NoteVersion::DEFAULT,
         );
 
         let imt_provider = SpacedLeafImtProvider::new();

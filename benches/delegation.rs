@@ -90,7 +90,7 @@ fn make_note(recipient: orchard::Address, value: NoteValue, rng: &mut impl RngCo
         if bool::from(rseed.is_none()) {
             continue;
         }
-        let note = Note::from_parts(recipient, value, rho, rseed.unwrap(), NoteVersion::DEFAULT);
+        let note = Note::from_parts(recipient, value, rho, rseed.unwrap(), NoteVersion::V2);
         if bool::from(note.is_some()) {
             return note.unwrap();
         }

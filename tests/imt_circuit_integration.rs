@@ -49,8 +49,8 @@ fn make_real_note_inputs(
             recipient,
             note_value,
             Rho::from_nf_old(dummy_parent.nullifier(fvk)),
-            &mut *rng,
             NoteVersion::V3,
+            &mut *rng,
         );
         notes.push(note);
     }
