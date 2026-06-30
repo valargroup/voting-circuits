@@ -864,8 +864,9 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "orchard"
-version = "0.14.0"
-source = "git+https://github.com/valargroup/orchard?branch=adam%2Fpczt-recompute-helpers#d05e3b414ad87e87341318727cf0df3ba4c6ad61"
+version = "0.15.0-pre.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8e277dd4b46f5d06deae3ffb8af1a951e8622368f028c2a4d6fe59339566403"
 dependencies = [
  "aes",
  "bitvec",
