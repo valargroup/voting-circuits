@@ -25,7 +25,7 @@ in `imt.rs` for delegation-only hashes.
    * **cmx_new** (offset 3): the extracted note commitment (`ExtractP(cm_new)`) of the output note.
    * **van_comm** (offset 4): the governance commitment — a Pallas base field element identifying the governance context.
    * **vote_round_id** (offset 5): the vote round identifier — prevents cross-round replay.
-   * **nc_root** (offset 6): ledger-state anchor for the Orchard note commitment tree at the verifier-pinned snapshot height; real-note Merkle paths must resolve to this root.
+   * **nc_root** (offset 6): ledger-state anchor for the Ironwood note commitment tree at the verifier-pinned snapshot height; real-note Merkle paths must resolve to this root.
    * **nf_imt_root** (offset 7): ledger-state anchor for the alternate-nullifier Indexed Merkle Tree at the same snapshot height as `nc_root`; non-membership proofs must resolve to this root.
    * **gov_null_1..5** (offsets 8–12): per-note alternate nullifiers, one per note slot.
    * **dom** (offset 13): the nullifier domain — Poseidon("governance authorization", vote_round_id). Exposed as a public input for API compatibility; the circuit constrains it against vote_round_id rather than trusting an arbitrary value.
@@ -84,7 +84,7 @@ verifier; it does not authenticate where those inputs came from.
 
 **Ledger-state anchors:** `nc_root` and `nf_imt_root` must come from the
 chain's state at the same verifier-pinned snapshot height. `nc_root` is the
-Orchard note commitment tree root used by condition 10. `nf_imt_root` is the
+Ironwood note commitment tree root used by condition 10. `nf_imt_root` is the
 alternate-nullifier IMT root used by condition 13. A prover bundle may carry
 copies of these values for convenience, but a verifier must not trust the
 bundle as their source of truth.
@@ -97,19 +97,20 @@ proof-attested by condition 7 and then consumed by the voting flow.
 ## Integration: the Keystone (signed) note is synthetic
 
 The keystone (signed) note **does not exist on any chain**. It is a
-synthetic Orchard-spend shape locally constructed by the voting client
+synthetic Ironwood spend shape locally constructed by the voting client
 so that:
 
-1. The Keystone hardware wallet — which only signs Orchard Actions —
+1. The Keystone hardware wallet — which signs Orchard protocol Actions,
+   including Ironwood Actions —
    can be coerced into producing a spend-auth signature under `rk` over
-   the wrapping Action's ZIP-244 sighash. The voting protocol piggybacks
-   on Orchard's existing wallet-UX surface rather than adding a new
-   signing protocol.
+   the wrapping Ironwood Action's ZIP-244 sighash. The voting protocol
+   piggybacks on the shared Orchard protocol wallet UX surface rather than
+   adding a new signing protocol.
 2. The wallet's UI renders `v_signed = 1` zatoshi for user approval;
    zero-value spends are not rendered, which is why the keystone value
    is 1 rather than 0 (see condition 1 below).
 3. The proof's public-input layout `(nf_signed, rk, cmx_new, ...)`
-   matches what the wrapping Orchard Action expects.
+   matches what the wrapping Ironwood Action expects.
 
 Unlike each of the five real-note slots, which carry a Sinsemilla
 Merkle membership proof against the public `nc_root` anchor (gated by
@@ -135,11 +136,11 @@ buckets, useful for auditing future refactors:
   which the wallet's spend-auth signature cryptographically commits to
   `van_comm` and `vote_round_id`. Remove any link in this chain and the
   binding breaks.
-- **Orchard-Action shape mimicry.** Condition 1 (`cm_signed`
+- **Ironwood Action shape mimicry.** Condition 1 (`cm_signed`
   well-formed under the keystone diversified address) and condition 6
   (`cmx_new` derivation from the synthetic output note). These exist to
   make the wrapping Action's public-input layout look like a standard
-  Orchard spend; the voting protocol does not consume `cm_signed` or
+  Ironwood spend; the voting protocol does not consume `cm_signed` or
   `cmx_new` for any of its own invariants.
 
 ## 1. Signed Note Commitment Integrity
@@ -165,7 +166,7 @@ The commitment binds together: **who the note belongs to** (g_d, pk_d), **how mu
 
 ## 2. Nullifier Integrity
 
-Purpose: derive the standard Orchard nullifier deterministically from the note's secret components. Validate it against the one used in the exclusion proof.
+Purpose: derive the standard Orchard protocol nullifier used by Ironwood deterministically from the note's secret components. Validate it against the one used in the exclusion proof.
 
 ```
 nf_signed = DeriveNullifier_nk(rho_signed, psi_signed, cm_signed)
@@ -192,9 +193,9 @@ DeriveNullifier_nk(rho, psi, cm) = ExtractP(
 **Constructions:** `PoseidonChip`, `AddChip`, `EccChip`.
 
 - **Why do we take PRF of rho?**
-   * The primary reason is unlinkability. Rho is the nullifier of the note that was spend to create this note. In standard Orchard, nullifiers are published onchain. The PRF destroys the link.
+   * The primary reason is unlinkability. Rho is the nullifier of the note that was spent to create this note. In the standard Orchard protocol flow used by Ironwood, nullifiers are published onchain. The PRF destroys the link.
 - **Why not expose nf_old publicly?**
-   * In standard Orchard, the nullifier is published to prevent double-spending. In this delegation circuit, nf_old is not directly exposed as a public input. Instead, it is checked against the exclusion interval and a domain nullifier is published instead. The standard nullifier stays hidden.
+   * In the standard Orchard protocol flow used by Ironwood, the nullifier is published to prevent double-spending. In this delegation circuit, nf_old is not directly exposed as a public input. Instead, it is checked against the exclusion interval and a domain nullifier is published instead. The standard nullifier stays hidden.
 
 ## 3. Rho Binding
 
@@ -405,7 +406,7 @@ This ensures all five delegated notes belong to the same wallet (same key materi
 
 ## 12. Private Nullifier Derivation (x5)
 
-Purpose: derive each note's true Orchard nullifier in-circuit. This nullifier is NOT published — it feeds into condition 13 (IMT non-membership) and condition 14 (governance nullifier).
+Purpose: derive each Ironwood note's true nullifier in-circuit. This nullifier is NOT published — it feeds into condition 13 (IMT non-membership) and condition 14 (governance nullifier).
 
 ```
 real_nf = DeriveNullifier_nk(rho, psi, cm)
@@ -449,7 +450,7 @@ Purpose: prove the note's nullifier has NOT been spent, using a Poseidon-based I
 
 ## 14. Alternate Nullifier Integrity (x5)
 
-Purpose: derive an alternate nullifier (ZIP §Alternate Nullifier Derivation) that is published as a public input. This prevents double-delegation without revealing the note's true Orchard nullifier.
+Purpose: derive an alternate nullifier (ZIP §Alternate Nullifier Derivation) that is published as a public input. This prevents double-delegation without revealing the true Ironwood note nullifier.
 
 ```
 nf_dom = Poseidon(nk, dom, real_nf)

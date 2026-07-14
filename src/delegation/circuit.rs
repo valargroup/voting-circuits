@@ -3,15 +3,15 @@
 //! A single circuit proving all 14 conditions of the delegation ZKP:
 //!
 //! The "signed" / keystone note (conditions 1–6) is a synthetic
-//! Orchard-spend shape constructed locally by the voting client so that
-//! a Keystone-class hardware wallet (which only signs Orchard Actions)
-//! can produce a spend-auth signature under `rk` over the wrapping
-//! Action's sighash. It does not exist on any chain and the circuit
-//! never proves Merkle membership for it. See `README.md` (section
+//! Ironwood spend shape constructed locally by the voting client so that
+//! a Keystone-class hardware wallet (which signs Orchard protocol Actions,
+//! including Ironwood Actions) can produce a spend-auth signature under `rk`
+//! over the wrapping Ironwood Action's sighash. It does not exist on any chain,
+//! and the circuit never proves Merkle membership for it. See `README.md` (section
 //! "Integration: the Keystone (signed) note is synthetic") for the
 //! load-bearing distinction between the chain
 //! `wallet → rk → nf_signed → rho_signed → van_comm` (binding) and the
-//! Orchard-Action shape mimicry that surrounds it.
+//! Ironwood Action shape mimicry that surrounds it.
 //!
 //! - **Condition 1**: Signed note commitment integrity.
 //! - **Condition 2**: Nullifier integrity.
@@ -30,8 +30,6 @@
 
 use std::vec::Vec;
 
-use blake2b_simd::Params as Blake2bParams;
-use ff::{FromUniformBytes, PrimeField};
 use group::{Curve, GroupEncoding};
 use halo2_gadgets::{
     ecc::{
@@ -97,9 +95,6 @@ use crate::{
     protocol_hash::poseidon_hash_in_circuit,
 };
 
-const PRF_EXPAND_PERSONALIZATION: &[u8; 16] = b"Zcash_ExpandSeed";
-const ZIP2005_ORCHARD_QR_RCM_DOMAIN_SEPARATOR: u8 = 0x0B;
-
 // ================================================================
 // Circuit size
 // ================================================================
@@ -122,21 +117,7 @@ pub(super) fn rcm_scalar_for_note_parts(
 ) -> pallas::Scalar {
     match version {
         NoteVersion::V2 => rseed.rcm_v2(rho).inner(),
-        NoteVersion::V3 => {
-            let mut h = Blake2bParams::new()
-                .hash_length(64)
-                .personal(PRF_EXPAND_PERSONALIZATION)
-                .to_state();
-            h.update(rseed.as_bytes());
-            h.update(&[ZIP2005_ORCHARD_QR_RCM_DOMAIN_SEPARATOR]);
-            h.update(&g_d.to_bytes());
-            h.update(&pk_d.to_bytes());
-            h.update(&value.inner().to_le_bytes());
-            h.update(&rho.to_bytes());
-            h.update(&psi.to_repr());
-
-            pallas::Scalar::from_uniform_bytes(h.finalize().as_array())
-        }
+        NoteVersion::V3 => rseed.rcm_v3(rho, g_d, pk_d, value.inner(), &psi).inner(),
     }
 }
 
@@ -209,7 +190,7 @@ const DOM_PUBLIC_OFFSET: usize = 13;
 /// cannot substitute a different authority value.
 const MAX_PROPOSAL_AUTHORITY: u64 = 65535; // 2^16 - 1
 
-/// Maximum number of real Orchard notes consumed by one delegation proof.
+/// Maximum number of real Ironwood notes consumed by one delegation proof.
 ///
 /// The proof always exposes five `gov_null` slots, padding unused positions
 /// with zero-value notes. Keeping the count fixed hides the real-note count
@@ -994,7 +975,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             )?;
 
             // The keystone note's value is 1 zatoshi by convention, so Keystone-class
-            // hardware wallets render the wrapping Orchard Action for user approval.
+            // hardware wallets render the wrapping Ironwood Action for user approval.
             // This is not an independent circuit-level value check: nf_signed is a
             // public input supplied by the same host that computes it from v_signed.
             // The load-bearing check is the wallet UI and user approval of "1 zat";
@@ -1882,7 +1863,7 @@ pub struct Instance {
     pub van_comm: pallas::Base,
     /// The voting round identifier.
     pub vote_round_id: pallas::Base,
-    /// Ledger-state anchor: the Orchard note commitment tree root at the
+    /// Ledger-state anchor: the Ironwood note commitment tree root at the
     /// verifier-pinned snapshot height. The verifier must obtain this from
     /// chain state, not from the prover's bundle.
     pub nc_root: pallas::Base,

@@ -74,7 +74,7 @@ fn make_real_note_inputs(
         let sibling = MerkleHashOrchard::empty_root(Level::from(level as u8));
         current = MerkleHashOrchard::combine(Level::from(level as u8), &current, &sibling);
     }
-    // nc_root is the full 32-level Orchard note commitment tree root.
+    // nc_root is the full 32-level Ironwood note commitment tree root.
     let nc_root = pallas::Base::from_repr_vartime(current.to_bytes()).unwrap();
 
     let l1 = [l1_0, l1_1];

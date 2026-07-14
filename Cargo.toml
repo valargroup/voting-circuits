@@ -1,6 +1,6 @@
 [package]
 name = "voting-circuits"
-version = "0.8.0"
+version = "0.9.0-rc.1"
 edition = "2021"
 rust-version = "1.86.0"
 description = "Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol."
@@ -9,9 +9,9 @@ repository = "https://github.com/valargroup/voting-circuits"
 readme = "README.md"
 
 [dependencies]
-# orchard 0.15.0-pre.1 (crates.io) exposes the unstable governance circuit APIs
-# (unstable-voting-circuits) and the circuit feature used for proving/verifying.
-orchard = { version = "0.15.0-pre.1", features = ["circuit", "unstable-voting-circuits"] }
+# orchard 0.15.0 exposes Ironwood and the unstable governance circuit APIs used
+# for proving and verifying the voting circuits.
+orchard = { version = "=0.15.0", features = ["circuit", "unstable-voting-circuits"] }
 # halo2_proofs 0.3 fixes the proof-system API and batch verifier used by all circuits.
 halo2_proofs = { version = "0.3", default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
 # halo2_gadgets 0.5 supplies ECC, Sinsemilla, Poseidon helpers, bool_check, and range checks that shape the verifying keys.

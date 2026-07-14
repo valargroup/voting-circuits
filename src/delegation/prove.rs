@@ -127,7 +127,7 @@ pub fn create_delegation_proof(
 /// must validate the height-to-root lookup outside this API. Do not take these
 /// values from the prover's bundle.
 ///
-/// - `instance.nc_root` — the Orchard note commitment tree root at the
+/// - `instance.nc_root` — the Ironwood note commitment tree root at the
 ///   verifier-pinned snapshot height.
 /// - `instance.nf_imt_root` — the alternate-nullifier IMT root at the same
 ///   snapshot height as `nc_root`.

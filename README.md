@@ -2,12 +2,14 @@
 
 Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol.
 
-Built with [halo2](https://github.com/zcash/halo2) on top of the upstream [Orchard](https://github.com/zcash/orchard) shielded protocol. The crate requires `std`.
+Built with [halo2](https://github.com/zcash/halo2) on top of the upstream
+[`orchard`](https://github.com/zcash/orchard) implementation shared by Orchard
+and Ironwood. The crate requires `std`.
 
 ## Proof flow
 
 ```
-Orchard Notes ──► Delegation (ZKP 1) ──► Vote Authority Notes (VANs)
+Ironwood Notes ──► Delegation (ZKP 1) ──► Vote Authority Notes (VANs)
                                               │
                                               ▼
                   Vote Proof  (ZKP 2) ──► Vote Commitments + encrypted shares
@@ -96,9 +98,10 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 ## Dependency on `orchard`
 
-This crate depends on Valar's `qr_orchard` fork of `orchard 0.14`, pinned to a specific protocol API revision, with the `unstable-voting-circuits` feature enabled to expose the governance-visibility APIs the voting circuits rely on.
-The delegation bundle builder expects Ironwood V3 notes and constructs its
-synthetic signed and output notes with the same note version.
+This crate depends on the upstream `orchard 0.15.0` release, with the `circuit`
+and `unstable-voting-circuits` features enabled to expose the circuit APIs used
+by the governance proofs. The delegation bundle builder requires Ironwood V3
+notes and constructs its synthetic signed and output notes as V3.
 
 ## Building
 
@@ -142,7 +145,7 @@ cargo bench   # runs delegation proving benchmarks via Criterion
 | `halo2_proofs` | Proof system (with batch verification) |
 | `halo2_gadgets` | Standard gadgets (Poseidon, Sinsemilla, ECC) |
 | `pasta_curves` | Pallas / Vesta curve arithmetic |
-| `orchard` | Orchard note commitment, nullifier, CommitIvk |
+| `orchard` | Orchard protocol primitives used by Ironwood, including note commitments, nullifiers, and CommitIvk |
 | `halo2_poseidon` | Poseidon hash for Merkle trees and commitments |
 | `incrementalmerkletree` | Incremental Merkle tree data structure |
 | `sinsemilla` | Sinsemilla hash (used via Orchard) |
