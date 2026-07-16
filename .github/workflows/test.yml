@@ -49,6 +49,9 @@ jobs:
       - name: Run IMT integration tests
         run: cargo test --locked --features unstable-internal-api --test imt_circuit_integration
 
+      - name: Check delegation benchmark
+        run: cargo bench --locked --bench delegation -- --test
+
   full-suite:
     name: Full suite
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run == 'full-suite')
@@ -80,6 +83,9 @@ jobs:
 
       - name: Run long IMT integration tests
         run: cargo test --locked --features unstable-internal-api --test imt_circuit_integration -- --ignored --test-threads=1
+
+      - name: Check delegation benchmark
+        run: cargo bench --locked --bench delegation -- --test
 
   diagnostics:
     name: Diagnostics

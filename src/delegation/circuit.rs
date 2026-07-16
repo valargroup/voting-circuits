@@ -3,15 +3,15 @@
 //! A single circuit proving all 14 conditions of the delegation ZKP:
 //!
 //! The "signed" / keystone note (conditions 1–6) is a synthetic
-//! Orchard-spend shape constructed locally by the voting client so that
-//! a Keystone-class hardware wallet (which only signs Orchard Actions)
-//! can produce a spend-auth signature under `rk` over the wrapping
-//! Action's sighash. It does not exist on any chain and the circuit
-//! never proves Merkle membership for it. See `README.md` (section
+//! Ironwood spend shape constructed locally by the voting client so that
+//! a Keystone-class hardware wallet (which signs Orchard protocol Actions,
+//! including Ironwood Actions) can produce a spend-auth signature under `rk`
+//! over the wrapping Ironwood Action's sighash. It does not exist on any chain,
+//! and the circuit never proves Merkle membership for it. See `README.md` (section
 //! "Integration: the Keystone (signed) note is synthetic") for the
 //! load-bearing distinction between the chain
 //! `wallet → rk → nf_signed → rho_signed → van_comm` (binding) and the
-//! Orchard-Action shape mimicry that surrounds it.
+//! Ironwood Action shape mimicry that surrounds it.
 //!
 //! - **Condition 1**: Signed note commitment integrity.
 //! - **Condition 2**: Nullifier integrity.
@@ -73,11 +73,7 @@ use orchard::{
         CommitIvkRandomness, DiversifiedTransmissionKey, FullViewingKey, NullifierDerivingKey,
         Scope, SpendValidatingKey,
     },
-    note::{
-        commitment::{NoteCommitTrapdoor, NoteCommitment},
-        nullifier::Nullifier,
-        Note,
-    },
+    note::{commitment::NoteCommitment, nullifier::Nullifier, Note, NoteVersion, RandomSeed, Rho},
     primitives::redpallas::{SpendAuth, VerificationKey},
     spec::NonIdentityPallasPoint,
     tree::MerkleHashOrchard,
@@ -109,6 +105,39 @@ use crate::{
 /// with Sinsemilla NoteCommit, Merkle paths, IMT non-membership, and
 /// ECC operations.
 pub const K: u32 = 14;
+
+pub(super) fn rcm_scalar_for_note_parts(
+    version: NoteVersion,
+    rseed: &RandomSeed,
+    rho: &Rho,
+    g_d: &NonIdentityPallasPoint,
+    pk_d: &NonIdentityPallasPoint,
+    value: NoteValue,
+    psi: pallas::Base,
+) -> pallas::Scalar {
+    match version {
+        NoteVersion::V2 => rseed.rcm_v2(rho).inner(),
+        NoteVersion::V3 => rseed.rcm_v3(rho, g_d, pk_d, value.inner(), &psi).inner(),
+    }
+}
+
+pub(super) fn note_rcm_scalar(note: &Note) -> pallas::Scalar {
+    let rho = note.rho();
+    let psi = note.rseed().psi(&rho);
+    let recipient = note.recipient();
+    let g_d = recipient.g_d();
+    let pk_d = recipient.pk_d().inner();
+
+    rcm_scalar_for_note_parts(
+        note.version(),
+        note.rseed(),
+        &rho,
+        &g_d,
+        &pk_d,
+        note.value(),
+        psi,
+    )
+}
 
 // ================================================================
 // Public input offsets (14 field elements).
@@ -161,7 +190,7 @@ const DOM_PUBLIC_OFFSET: usize = 13;
 /// cannot substitute a different authority value.
 const MAX_PROPOSAL_AUTHORITY: u64 = 65535; // 2^16 - 1
 
-/// Maximum number of real Orchard notes consumed by one delegation proof.
+/// Maximum number of real Ironwood notes consumed by one delegation proof.
 ///
 /// The proof always exposes five `gov_null` slots, padding unused positions
 /// with zero-value notes. Keeping the count fixed hides the real-note count
@@ -360,7 +389,7 @@ pub(super) struct NoteSlotWitness {
     pub(super) v: Value<NoteValue>,
     pub(super) rho: Value<pallas::Base>,
     pub(super) psi: Value<pallas::Base>,
-    pub(super) rcm: Value<NoteCommitTrapdoor>,
+    pub(super) rcm: Value<pallas::Scalar>,
     pub(super) cm: Value<pallas::Affine>,
     pub(super) path: Value<[MerkleHashOrchard; MERKLE_DEPTH_ORCHARD]>,
     pub(super) pos: Value<u32>,
@@ -390,7 +419,7 @@ pub struct Circuit {
     alpha: Value<pallas::Scalar>,
     rivk: Value<CommitIvkRandomness>,
     rivk_internal: Value<CommitIvkRandomness>,
-    rcm_signed: Value<NoteCommitTrapdoor>,
+    rcm_signed: Value<pallas::Scalar>,
     g_d_signed: Value<NonIdentityPallasPoint>,
     pk_d_signed: Value<DiversifiedTransmissionKey>,
     // Output note witnesses (condition 6).
@@ -398,7 +427,7 @@ pub struct Circuit {
     g_d_new: Value<NonIdentityPallasPoint>,
     pk_d_new: Value<DiversifiedTransmissionKey>,
     psi_new: Value<pallas::Base>,
-    rcm_new: Value<NoteCommitTrapdoor>,
+    rcm_new: Value<pallas::Scalar>,
     // Per-note slots (conditions 9–14).
     notes: [NoteSlotWitness; 5],
     // Gov commitment blinding factor (condition 7).
@@ -421,7 +450,7 @@ impl Circuit {
         let sender_address = note.recipient();
         let rho_signed = note.rho();
         let psi_signed = note.rseed().psi(&rho_signed);
-        let rcm_signed = note.rseed().rcm(&rho_signed);
+        let rcm_signed = note_rcm_scalar(note);
         Circuit {
             nk: Value::known(*fvk.nk()),
             rho_signed: Value::known(rho_signed.into_inner()),
@@ -442,7 +471,7 @@ impl Circuit {
     pub(super) fn with_output_note(mut self, output_note: &Note) -> Self {
         let rho_new = output_note.rho();
         let psi_new = output_note.rseed().psi(&rho_new);
-        let rcm_new = output_note.rseed().rcm(&rho_new);
+        let rcm_new = note_rcm_scalar(output_note);
         self.g_d_new = Value::known(output_note.recipient().g_d());
         self.pk_d_new = Value::known(*output_note.recipient().pk_d());
         self.psi_new = Value::known(psi_new);
@@ -942,11 +971,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let rcm_signed = ScalarFixed::new(
                 ecc_chip.clone(),
                 layouter.namespace(|| "rcm_signed"),
-                self.rcm_signed.as_ref().map(|rcm| rcm.inner()),
+                self.rcm_signed.as_ref().copied(),
             )?;
 
             // The keystone note's value is 1 zatoshi by convention, so Keystone-class
-            // hardware wallets render the wrapping Orchard Action for user approval.
+            // hardware wallets render the wrapping Ironwood Action for user approval.
             // This is not an independent circuit-level value check: nf_signed is a
             // public input supplied by the same host that computes it from v_signed.
             // The load-bearing check is the wallet UI and user approval of "1 zat";
@@ -1220,7 +1249,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let rcm_new = ScalarFixed::new(
                 ecc_chip.clone(),
                 layouter.namespace(|| "rcm_new"),
-                self.rcm_new.as_ref().map(|rcm_new| rcm_new.inner()),
+                self.rcm_new.as_ref().copied(),
             )?;
 
             // The output note's value is always 0.
@@ -1571,7 +1600,7 @@ fn synthesize_note_slot(
     let rcm = ScalarFixed::new(
         ecc_chip.clone(),
         layouter.namespace(|| format!("note {s} rcm")),
-        note.rcm.as_ref().map(|rcm| rcm.inner()),
+        note.rcm.as_ref().copied(),
     )?;
 
     // Witness the claimed commitment as a curve point.
@@ -1581,10 +1610,8 @@ fn synthesize_note_slot(
         note.cm.as_ref().copied(),
     )?;
 
-    // Defense-by-rejection: `psi` and `rcm` are witnessed rather than derived
-    // in-circuit. If the client supplies either value incorrectly, the
-    // recomputed NoteCommit differs from the witnessed `cm` and the proof
-    // rejects.
+    // `psi` and `rcm` are witnessed rather than derived from `rseed`. This
+    // proves that they open `cm`; it does not authenticate a note version.
     let derived_cm = note_commit(
         layouter.namespace(|| format!("note {s} NoteCommit")),
         config.sinsemilla_chip_1(),
@@ -1834,7 +1861,7 @@ pub struct Instance {
     pub van_comm: pallas::Base,
     /// The voting round identifier.
     pub vote_round_id: pallas::Base,
-    /// Ledger-state anchor: the Orchard note commitment tree root at the
+    /// Ledger-state anchor: the Ironwood note commitment tree root at the
     /// verifier-pinned snapshot height. The verifier must obtain this from
     /// chain state, not from the prover's bundle.
     pub nc_root: pallas::Base,
@@ -1958,7 +1985,7 @@ mod tests {
     use incrementalmerkletree::{Hashable, Level};
     use orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
-        note::{commitment::ExtractedNoteCommitment, Note, Rho},
+        note::{commitment::ExtractedNoteCommitment, Note, NoteVersion, Rho},
     };
     use pasta_curves::{arithmetic::CurveAffine, pallas};
     use rand::rngs::OsRng;
@@ -1977,7 +2004,7 @@ mod tests {
     ) -> NoteSlotWitness {
         let rho = note.rho();
         let psi = note.rseed().psi(&rho);
-        let rcm = note.rseed().rcm(&rho);
+        let rcm = note_rcm_scalar(note);
         let cm = note.commitment();
         let recipient = note.recipient();
 
@@ -2029,11 +2056,12 @@ mod tests {
         // Real note (slot 0) with value = 13,000,000.
         let recipient = fvk.address_at(0u32, Scope::External);
         let note_value = NoteValue::from_raw(13_000_000);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
         let real_note = Note::new(
             recipient,
             note_value,
             Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
+            NoteVersion::V3,
             &mut rng,
         );
 
@@ -2146,6 +2174,7 @@ mod tests {
             sender_address,
             NoteValue::from_raw(1),
             Rho::from_nf_old(Nullifier::from_inner(rho)),
+            NoteVersion::V3,
             &mut rng,
         );
         let nf_signed = signed_note.nullifier(&fvk);
@@ -2155,6 +2184,7 @@ mod tests {
             output_recipient,
             NoteValue::ZERO,
             Rho::from_nf_old(nf_signed),
+            NoteVersion::V3,
             &mut rng,
         );
         let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
@@ -2368,6 +2398,7 @@ mod tests {
             attacker_recipient,
             NoteValue::ZERO,
             Rho::from_nf_old(t.instance.nf_signed),
+            NoteVersion::V3,
             &mut rng,
         );
         circuit = circuit.with_output_note(&attacker_output);
@@ -2423,15 +2454,16 @@ mod tests {
 
         let replacement_sk = SpendingKey::random(&mut rng);
         let replacement_fvk = FullViewingKey::from(&replacement_sk);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
         let rho = Rho::from_nf_old(dummy_parent.nullifier(&replacement_fvk));
         let replacement_note = Note::new(
             replacement_fvk.address_at(0u32, Scope::External),
             NoteValue::ZERO,
             rho,
+            NoteVersion::V3,
             &mut rng,
         );
-        circuit.notes[0].rcm = Value::known(replacement_note.rseed().rcm(&replacement_note.rho()));
+        circuit.notes[0].rcm = Value::known(note_rcm_scalar(&replacement_note));
 
         let prover = MockProver::run(K, &circuit, vec![pi]).unwrap();
         assert_rejects(prover);
@@ -2522,11 +2554,12 @@ mod tests {
         let sk2 = SpendingKey::random(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let addr2 = fvk2.address_at(0u32, Scope::External);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
         let fake_note = Note::new(
             addr2,
             NoteValue::from_raw(100), // v > 0: not a zero-value padded note
             Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
+            NoteVersion::V3,
             &mut rng,
         );
 
@@ -2567,11 +2600,12 @@ mod tests {
         let sk2 = SpendingKey::random(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let addr2 = fvk2.address_at(100u32, Scope::External);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
         let foreign_note = Note::new(
             addr2,
             NoteValue::ZERO,
             Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
+            NoteVersion::V3,
             &mut rng,
         );
 

@@ -15,7 +15,7 @@ use imt_tree::tree::{
 use incrementalmerkletree::{Hashable, Level};
 use orchard::{
     keys::{FullViewingKey, Scope, SpendingKey},
-    note::{ExtractedNoteCommitment, Note, Rho},
+    note::{ExtractedNoteCommitment, Note, NoteVersion, Rho},
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
     NOTE_COMMITMENT_TREE_DEPTH,
@@ -44,11 +44,12 @@ fn make_real_note_inputs(
     for (idx, &v) in values.iter().enumerate() {
         let recipient = fvk.address_at(0u32, scopes[idx]);
         let note_value = NoteValue::from_raw(v);
-        let (_, _, dummy_parent) = Note::dummy(&mut *rng, None);
+        let (_, _, dummy_parent) = Note::dummy(&mut *rng, None, NoteVersion::V3);
         let note = Note::new(
             recipient,
             note_value,
             Rho::from_nf_old(dummy_parent.nullifier(fvk)),
+            NoteVersion::V3,
             &mut *rng,
         );
         notes.push(note);
@@ -73,7 +74,7 @@ fn make_real_note_inputs(
         let sibling = MerkleHashOrchard::empty_root(Level::from(level as u8));
         current = MerkleHashOrchard::combine(Level::from(level as u8), &current, &sibling);
     }
-    // nc_root is the full 32-level Orchard note commitment tree root.
+    // nc_root is the full 32-level Ironwood note commitment tree root.
     let nc_root = pallas::Base::from_repr_vartime(current.to_bytes()).unwrap();
 
     let l1 = [l1_0, l1_1];

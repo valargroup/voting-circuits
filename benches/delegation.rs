@@ -13,7 +13,7 @@ use incrementalmerkletree::{Hashable, Level};
 use orchard::{
     constants::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH,
     keys::{FullViewingKey, Scope, SpendingKey},
-    note::{ExtractedNoteCommitment, Note, RandomSeed, Rho},
+    note::{ExtractedNoteCommitment, Note, NoteVersion, RandomSeed, Rho},
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
 };
@@ -73,7 +73,7 @@ fn format_bytes(bytes: usize) -> String {
     format!("{bytes} bytes ({:.2} KiB)", bytes as f64 / 1024.0)
 }
 
-/// Create a note using only public APIs, returning (note, nullifier_field_element).
+/// Create an Ironwood V3 note using only public APIs.
 fn make_note(recipient: orchard::Address, value: NoteValue, rng: &mut impl RngCore) -> Note {
     // Generate a random nullifier for rho.
     loop {
@@ -90,7 +90,7 @@ fn make_note(recipient: orchard::Address, value: NoteValue, rng: &mut impl RngCo
         if bool::from(rseed.is_none()) {
             continue;
         }
-        let note = Note::from_parts(recipient, value, rho, rseed.unwrap());
+        let note = Note::from_parts(recipient, value, rho, rseed.unwrap(), NoteVersion::V3);
         if bool::from(note.is_some()) {
             return note.unwrap();
         }

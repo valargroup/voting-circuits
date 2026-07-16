@@ -2,12 +2,14 @@
 
 Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol.
 
-Built with [halo2](https://github.com/zcash/halo2) on top of the upstream [Orchard](https://github.com/zcash/orchard) shielded protocol. The crate requires `std`.
+Built with [halo2](https://github.com/zcash/halo2) on top of the upstream
+[`orchard`](https://github.com/zcash/orchard) implementation shared by Orchard
+and Ironwood. The crate requires `std`.
 
 ## Proof flow
 
 ```
-Orchard Notes ──► Delegation (ZKP 1) ──► Vote Authority Notes (VANs)
+Ironwood Notes ──► Delegation (ZKP 1) ──► Vote Authority Notes (VANs)
                                               │
                                               ▼
                   Vote Proof  (ZKP 2) ──► Vote Commitments + encrypted shares
@@ -16,7 +18,7 @@ Orchard Notes ──► Delegation (ZKP 1) ──► Vote Authority Notes (VANs)
                   Share Reveal (ZKP 3) ──► Revealed shares for tally
 ```
 
-1. [**Delegation**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) spends Orchard notes and mints VANs that carry delegated voting weight.
+1. [**Delegation**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) spends Ironwood V3 notes and mints VANs that carry delegated voting weight.
 2. [**Vote Proof**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) spends a VAN to cast a vote, producing El Gamal-encrypted shares and a vote commitment.
 3. [**Share Reveal**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) opens a single encrypted share and proves it belongs to a registered vote commitment.
 
@@ -96,7 +98,16 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 ## Dependency on `orchard`
 
-This crate depends on upstream [`zcash/orchard`](https://github.com/zcash/orchard) `0.14` from crates.io, allowing compatible patch releases, with the `unstable-voting-circuits` feature enabled to expose the governance-visibility APIs the voting circuits rely on. The previous `valar-orchard` fork has been retired.
+This crate depends on the upstream `orchard 0.15.0` release, with the `circuit`
+and `unstable-voting-circuits` features enabled to expose the circuit APIs used
+by the governance proofs. The delegation bundle builder requires Ironwood V3
+notes and constructs its synthetic signed and output notes as V3.
+
+The V3 check is a bundle-construction policy, not a note-version bit in the
+Halo2 statement. An Ironwood-only verifier must independently authenticate
+`nc_root` as an Ironwood note commitment tree root and must not accept an
+Orchard root supplied by the prover. It must authenticate `nf_imt_root` at the
+same snapshot height.
 
 ## Building
 
@@ -140,7 +151,7 @@ cargo bench   # runs delegation proving benchmarks via Criterion
 | `halo2_proofs` | Proof system (with batch verification) |
 | `halo2_gadgets` | Standard gadgets (Poseidon, Sinsemilla, ECC) |
 | `pasta_curves` | Pallas / Vesta curve arithmetic |
-| `orchard` | Orchard note commitment, nullifier, CommitIvk |
+| `orchard` | Orchard protocol primitives used by Ironwood, including note commitments, nullifiers, and CommitIvk |
 | `halo2_poseidon` | Poseidon hash for Merkle trees and commitments |
 | `incrementalmerkletree` | Incremental Merkle tree data structure |
 | `sinsemilla` | Sinsemilla hash (used via Orchard) |

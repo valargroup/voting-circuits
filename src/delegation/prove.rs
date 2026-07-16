@@ -127,7 +127,11 @@ pub fn create_delegation_proof(
 /// must validate the height-to-root lookup outside this API. Do not take these
 /// values from the prover's bundle.
 ///
-/// - `instance.nc_root` — the Orchard note commitment tree root at the
+/// The proof does not encode a note version or pool identifier. Supplying an
+/// Orchard root can therefore admit Orchard commitments; Ironwood-only callers
+/// MUST supply the authenticated Ironwood root.
+///
+/// - `instance.nc_root` — the Ironwood note commitment tree root at the
 ///   verifier-pinned snapshot height.
 /// - `instance.nf_imt_root` — the alternate-nullifier IMT root at the same
 ///   snapshot height as `nc_root`.
@@ -172,7 +176,7 @@ mod prove_tests {
     use incrementalmerkletree::{Hashable, Level};
     use orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
-        note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, Rho},
+        note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, NoteVersion, Rho},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
@@ -229,9 +233,9 @@ mod prove_tests {
         let actual: &[u8] = fingerprint.as_bytes();
 
         let expected: [u8; 32] = [
-            0xc4, 0xfc, 0xa7, 0xc2, 0x23, 0x3c, 0x48, 0x65, 0x86, 0x25, 0x4a, 0x4c, 0xca, 0xf5,
-            0x03, 0x98, 0xd3, 0x72, 0x1b, 0x49, 0xe1, 0x49, 0xa5, 0x5b, 0xf2, 0x10, 0x93, 0xcf,
-            0xb6, 0xb1, 0x34, 0x7c,
+            0x90, 0x30, 0xe0, 0x13, 0xf9, 0x29, 0x82, 0x17, 0x7e, 0x5b, 0x38, 0x38, 0x23, 0x33,
+            0x8c, 0xcc, 0x75, 0x01, 0x9c, 0x2d, 0x0f, 0x0b, 0xec, 0x6d, 0xa6, 0xff, 0x72, 0x47,
+            0x95, 0xf1, 0xc4, 0xf5,
         ];
 
         assert_eq!(
@@ -255,11 +259,12 @@ mod prove_tests {
 
         // Create a single real note
         let recipient = fvk.address_at(0u32, Scope::External);
-        let (_, _, dummy) = Note::dummy(&mut rng, None);
+        let (_, _, dummy) = Note::dummy(&mut rng, None, NoteVersion::V3);
         let note = Note::new(
             recipient,
             NoteValue::from_raw(13_000_000),
             Rho::from_nf_old(dummy.nullifier(&fvk)),
+            NoteVersion::V3,
             &mut rng,
         );
         let cmx = ExtractedNoteCommitment::from(note.commitment());
