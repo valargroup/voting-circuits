@@ -127,6 +127,10 @@ pub fn create_delegation_proof(
 /// must validate the height-to-root lookup outside this API. Do not take these
 /// values from the prover's bundle.
 ///
+/// The proof does not encode a note version or pool identifier. Supplying an
+/// Orchard root can therefore admit Orchard commitments; Ironwood-only callers
+/// MUST supply the authenticated Ironwood root.
+///
 /// - `instance.nc_root` — the Ironwood note commitment tree root at the
 ///   verifier-pinned snapshot height.
 /// - `instance.nf_imt_root` — the alternate-nullifier IMT root at the same
@@ -255,7 +259,7 @@ mod prove_tests {
 
         // Create a single real note
         let recipient = fvk.address_at(0u32, Scope::External);
-        let (_, _, dummy) = Note::dummy(&mut rng, None, NoteVersion::V2);
+        let (_, _, dummy) = Note::dummy(&mut rng, None, NoteVersion::V3);
         let note = Note::new(
             recipient,
             NoteValue::from_raw(13_000_000),

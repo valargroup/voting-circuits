@@ -1610,10 +1610,8 @@ fn synthesize_note_slot(
         note.cm.as_ref().copied(),
     )?;
 
-    // Defense-by-rejection: `psi` and `rcm` are witnessed rather than derived
-    // in-circuit. If the client supplies either value incorrectly, the
-    // recomputed NoteCommit differs from the witnessed `cm` and the proof
-    // rejects.
+    // `psi` and `rcm` are witnessed rather than derived from `rseed`. This
+    // proves that they open `cm`; it does not authenticate a note version.
     let derived_cm = note_commit(
         layouter.namespace(|| format!("note {s} NoteCommit")),
         config.sinsemilla_chip_1(),
@@ -2058,12 +2056,12 @@ mod tests {
         // Real note (slot 0) with value = 13,000,000.
         let recipient = fvk.address_at(0u32, Scope::External);
         let note_value = NoteValue::from_raw(13_000_000);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V2);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
         let real_note = Note::new(
             recipient,
             note_value,
             Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
-            NoteVersion::V2,
+            NoteVersion::V3,
             &mut rng,
         );
 
@@ -2176,7 +2174,7 @@ mod tests {
             sender_address,
             NoteValue::from_raw(1),
             Rho::from_nf_old(Nullifier::from_inner(rho)),
-            NoteVersion::V2,
+            NoteVersion::V3,
             &mut rng,
         );
         let nf_signed = signed_note.nullifier(&fvk);
@@ -2186,7 +2184,7 @@ mod tests {
             output_recipient,
             NoteValue::ZERO,
             Rho::from_nf_old(nf_signed),
-            NoteVersion::V2,
+            NoteVersion::V3,
             &mut rng,
         );
         let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
@@ -2400,7 +2398,7 @@ mod tests {
             attacker_recipient,
             NoteValue::ZERO,
             Rho::from_nf_old(t.instance.nf_signed),
-            NoteVersion::V2,
+            NoteVersion::V3,
             &mut rng,
         );
         circuit = circuit.with_output_note(&attacker_output);
@@ -2456,13 +2454,13 @@ mod tests {
 
         let replacement_sk = SpendingKey::random(&mut rng);
         let replacement_fvk = FullViewingKey::from(&replacement_sk);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V2);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
         let rho = Rho::from_nf_old(dummy_parent.nullifier(&replacement_fvk));
         let replacement_note = Note::new(
             replacement_fvk.address_at(0u32, Scope::External),
             NoteValue::ZERO,
             rho,
-            NoteVersion::V2,
+            NoteVersion::V3,
             &mut rng,
         );
         circuit.notes[0].rcm = Value::known(note_rcm_scalar(&replacement_note));
@@ -2556,12 +2554,12 @@ mod tests {
         let sk2 = SpendingKey::random(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let addr2 = fvk2.address_at(0u32, Scope::External);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V2);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
         let fake_note = Note::new(
             addr2,
             NoteValue::from_raw(100), // v > 0: not a zero-value padded note
             Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
-            NoteVersion::V2,
+            NoteVersion::V3,
             &mut rng,
         );
 
@@ -2602,12 +2600,12 @@ mod tests {
         let sk2 = SpendingKey::random(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let addr2 = fvk2.address_at(100u32, Scope::External);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V2);
+        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
         let foreign_note = Note::new(
             addr2,
             NoteValue::ZERO,
             Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
-            NoteVersion::V2,
+            NoteVersion::V3,
             &mut rng,
         );
 

@@ -103,6 +103,12 @@ and `unstable-voting-circuits` features enabled to expose the circuit APIs used
 by the governance proofs. The delegation bundle builder requires Ironwood V3
 notes and constructs its synthetic signed and output notes as V3.
 
+The V3 check is a bundle-construction policy, not a note-version bit in the
+Halo2 statement. An Ironwood-only verifier must independently authenticate
+`nc_root` as an Ironwood note commitment tree root and must not accept an
+Orchard root supplied by the prover. It must authenticate `nf_imt_root` at the
+same snapshot height.
+
 ## Building
 
 ```bash
