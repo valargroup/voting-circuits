@@ -89,6 +89,12 @@ alternate-nullifier IMT root used by condition 13. A prover bundle may carry
 copies of these values for convenience, but a verifier must not trust the
 bundle as their source of truth.
 
+The high-level bundle builder rejects non-V3 notes, but the circuit does not
+carry a note-version bit or derive `psi` and `rcm` from `rseed`. It proves that
+the witnessed values open commitments contained in the supplied tree. Pool
+identity therefore comes from the verifier-authenticated `nc_root`; accepting
+an Orchard root would also accept commitments from the Orchard pool.
+
 **Session parameters:** `vote_round_id` is pinned by the governance session.
 `dom` is exposed for API compatibility but constrained in-circuit to
 `Poseidon("governance authorization", vote_round_id)`. `van_comm` is

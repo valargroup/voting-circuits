@@ -530,10 +530,11 @@ pub(super) fn build_padding_slot_for_testing(
 
 /// Errors from delegation bundle construction.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum DelegationBuildError {
     /// Must have 1 to `circuit::MAX_REAL_NOTES` real notes.
     InvalidNoteCount(usize),
-    /// Delegation is only supported for Ironwood/V3 notes.
+    /// The high-level bundle builder accepts only Ironwood V3 notes.
     UnsupportedNoteVersion {
         /// Index of the delegated note that used the wrong version.
         index: usize,
@@ -670,15 +671,16 @@ impl std::fmt::Display for PrecomputedRandomnessLocation {
 ///
 /// # Arguments
 ///
-/// - `real_notes`: 1 to `circuit::MAX_REAL_NOTES` real notes with their keys,
-///   Merkle paths, and IMT proofs.
+/// - `real_notes`: 1 to `circuit::MAX_REAL_NOTES` Ironwood V3 notes with their
+///   keys, Merkle paths, and IMT proofs.
 /// - `fvk`: The delegator's full viewing key (shared across all real notes).
 /// - `alpha`: Spend auth randomizer for the keystone signature.
 /// - `output_recipient`: Address of the voting hotkey (output note recipient).
 /// - `vote_round_id`: Voting round identifier.
-/// - `nc_root`: Note commitment tree root (shared ledger-state anchor).
-///   The caller must pin this from the chain's note commitment tree at the
-///   verifier-accepted snapshot height; the builder does not authenticate it.
+/// - `nc_root`: Ironwood note commitment tree root (shared ledger-state
+///   anchor). The caller must pin this from the chain's Ironwood note
+///   commitment tree at the verifier-accepted snapshot height; the builder
+///   does not authenticate it.
 /// - `van_comm_rand`: Blinding factor for the governance commitment.
 /// - `imt_provider`: Provider for the bundle-wide alternate-nullifier IMT root
 ///   and padded-note IMT non-membership proofs. Every real-note proof in
@@ -699,6 +701,17 @@ impl std::fmt::Display for PrecomputedRandomnessLocation {
 /// or governance announcement. `rng` is used for note seed material and dummy
 /// Merkle paths when randomness is not supplied via `precomputed`; the
 /// security-critical blinding scalars remain caller-supplied.
+///
+/// Rejecting non-V3 notes here protects callers of this high-level builder. The
+/// Halo2 statement itself does not encode a note version, so proof verifiers
+/// must independently authenticate `nc_root` as an Ironwood root rather than
+/// accepting the copy carried by a prover's bundle.
+///
+/// # Errors
+///
+/// Returns [`DelegationBuildError::UnsupportedNoteVersion`] if any real note is
+/// not V3. Other variants report invalid note counts, malformed precomputed
+/// randomness, public-input construction failures, or IMT lookup failures.
 pub fn build_delegation_bundle(
     real_notes: Vec<RealNoteInput>,
     fvk: &FullViewingKey,

@@ -2,13 +2,39 @@
 
 ## Unreleased
 
+## v0.9.0-rc.2
+
+### Fixed
+
+- Updated the delegation benchmark and positive circuit fixtures to construct
+  Ironwood V3 notes. Pull request CI now smoke tests the benchmark path.
+
+### Changed
+
+- Made `DelegationBuildError` non-exhaustive so downstream callers can handle
+  future builder errors without exhaustive matching.
+
+### Documented
+
+- Clarified that the bundle builder rejects non-V3 notes, while the circuit
+  proves membership relative to the root supplied by the verifier. An
+  Ironwood-only verifier must independently authenticate `nc_root` as an
+  Ironwood note commitment tree root and authenticate `nf_imt_root` at the
+  same snapshot height.
+
 ## v0.9.0-rc.1
+
+### Added
+
+- Added `DelegationBuildError::UnsupportedNoteVersion`.
 
 ### Changed
 
 - Updated to upstream `orchard 0.15.0`. The delegation bundle builder now
   requires Ironwood V3 delegated notes and constructs its synthetic signed and
   output notes as V3.
+- Updated the delegation and vote-proof verifying keys. Downstream verifiers
+  must deploy the keys from this release before accepting its proofs.
 
 ## v0.8.0
 
