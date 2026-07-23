@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.9.0-rc.3
+
+### Changed
+
+- Allowed compatible `orchard 0.15` and `halo2_gadgets 0.5` patch releases so
+  downstream workspaces can share one Orchard dependency with librustzcash.
+
 ## v0.9.0-rc.2
 
 ### Fixed
