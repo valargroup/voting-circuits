@@ -13,6 +13,18 @@
 /// the available tightening approaches.
 pub const BALLOT_DIVISOR: u64 = 12_500_000;
 
+/// Bit width of each encrypted vote share in ZKP #2.
+///
+/// This bound keeps vote-share values identical in the Pallas base and scalar
+/// fields, and bounds the discrete logarithm recovered after decryption.
+pub(crate) const SHARE_VALUE_BITS: usize = 30;
+
+/// Exclusive upper bound for each encrypted vote share.
+pub(crate) const SHARE_VALUE_LIMIT: u64 = 1 << SHARE_VALUE_BITS;
+
+/// Number of 10-bit lookup words used to range-check each vote share.
+pub(crate) const SHARE_VALUE_RANGE_WORDS: usize = SHARE_VALUE_BITS / 10;
+
 /// Depth of the Poseidon-based vote commitment tree. Shared by ZKP #2
 /// (vote_proof) Merkle membership and ZKP #3 (share_reveal) Merkle membership.
 ///

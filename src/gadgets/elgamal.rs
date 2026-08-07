@@ -9,28 +9,29 @@
 //! caller passes share cells, randomness cells, and enc_share coordinate cells;
 //! this gadget owns all ea_pk scaffolding (witnesses ea_pk once as a
 //! `NonIdentityPoint` and pins it to the instance column via `constrain_instance`)
-//! and handles G for C1 via `FixedPointBaseField` and for C2's [v_i]*G term
-//! via `FixedPointShort` (22-window short scalar multiplication).
+//! and handles G for C1 via `FixedPointBaseField`. C2's [v_i]*G term uses a
+//! custom unsigned ten-window multiplication specialized to 30-bit shares.
 //!
 //! Also provides the public `spend_auth_g_affine` helper for downstream
 //! consumers and internal scalar/encryption helpers for the builder and tests.
 
 #[cfg(test)]
 use ff::Field;
-use halo2_gadgets::ecc::{
-    chip::EccChip, FixedPointBaseField, FixedPointShort, NonIdentityPoint, ScalarFixedShort,
-    ScalarVar,
-};
+use halo2_gadgets::ecc::{chip::EccChip, FixedPointBaseField, NonIdentityPoint, ScalarVar};
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter},
-    plonk::{Advice, Column, Error, Instance as InstanceColumn},
+    plonk::{Column, Error, Instance as InstanceColumn},
 };
-use orchard::constants::{OrchardBaseFieldBases, OrchardFixedBases, OrchardShortScalarBases};
+use orchard::constants::{OrchardBaseFieldBases, OrchardFixedBases};
 #[cfg(test)]
 use pasta_curves::arithmetic::CurveAffine;
 use pasta_curves::pallas;
 
 use super::nonzero::NonZeroConfig;
+
+mod fixed_base_30;
+
+pub(crate) use fixed_base_30::SpendAuthGFixedBase30Config;
 
 // ================================================================
 // Instance-location descriptor
@@ -59,8 +60,8 @@ pub(crate) struct EaPkInstanceLoc {
 /// Why SpendAuthG? El Gamal requires a prime-order generator with an unknown
 /// discrete log. SpendAuthG is derived via `GroupPHash("z.cash:Orchard", "G")`
 /// — a nothing-up-my-sleeve point. Using it for El Gamal (Condition 11) avoids
-/// introducing a second generator point; the 22-window `SpendAuthGShort` tables
-/// share the same generator as the full-scalar SpendAuthG.
+/// introducing a second generator point; the custom 30-bit table shares the
+/// same generator as the full-scalar SpendAuthG.
 pub fn spend_auth_g_affine() -> pallas::Affine {
     orchard::constants::fixed_bases::spend_auth_g::generator()
 }
@@ -169,18 +170,17 @@ pub(crate) fn elgamal_encrypt(
 ///   `r_i` is a 255-bit scalar, so the full decomposition is required. This
 ///   crate rejects `r_i = 0` with a small inverse-witness constraint to prevent
 ///   the exact degenerate self-leaking ciphertext.
-/// - **C2's [v_i]*G**: uses `FixedPointShort::mul` (22-window, 64-bit signed scalar).
-///   `v_i` is range-checked to [0, 2^30) by condition 9; the short-scalar path
-///   saves 63 windows per share (×16 = 1008 rows) vs the full 85-window path.
-///   Sign is always +1 (constant-constrained via `assign_advice_from_constant`).
+/// - **C2's [v_i]*G**: uses a custom ten-window, unsigned fixed-base
+///   multiplication for the exact 30-bit share range. Its final complete
+///   addition is fused with the addition of `[r_i]ea_pk`.
 ///
 /// ## Soundness
 ///
-/// `ScalarFixedShort::new` wraps the caller-supplied `share_cells[i]` directly
-/// as the magnitude cell (no new cell allocation). Because `share_cells[i]` is
-/// the same cell that conditions 8 (sum check) and 9 (range check) operate on,
-/// the encryption scalar is provably identical to the range-checked share value.
-/// The sign cell is pinned to +1 by the constant column, preventing negation.
+/// The custom fixed-base gadget copies the caller-supplied `share_cells[i]`
+/// directly into a strict 30-bit decomposition. Because conditions 8 and 9
+/// constrain the same source cell, the encryption scalar is identical to the
+/// summed and range-checked share value. The unsigned decomposition eliminates
+/// the separate sign witness and prevents negation.
 ///
 /// ## Gadget ownership
 ///
@@ -192,11 +192,11 @@ pub(crate) fn elgamal_encrypt(
 pub(crate) fn prove_elgamal_encryptions(
     ecc_chip: EccChip<OrchardFixedBases>,
     nonzero: NonZeroConfig,
+    fixed_base_30: &SpendAuthGFixedBase30Config,
     mut layouter: impl Layouter<pallas::Base>,
     namespace: &str,
     ea_pk: halo2_proofs::circuit::Value<pallas::Affine>,
     ea_pk_loc: EaPkInstanceLoc,
-    advice_col: Column<Advice>,
     share_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
     r_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
     enc_c1_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
@@ -235,12 +235,6 @@ pub(crate) fn prove_elgamal_encryptions(
     let spend_auth_g_base =
         FixedPointBaseField::from_inner(ecc_chip.clone(), OrchardBaseFieldBases::SpendAuthGBase);
 
-    // SpendAuthG fixed-base descriptor for C2's [v_i]*G (short 22-window path).
-    // v_i is range-checked to [0, 2^30) by condition 9; the short path saves
-    // 63 window rows per share (×16 = 1008 rows total) vs the full BaseField path.
-    let spend_auth_g_short =
-        FixedPointShort::from_inner(ecc_chip.clone(), OrchardShortScalarBases::SpendAuthGShort);
-
     for i in 0..16 {
         nonzero.constrain_nonzero(
             layouter.namespace(|| format!("{namespace} r[{i}] != 0")),
@@ -273,34 +267,6 @@ pub(crate) fn prove_elgamal_encryptions(
 
         // --- C2_i = [v_i] * G + [r_i] * ea_pk ---
         //
-        // [v_i]*G uses the 22-window short-scalar path.
-        // Sign is +1, constant-constrained so the prover cannot negate the share.
-        let sign_one = layouter.assign_region(
-            || format!("{namespace} sign_one[{i}]"),
-            |mut region| {
-                region.assign_advice_from_constant(
-                    || "sign = +1",
-                    advice_col,
-                    0,
-                    pallas::Base::one(),
-                )
-            },
-        )?;
-
-        // ScalarFixedShort::new wraps share_cells[i] directly as the magnitude
-        // (no new cell allocation). The same cell that conditions 8/9 constrain
-        // is used verbatim here.
-        let v_scalar = ScalarFixedShort::new(
-            ecc_chip.clone(),
-            layouter.namespace(|| format!("{namespace} v_{i} short scalar")),
-            (share_cells[i].clone(), sign_one),
-        )?;
-
-        let (v_g_point, _) = spend_auth_g_short.clone().mul(
-            layouter.namespace(|| format!("{namespace} [v_{i}] * G")),
-            v_scalar,
-        )?;
-
         let r_i_scalar = ScalarVar::from_base(
             ecc_chip.clone(),
             layouter.namespace(|| format!("{namespace} r[{i}] to ScalarVar")),
@@ -313,17 +279,19 @@ pub(crate) fn prove_elgamal_encryptions(
             r_i_scalar,
         )?;
 
-        let c2_point = v_g_point.add(
+        let addend_x = r_ea_pk_point.inner().x();
+        let addend_y = r_ea_pk_point.inner().y();
+        let (c2_x, c2_y) = fixed_base_30.mul_add(
             layouter.namespace(|| format!("{namespace} C2[{i}] = vG + rP")),
-            &r_ea_pk_point,
+            &share_cells[i],
+            &addend_x,
+            &addend_y,
         )?;
 
-        let c2_x = c2_point.extract_p().inner().clone();
         layouter.assign_region(
             || format!("{namespace} C2[{i}] x == enc_c2_x[{i}]"),
             |mut region| region.constrain_equal(c2_x.cell(), enc_c2_cells[i].cell()),
         )?;
-        let c2_y = c2_point.inner().y();
         layouter.assign_region(
             || format!("{namespace} C2[{i}] y == enc_c2_y[{i}]"),
             |mut region| region.constrain_equal(c2_y.cell(), enc_c2_y_cells[i].cell()),
