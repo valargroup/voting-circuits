@@ -195,6 +195,7 @@ pub(crate) fn prove_elgamal_encryptions(
     fixed_base_30: &SpendAuthGFixedBase30Config,
     mut layouter: impl Layouter<pallas::Base>,
     namespace: &str,
+    indices: core::ops::Range<usize>,
     ea_pk: halo2_proofs::circuit::Value<pallas::Affine>,
     ea_pk_loc: EaPkInstanceLoc,
     share_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
@@ -235,7 +236,7 @@ pub(crate) fn prove_elgamal_encryptions(
     let spend_auth_g_base =
         FixedPointBaseField::from_inner(ecc_chip.clone(), OrchardBaseFieldBases::SpendAuthGBase);
 
-    for i in 0..16 {
+    for i in indices {
         nonzero.constrain_nonzero(
             layouter.namespace(|| format!("{namespace} r[{i}] != 0")),
             "El Gamal randomness != 0",

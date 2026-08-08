@@ -58,7 +58,7 @@ src/
 │   ├── imt_circuit.rs            #   IMT non-membership proof gadget
 │   └── README.md                 #   Detailed specification
 │
-├── vote_proof/                   # ZKP #2 — Vote Proof circuit (K=12)
+├── vote_proof/                   # ZKP #2 — Vote Proof circuit (K=11)
 │   ├── circuit.rs                #   12-condition halo2 circuit
 │   ├── builder.rs                #   Builder producing VoteProofBundle
 │   ├── prove.rs                  #   Prove / verify helpers
@@ -136,7 +136,7 @@ cargo test row_budget -- --ignored --nocapture
 cargo test cost_breakdown -- --ignored --nocapture
 ```
 
-The long tests are slow because they synthesize Halo 2 circuits and run `MockProver` verification over the configured `K` domain (`delegation` uses K=14, `vote_proof` K=12, and `share_reveal` K=11). Some gadget stress tests are also long-running because they repeat many `MockProver` checks, for example one K=12 shares-hash test runs 16 separate prover checks. The real proof roundtrip also performs proving-key/proof generation and verification, so it is intentionally outside the default unit-test path.
+The long tests are slow because they synthesize Halo 2 circuits and run `MockProver` verification over the configured `K` domain (`delegation` uses K=14, while `vote_proof` and `share_reveal` use K=11). Some gadget stress tests are also long-running because they repeat many `MockProver` checks, for example one K=12 shares-hash test runs 16 separate prover checks. The real proof roundtrip also performs proving-key/proof generation and verification, so it is intentionally outside the default unit-test path.
 
 ## Benchmarks
 

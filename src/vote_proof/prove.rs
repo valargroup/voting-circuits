@@ -1,7 +1,7 @@
 //! Real Halo2 prove/verify for the vote proof circuit (ZKP #2).
 //!
 //! Follows the same pattern as `delegation/prove.rs` but for the
-//! 12-condition vote proof circuit at K=12.
+//! 12-condition vote proof circuit at K=11.
 
 use std::{string::String, vec::Vec};
 
@@ -90,7 +90,7 @@ pub fn vote_proof_proving_key(
 /// provides a circuit without all witnesses populated or an instance
 /// that Halo2 cannot prove against.
 ///
-/// **Expensive**: K=12 proof generation should run in release mode. Params and
+/// **Expensive**: K=11 proof generation should run in release mode. Params and
 /// keys are cached so only the first call pays keygen.
 pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8>, ProveError> {
     let (params, pk, _vk) = vote_proof_cached_keys()?;
@@ -207,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "long-running K=12 proof keygen; run when touching vote proof creation"]
+    #[ignore = "long-running K=11 proof keygen; run when touching vote proof creation"]
     fn create_vote_proof_returns_err_for_missing_witnesses() {
         let instance = minimal_instance();
         let err = create_vote_proof(Circuit::default(), &instance).unwrap_err();
@@ -234,7 +234,7 @@ mod tests {
     // either the circuit shape changed (and the VK must be regenerated and
     // redistributed) or an unintended drift has been introduced.
     #[test]
-    #[ignore = "TODO(sean): runs K=12 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
+    #[ignore = "TODO(sean): runs K=11 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
     fn vk_fingerprint_unchanged() {
         let (_, _, vk) = vote_proof_cached_keys().expect("vote proof keys");
         let pinned = format!("{:?}", vk.pinned());
@@ -244,9 +244,9 @@ mod tests {
         let actual: &[u8] = fingerprint.as_bytes();
 
         let expected: [u8; 32] = [
-            0x8e, 0x1e, 0xea, 0xd5, 0xcf, 0xde, 0x63, 0x46, 0x56, 0x89, 0x2e, 0xc4, 0x07, 0x8f,
-            0xf6, 0x0d, 0x38, 0x75, 0xb8, 0xa3, 0xf6, 0x69, 0xb2, 0x01, 0x05, 0x6b, 0xd2, 0x5a,
-            0x63, 0x14, 0xc8, 0xca,
+            0x46, 0xb6, 0x06, 0x6d, 0xff, 0x54, 0x98, 0xd6, 0xbb, 0xab, 0xb7, 0xf0, 0x3f, 0xb7,
+            0x86, 0x2d, 0x4a, 0x7d, 0x7f, 0x68, 0xd0, 0xa1, 0xdf, 0x32, 0x5c, 0x42, 0xaf, 0xfb,
+            0x95, 0x9f, 0x90, 0x91,
         ];
 
         assert_eq!(

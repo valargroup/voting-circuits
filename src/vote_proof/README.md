@@ -3,7 +3,10 @@
 Proves that a registered voter is casting a valid vote, without revealing which VAN they hold. The structure follows the delegation circuit's pattern (ZKP 1). Numbering matches Gov Steps V1 (ZKP #2): 12 conditions total; all conditions 1–12 are fully constrained in-circuit (condition 4 enforces spend authority `r_vpk = vsk.ak + [alpha_v]*G` in-circuit; the vote signature is verified out-of-circuit under `r_vpk`).
 
 **Public inputs:** 11 field elements.
-**Current K:** 12 (4,096 rows) — condition 11 uses a dedicated second set of 10 advice columns so its El Gamal regions overlap the rest of the circuit. The high-water mark is 3,956 rows (96.6% utilization), leaving 140 rows of headroom.
+**Current K:** 11 (2,048 rows) — condition 11 is split evenly across two
+dedicated 10-column El Gamal tracks. Condition 10 is divided between the
+primary track and a dedicated four-column Poseidon track. The high-water mark
+is 2,021 rows (98.7% utilization), leaving 27 rows of headroom.
 
 **Authoritative hash sources:** this README is explanatory. Reusable hash
 preimages are owned by `crate::circuit::van_integrity` (VAN integrity),
@@ -451,16 +454,22 @@ vote_decision ──────────────────────
 
 | Columns | Use |
 |---------|-----|
-| `advices[0..5]` | General witness assignment, ECC (cond 3, 4, 11), Sinsemilla/CommitIvk (cond 3) |
+| `advices[0..5]` | General witness assignment, ECC (cond 3, 4), Sinsemilla/CommitIvk (cond 3) |
 | `advices[5]` | Poseidon partial S-box |
 | `advices[6]` | Poseidon state + AddChip output (c) |
 | `advices[7]` | Poseidon state + AddChip input (a) |
 | `advices[8]` | Poseidon state + AddChip input (b) |
 | `advices[9]` | Range check running sum |
-| `lagrange_coeffs[0]` | Constants (DOMAIN_VAN, DOMAIN_VC, ONE) |
-| `lagrange_coeffs[1]` | ECC Lagrange coefficients |
+| `elgamal_advices[0..10]` | Condition 11 El Gamal encryptions for shares 0 through 7 |
+| `elgamal_advices_b[0..10]` | Condition 11 El Gamal encryptions for shares 8 through 15 |
+| `hash_advices[0..4]` | Condition 10 share commitments 2 through 15 and the outer shares hash |
+| `constants` | Constant assignments (DOMAIN_VAN, DOMAIN_VC, ONE) |
+| `lagrange_coeffs[0..2]` | Primary ECC Lagrange coefficients |
 | `lagrange_coeffs[2..5]` | Poseidon rc_a |
 | `lagrange_coeffs[5..8]` | Poseidon rc_b |
+| `elgamal_lagrange_coeffs[0..8]` | First El Gamal track ECC and fixed-base coefficients |
+| `elgamal_lagrange_coeffs_b[0..8]` | Second El Gamal track ECC and fixed-base coefficients |
+| `hash_round_constants[0..6]` | Dedicated condition-10 Poseidon round constants |
 | `table_idx` (+ additional lookup columns) | 10-bit lookup table [0, 1024), Sinsemilla lookup (loaded by `SinsemillaChip`); (proposal_id, 2^proposal_id) table for condition 6 |
 | `primary` | 11 public inputs |
 

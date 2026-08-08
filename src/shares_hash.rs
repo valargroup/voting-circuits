@@ -122,9 +122,12 @@ pub(crate) fn hash_share_commitment_in_circuit(
 ///
 /// # Arguments
 ///
-/// * `poseidon_chip` — A closure that returns a fresh `PoseidonChip` each time
-///   it is called. It is called 17 times: once per per-share hash and once for
-///   the outer hash. Typically `|| config.poseidon_chip()`.
+/// * `primary_poseidon_chip` — Constructs the chip used for the first
+///   `primary_count` share commitments.
+/// * `secondary_poseidon_chip` — Constructs the chip used for the remaining
+///   share commitments and the outer hash.
+/// * `primary_count` — Number of share commitments assigned to the primary
+///   Poseidon column track.
 /// * `layouter` — The circuit layouter.
 /// * `blinds` — The 16 per-share blind factors.
 /// * `enc_c1_x` — The 16 El Gamal `C1` x-coordinates.
@@ -135,8 +138,11 @@ pub(crate) fn hash_share_commitment_in_circuit(
 /// Returns the internal `shares_hash` cell. The caller is responsible for
 /// consuming that cell in a public binding, such as the vote commitment hash;
 /// this gadget does not constrain the result to an instance column.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_shares_hash_in_circuit(
-    poseidon_chip: impl Fn() -> PoseidonChip<pallas::Base, 3, 2>,
+    primary_poseidon_chip: impl Fn() -> PoseidonChip<pallas::Base, 3, 2>,
+    secondary_poseidon_chip: impl Fn() -> PoseidonChip<pallas::Base, 3, 2>,
+    primary_count: usize,
     mut layouter: impl Layouter<pallas::Base>,
     blinds: [AssignedCell<pallas::Base, pallas::Base>; 16],
     enc_c1_x: [AssignedCell<pallas::Base, pallas::Base>; 16],
@@ -144,6 +150,8 @@ pub(crate) fn compute_shares_hash_in_circuit(
     enc_c1_y: [AssignedCell<pallas::Base, pallas::Base>; 16],
     enc_c2_y: [AssignedCell<pallas::Base, pallas::Base>; 16],
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
+    assert!(primary_count <= 16);
+
     let share_comms: [_; 16] = IntoIterator::into_iter(blinds)
         .zip_eq(enc_c1_x)
         .zip_eq(enc_c2_x)
@@ -151,8 +159,13 @@ pub(crate) fn compute_shares_hash_in_circuit(
         .zip_eq(enc_c2_y)
         .enumerate()
         .map(|(i, ((((blind, c1x), c2x), c1y), c2y))| {
+            let chip = if i < primary_count {
+                primary_poseidon_chip()
+            } else {
+                secondary_poseidon_chip()
+            };
             hash_share_commitment_in_circuit(
-                poseidon_chip(),
+                chip,
                 layouter.namespace(|| format!("share_comm_{i}")),
                 blind,
                 c1x,
@@ -166,18 +179,11 @@ pub(crate) fn compute_shares_hash_in_circuit(
         .try_into()
         .expect("always 16 elements");
 
-    // Outer hash: shares_hash = Poseidon(share_comm_0, …, share_comm_15)
-    let hasher = PoseidonHash::<
-        pallas::Base,
-        _,
-        poseidon::P128Pow5T3,
-        ConstantLength<16>,
-        3, // WIDTH
-        2, // RATE
-    >::init(
-        poseidon_chip(),
-        layouter.namespace(|| "shares_hash Poseidon init"),
-    )?;
+    let hasher =
+        PoseidonHash::<pallas::Base, _, poseidon::P128Pow5T3, ConstantLength<16>, 3, 2>::init(
+            secondary_poseidon_chip(),
+            layouter.namespace(|| "shares_hash Poseidon init"),
+        )?;
     hasher.hash(
         layouter.namespace(|| "shares_hash = Poseidon(share_comms)"),
         share_comms,
@@ -561,6 +567,8 @@ mod tests {
 
             let result = compute_shares_hash_in_circuit(
                 || config.poseidon_chip(),
+                || config.poseidon_chip(),
+                16,
                 layouter.namespace(|| "compute_shares_hash"),
                 blinds,
                 enc_c1_x,
@@ -818,6 +826,8 @@ mod tests {
 
             let full_hash = compute_shares_hash_in_circuit(
                 || config.poseidon_chip(),
+                || config.poseidon_chip(),
+                16,
                 layouter.namespace(|| "full shares_hash path"),
                 blinds_full,
                 enc_c1_x_full,
