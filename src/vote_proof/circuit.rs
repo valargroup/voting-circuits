@@ -100,11 +100,10 @@ use crate::{
 
 /// Circuit size (2^K rows).
 ///
-/// K=13 (8,192 rows). `CircuitCost::measure` reports a floor-planner
-/// high-water mark of **7,753 rows** (94.6% of 8,192). The `V1` floor planner
-/// packs non-overlapping regions into the same row range across different
-/// columns, so the high-water mark is much lower than a naive sum-of-heights
-/// estimate.
+/// K=12 (4,096 rows). Condition 11 uses a second set of ten advice columns so
+/// that the `V1` floor planner can place its El Gamal regions alongside the
+/// rest of the circuit. `CircuitCost::measure` reports a floor-planner
+/// high-water mark of **3,956 rows** (96.6%), leaving 140 rows of headroom.
 ///
 /// Key contributors (rough per-region heights, not per-column sums):
 /// - 24-level Merkle path: 24 Poseidon regions stacked sequentially — the
@@ -115,7 +114,7 @@ use crate::{
 ///
 /// Run the `row_budget` diagnostic to re-measure after circuit changes:
 ///   `cargo test vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
-pub const K: u32 = 13;
+pub const K: u32 = 12;
 
 pub(super) use van_integrity::DOMAIN_VAN;
 pub(super) use vote_commitment::DOMAIN_VC;
@@ -244,6 +243,11 @@ pub struct Config {
     /// - `advices[6..9]`: Poseidon state columns + AddChip output.
     /// - `advices[9]`: range check running sum.
     advices: [Column<Advice>; 10],
+    /// Dedicated advice columns for condition 11's El Gamal operations.
+    ///
+    /// Separating these from [`Self::advices`] lets the floor planner overlap
+    /// the encryption regions with the rest of the circuit.
+    elgamal_advices: [Column<Advice>; 10],
     /// Poseidon hash chip configuration.
     ///
     /// P128Pow5T3 with width 3, rate 2. Used for VAN integrity (condition 2),
@@ -259,12 +263,14 @@ pub struct Config {
     /// (proposal authority decrement) uses the dedicated
     /// `AuthorityDecrementChip` instead — it does not call `AddChip`.
     add_config: AddConfig,
-    /// ECC chip configuration (condition 3: diversified address integrity, condition 11: El Gamal).
+    /// ECC configuration for conditions 3 and 4.
     ///
     /// Condition 3 proves `vpk_pk_d = [ivk_v] * vpk_g_d` via the CommitIvk chain:
     /// `[vsk] * SpendAuthG → ak → CommitIvk(ExtractP(ak), nk, rivk_v) → ivk_v → [ivk_v] * vpk_g_d`.
     /// Shares advice and fixed columns with Poseidon per delegation layout.
     ecc_config: EccConfig<OrchardFixedBases>,
+    /// ECC configuration on [`Self::elgamal_advices`] for condition 11.
+    elgamal_ecc_config: EccConfig<OrchardFixedBases>,
     /// Sinsemilla chip configuration (condition 3: CommitIvk requires Sinsemilla).
     ///
     /// Uses advices[0..5] for Sinsemilla message hashing, advices[6] for
@@ -292,7 +298,7 @@ pub struct Config {
     merkle_swap: MerkleSwapGate,
     /// Configuration for condition 6 (Proposal Authority Decrement).
     authority_decrement: AuthorityDecrementConfig,
-    /// Shared inverse-witness checks for zero randomizer/randomness rejection.
+    /// Inverse-witness checks on the dedicated El Gamal columns.
     nonzero: NonZeroConfig,
     /// Unsigned 30-bit fixed-base multiplication used for El Gamal C2 values.
     spend_auth_g_fixed_base_30: SpendAuthGFixedBase30Config,
@@ -312,9 +318,17 @@ impl Config {
         AddChip::construct(self.add_config.clone())
     }
 
-    /// Constructs an ECC chip for curve operations (conditions 3, 11).
+    /// Constructs an ECC chip for curve operations in conditions 3 and 4.
     fn ecc_chip(&self) -> EccChip<OrchardFixedBases> {
         EccChip::construct(self.ecc_config.clone(), CircuitVersion::AnchoredBase)
+    }
+
+    /// Constructs the ECC chip used by condition 11.
+    fn elgamal_ecc_chip(&self) -> EccChip<OrchardFixedBases> {
+        EccChip::construct(
+            self.elgamal_ecc_config.clone(),
+            CircuitVersion::AnchoredBase,
+        )
     }
 
     /// Constructs a Sinsemilla chip (condition 3: CommitIvk).
@@ -521,11 +535,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
     }
 
     fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
-        // 10 advice columns, matching the delegation circuit layout so the two
-        // circuits share the same column assignment and chip configurations.
-        // The count is driven by the ECC chip, which is the largest consumer
-        // and requires all 10 columns for its internal scalar-multiplication
-        // gates.  The remaining chips tile within that same 10-column window:
+        // The primary 10 advice columns match the delegation circuit layout.
+        // A second set of 10 columns lets condition 11 run alongside the
+        // primary layout at K=12. Each ECC chip requires all 10 columns for its
+        // internal scalar-multiplication gates. The remaining chips tile
+        // within the primary 10-column window:
         //
         //   advices[0..5]  — general witness assignment, Sinsemilla pair 1
         //                    message columns, and the Merkle swap gate
@@ -538,6 +552,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         //   advices[9]     — LookupRangeCheck running-sum column.
         let advices: [Column<Advice>; 10] = core::array::from_fn(|_| meta.advice_column());
         for col in &advices {
+            meta.enable_equality(*col);
+        }
+        let elgamal_advices: [Column<Advice>; 10] = core::array::from_fn(|_| meta.advice_column());
+        for col in &elgamal_advices {
             meta.enable_equality(*col);
         }
 
@@ -578,15 +596,24 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // Range check configuration: 10-bit lookup words in advices[9].
         let range_check = LookupRangeCheckConfig::configure(meta, advices[9], table_idx);
+        let elgamal_range_check =
+            LookupRangeCheckConfig::configure(meta, elgamal_advices[9], table_idx);
 
-        // ECC chip: fixed- and variable-base scalar multiplication for
-        // condition 3 (diversified address integrity via CommitIvk chain) and condition 11
-        // (El Gamal encryption integrity).
-        // Shares columns with Poseidon per delegation circuit layout.
+        // Primary ECC chip for conditions 3 and 4. It shares columns with
+        // Poseidon per the delegation circuit layout. Condition 11 gets a
+        // separate ECC chip and fixed columns so both tracks can overlap.
         let ecc_config =
             EccChip::<OrchardFixedBases>::configure(meta, advices, lagrange_coeffs, range_check);
+        let elgamal_lagrange_coeffs: [Column<Fixed>; 8] =
+            core::array::from_fn(|_| meta.fixed_column());
+        let elgamal_ecc_config = EccChip::<OrchardFixedBases>::configure(
+            meta,
+            elgamal_advices,
+            elgamal_lagrange_coeffs,
+            elgamal_range_check,
+        );
         let spend_auth_g_fixed_base_30 =
-            SpendAuthGFixedBase30Config::configure(meta, advices, lagrange_coeffs);
+            SpendAuthGFixedBase30Config::configure(meta, elgamal_advices, elgamal_lagrange_coeffs);
 
         // Sinsemilla chip: required by CommitIvk for condition 3.
         // Uses advices[0..5] for Sinsemilla message hashing, advices[6] for
@@ -626,14 +653,16 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // Condition 6: Proposal Authority Decrement.
         let authority_decrement = AuthorityDecrementChip::configure(meta, advices);
-        let nonzero = NonZeroConfig::configure(meta, [advices[0], advices[1]]);
+        let nonzero = NonZeroConfig::configure(meta, [elgamal_advices[0], elgamal_advices[1]]);
 
         Config {
             primary,
             advices,
+            elgamal_advices,
             poseidon_config,
             add_config,
             ecc_config,
+            elgamal_ecc_config,
             sinsemilla_config,
             commit_ivk_config,
             range_check,
@@ -662,7 +691,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Load (proposal_id, 2^proposal_id) lookup table for condition 6.
         AuthorityDecrementChip::load_table(&config.authority_decrement, &mut layouter)?;
 
-        // Construct the ECC chip (used in conditions 3 and 10).
+        // Construct the primary ECC chip (used in conditions 3 and 4).
         let ecc_chip = config.ecc_chip();
 
         // ---------------------------------------------------------------
@@ -1230,7 +1259,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 .map(|i| {
                     assign_free_advice(
                         layouter.namespace(|| format!("witness r[{i}]")),
-                        config.advices[0],
+                        config.elgamal_advices[0],
                         self.share_randomness[i],
                     )
                 })
@@ -1239,7 +1268,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 .expect("always 16 elements");
 
             prove_elgamal_encryptions(
-                ecc_chip.clone(),
+                config.elgamal_ecc_chip(),
                 config.nonzero,
                 &config.spend_auth_g_fixed_base_30,
                 layouter.namespace(|| "cond11 El Gamal"),

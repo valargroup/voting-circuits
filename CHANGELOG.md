@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Reduced the vote-proof circuit domain from K=13 to K=12 by placing its El
+  Gamal operations on dedicated advice and fixed columns. This changes the
+  vote-proof verification key; downstream verifiers must deploy the new key
+  before accepting proofs from this circuit.
+
 ## v0.9.0-rc.3
 
 ### Changed
