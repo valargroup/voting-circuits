@@ -4,10 +4,11 @@
 
 ### Changed
 
-- Reduced the vote-proof circuit domain from K=13 to K=12 by placing its El
-  Gamal operations on dedicated advice and fixed columns. This changes the
-  vote-proof verification key; downstream verifiers must deploy the new key
-  before accepting proofs from this circuit.
+- Reduced the vote-proof circuit domain from K=13 to K=11 by splitting its El
+  Gamal operations across two ten-column tracks and its shares hash across the
+  primary and a four-column Poseidon track. This changes the vote-proof
+  verification key; downstream verifiers must deploy the new key before
+  accepting proofs from this circuit.
 
 ## v0.9.0-rc.3
 
