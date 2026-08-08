@@ -243,6 +243,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         .unwrap();
         transcript.finalize()
     };
+    eprintln!("delegation proof bytes: {}", proof_bytes.len());
 
     {
         let mut group = c.benchmark_group("delegation-keygen");

@@ -1,7 +1,7 @@
 //! Real Halo2 prove/verify for the delegation circuit (ZKP #1).
 //!
 //! Follows the same pattern as `sdk/circuits/src/toy.rs` but for the full
-//! 15-condition delegation circuit at K=14.
+//! 15-condition delegation circuit at K=13.
 
 use std::{string::String, vec::Vec};
 
@@ -33,7 +33,7 @@ static DELEGATION_PK_CACHE: std::sync::OnceLock<Result<DelegationKeys, String>> 
 /// Generate the IPA params (SRS) for the delegation circuit.
 /// Deterministic for a given `K`.
 ///
-/// **Expensive**: K=14 params generation takes several seconds.
+/// **Expensive**: K=13 params generation takes several seconds.
 /// Callers should cache the result.
 pub fn delegation_params() -> Params<EqAffine> {
     Params::new(K)
@@ -89,8 +89,8 @@ pub fn warm_delegation_keys() -> Result<(), ProveError> {
 /// provides a circuit without all witnesses populated or an instance
 /// that Halo2 cannot prove against.
 ///
-/// **Expensive**: K=14 proof generation takes ~30-60 seconds in release mode.
-/// Params and keys are cached so only the first call pays keygen.
+/// Params and keys are cached so only the first call pays keygen. Use the
+/// delegation Criterion benchmark for release-mode proving measurements.
 pub fn create_delegation_proof(
     circuit: Circuit,
     instance: &Instance,
@@ -210,7 +210,7 @@ mod prove_tests {
     }
 
     #[test]
-    #[ignore = "long-running K=14 proof keygen; run when touching delegation proof creation"]
+    #[ignore = "long-running K=13 proof keygen; run when touching delegation proof creation"]
     fn create_delegation_proof_returns_err_for_missing_witnesses() {
         let instance = minimal_instance();
         let err = create_delegation_proof(Circuit::default(), &instance).unwrap_err();
@@ -223,7 +223,7 @@ mod prove_tests {
     // either the circuit shape changed (and the VK must be regenerated and
     // redistributed) or an unintended drift has been introduced.
     #[test]
-    #[ignore = "TODO(sean): runs K=14 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
+    #[ignore = "TODO(sean): runs K=13 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
     fn vk_fingerprint_unchanged() {
         let (_, _, vk) = delegation_cached_keys().expect("delegation keys");
         let pinned = format!("{:?}", vk.pinned());
@@ -233,9 +233,9 @@ mod prove_tests {
         let actual: &[u8] = fingerprint.as_bytes();
 
         let expected: [u8; 32] = [
-            0x90, 0x30, 0xe0, 0x13, 0xf9, 0x29, 0x82, 0x17, 0x7e, 0x5b, 0x38, 0x38, 0x23, 0x33,
-            0x8c, 0xcc, 0x75, 0x01, 0x9c, 0x2d, 0x0f, 0x0b, 0xec, 0x6d, 0xa6, 0xff, 0x72, 0x47,
-            0x95, 0xf1, 0xc4, 0xf5,
+            0xfa, 0x98, 0xe5, 0x10, 0xf0, 0x3a, 0xf8, 0x16, 0x1f, 0xd9, 0x69, 0x91, 0x5a, 0x01,
+            0xfc, 0x7c, 0x19, 0x5d, 0x5e, 0x8b, 0xbb, 0x86, 0x5b, 0x81, 0xa8, 0xb3, 0xa6, 0xf9,
+            0x5f, 0x08, 0x18, 0x7e,
         ];
 
         assert_eq!(
