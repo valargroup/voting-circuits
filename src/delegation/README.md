@@ -2,10 +2,12 @@
 
 A single circuit proving all 15 conditions of the delegation ZKP at K=13 (8,192 rows). The circuit handles the keystone note (conditions 1–8) and five per-note slots (conditions 9–15 ×5) in one proof.
 
-The five Orchard Merkle paths share two dedicated five-advice-column lanes. A
-dedicated IMT Poseidon configuration reuses the less-loaded lane; note slots
-alternate between it and the shared core Poseidon lane. This layout uses 20
-advice columns.
+The five Orchard Merkle paths share the two existing core Sinsemilla
+configurations and one dedicated five-advice-column lane. An auxiliary
+Poseidon configuration reuses that lane, with IMT paths and nullifier hashes
+scheduled independently between it and the core Poseidon configuration. This
+layout uses 15 advice, 40 fixed, and one instance column (56 total). Its
+high-water mark is 7,708 rows, leaving 484 rows (5.9%) of K=13 headroom.
 
 **Public inputs:** 14 field elements.
 **Per-note slots:** 5 (`MAX_REAL_NOTES`; unused slots are padded with
