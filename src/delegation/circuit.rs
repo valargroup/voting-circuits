@@ -717,23 +717,23 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             lagrange_coeffs[1],
         );
 
-        let merkle_configs = core::array::from_fn(|slot| {
+        let merkle_configs = core::array::from_fn(|lane| {
             let sinsemilla = configure_sinsemilla(
                 meta,
-                merkle_advices[slot],
-                merkle_advices[slot][2],
-                merkle_fixed_y_q[slot],
+                merkle_advices[lane],
+                merkle_advices[lane][2],
+                merkle_fixed_y_q[lane],
             );
             MerkleChip::configure(meta, sinsemilla)
         });
 
-        let imt_poseidon_configs = core::array::from_fn(|slot| {
+        let imt_poseidon_configs = core::array::from_fn(|lane| {
             PoseidonChip::configure::<poseidon::P128Pow5T3>(
                 meta,
-                merkle_advices[slot][..3].try_into().unwrap(),
-                merkle_advices[slot][3],
-                imt_poseidon_round_constants[slot][..3].try_into().unwrap(),
-                imt_poseidon_round_constants[slot][3..].try_into().unwrap(),
+                merkle_advices[lane][..3].try_into().unwrap(),
+                merkle_advices[lane][3],
+                imt_poseidon_round_constants[lane][..3].try_into().unwrap(),
+                imt_poseidon_round_constants[lane][3..].try_into().unwrap(),
             )
         });
 

@@ -177,6 +177,8 @@ pub(crate) fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
 
 /// Synthesizes a Poseidon Merkle path while rotating hash levels across
 /// independent Poseidon configurations.
+///
+/// Level `i` uses configuration `(i + lane_offset) % LANES`.
 pub(crate) fn synthesize_poseidon_merkle_path_with_configs<
     const DEPTH: usize,
     const LANES: usize,
