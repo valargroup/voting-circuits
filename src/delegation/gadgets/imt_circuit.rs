@@ -31,7 +31,7 @@ use pasta_curves::pallas;
 
 use crate::{
     delegation::imt::IMT_DEPTH,
-    gadgets::poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate},
+    gadgets::poseidon_merkle::{synthesize_poseidon_merkle_path_with_configs, MerkleSwapGate},
     protocol_hash::poseidon_hash_in_circuit,
 };
 
@@ -267,9 +267,9 @@ impl ImtNonMembershipConfig {
 /// 5. Range checks on x_lo, x_hi to [0, 2^250)
 ///
 /// Returns `imt_root` which the caller feeds into the `q_per_note` gate.
-pub(in crate::delegation) fn synthesize_imt_non_membership(
+pub(in crate::delegation) fn synthesize_imt_non_membership<const LANES: usize>(
     imt_config: &ImtNonMembershipConfig,
-    poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
+    poseidon_configs: &[PoseidonConfig<pallas::Base, 3, 2>; LANES],
     ecc_config: &EccConfig<OrchardFixedBases>,
     layouter: &mut impl Layouter<pallas::Base>,
     imt_nf_bounds: Value<[pallas::Base; 3]>,
@@ -278,6 +278,7 @@ pub(in crate::delegation) fn synthesize_imt_non_membership(
     real_nf: &AssignedCell<pallas::Base, pallas::Base>,
     slot: usize,
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
+    assert!(LANES > 0, "an IMT path needs at least one Poseidon lane");
     let s = slot;
 
     // Witness the three nullifier boundaries.
@@ -301,16 +302,17 @@ pub(in crate::delegation) fn synthesize_imt_non_membership(
 
     // Compute leaf hash: Poseidon3(nf_lo, nf_mid, nf_hi).
     let leaf_hash = poseidon_hash_in_circuit(
-        PoseidonChip::construct(poseidon_config.clone()),
+        PoseidonChip::construct(poseidon_configs[slot % LANES].clone()),
         layouter.namespace(|| format!("note {s} imt leaf hash")),
         "Poseidon3(nf_lo, nf_mid, nf_hi)",
         [imt_nf_lo.clone(), imt_nf_mid.clone(), imt_nf_hi.clone()],
     )?;
 
     // 29-level Poseidon Merkle path from leaf_hash to imt_root.
-    let imt_root = synthesize_poseidon_merkle_path::<IMT_DEPTH>(
+    let imt_root = synthesize_poseidon_merkle_path_with_configs::<IMT_DEPTH, LANES>(
         &imt_config.swap_gate,
-        poseidon_config,
+        poseidon_configs,
+        slot,
         layouter,
         imt_config.advice_0,
         leaf_hash,

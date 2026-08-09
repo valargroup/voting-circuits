@@ -101,10 +101,10 @@ use crate::{
 
 /// Circuit size (2^K rows).
 ///
-/// The five Orchard Merkle paths share two dedicated advice-column lanes. A
-/// dedicated IMT Poseidon configuration reuses the less-loaded lane and shares
-/// work with the core Poseidon configuration, fitting all conditions into K=13.
-pub const K: u32 = 13;
+/// The Orchard Merkle paths distribute their levels across four shared
+/// advice-column lanes, and the IMT paths rotate across the same lanes. This
+/// fits all 15 conditions into K=12 (4,096 rows).
+pub const K: u32 = 12;
 
 /// Advice columns required by one Sinsemilla chip.
 const SINSEMILLA_ADVICE_COLUMNS: usize = 5;
@@ -112,8 +112,8 @@ const SINSEMILLA_ADVICE_COLUMNS: usize = 5;
 const BALLOT_REMAINDER_BITS: usize = 24;
 const BALLOT_REMAINDER_SHIFT: usize = SHARE_VALUE_BITS - BALLOT_REMAINDER_BITS;
 
-/// Number of dedicated advice-column lanes used by Orchard Merkle paths.
-const MERKLE_LANES: usize = 2;
+/// Dedicated column lanes shared by Orchard Merkle and IMT Poseidon paths.
+const MERKLE_LANES: usize = 4;
 
 pub(super) fn rcm_scalar_for_note_parts(
     version: NoteVersion,
@@ -203,7 +203,7 @@ const MAX_PROPOSAL_AUTHORITY: u64 = 65535; // 2^16 - 1
 ///
 /// The proof always exposes five `gov_null` slots, padding unused positions
 /// with zero-value notes. Keeping the count fixed hides the real-note count
-/// within the 1..=5 bucket and keeps the delegation circuit within K=13 while
+/// within the 1..=5 bucket and keeps the delegation circuit within K=12 while
 /// leaving row-budget headroom for the IMT and NoteCommit paths.
 pub(super) const MAX_REAL_NOTES: usize = 5;
 
@@ -306,13 +306,13 @@ pub struct Config {
     // Used in condition 8 (ballot scaling) to range-check nb_minus_one (30 bits
     // direct) and remainder (24 bits via shift-by-2^6 into 30-bit check).
     range_check: LookupRangeCheckConfig<pallas::Base, RANGE_CHECK_WORD_BITS>,
-    // The five note slots share two dedicated Merkle chips. Paths assigned to
-    // different chips can be floor-planned at the same row offsets.
+    // Each path distributes its levels across the four Merkle chips, balancing
+    // work across their independent column lanes.
     merkle_configs:
         [MerkleConfig<OrchardHashDomains, OrchardCommitDomains, OrchardFixedBases>; MERKLE_LANES],
-    // A dedicated IMT Poseidon lane reuses the dedicated Merkle advice lane. Note
-    // slots alternate between it and the shared core Poseidon configuration.
-    imt_poseidon_config: PoseidonConfig<pallas::Base, 3, 2>,
+    // All five IMT paths rotate their hash levels across the four dedicated
+    // Merkle advice lanes.
+    imt_poseidon_configs: [PoseidonConfig<pallas::Base, 3, 2>; MERKLE_LANES],
     // Per-note custom gate selector (conditions 10, 13).
     // Enforces: v * (root - nc_root) = 0 (Merkle check, skipped for v=0 dummy notes),
     // imt_root = nf_imt_root.
@@ -369,11 +369,11 @@ impl Config {
         NoteCommitChip::construct(self.new_note_commit_config.clone())
     }
 
-    fn merkle_chip_for_slot(
+    fn merkle_chips(
         &self,
-        slot: usize,
-    ) -> MerkleChip<OrchardHashDomains, OrchardCommitDomains, OrchardFixedBases> {
-        MerkleChip::construct(self.merkle_configs[slot % MERKLE_LANES].clone())
+    ) -> [MerkleChip<OrchardHashDomains, OrchardCommitDomains, OrchardFixedBases>; MERKLE_LANES]
+    {
+        core::array::from_fn(|lane| MerkleChip::construct(self.merkle_configs[lane].clone()))
     }
 
     fn range_check_config(&self) -> LookupRangeCheckConfig<pallas::Base, RANGE_CHECK_WORD_BITS> {
@@ -583,15 +583,14 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let rc_a = lagrange_coeffs[2..5].try_into().unwrap();
         let rc_b = lagrange_coeffs[5..8].try_into().unwrap();
 
-        // Two independent lanes for the five Orchard Merkle paths. Alternating
-        // slots between them reduces the serial row cost while avoiding one lane
-        // per path.
+        // Independent lanes shared by all Orchard Merkle paths. Each chip has
+        // its own advice and fixed-y column.
         let merkle_advices: [[Column<Advice>; SINSEMILLA_ADVICE_COLUMNS]; MERKLE_LANES] =
             core::array::from_fn(|_| core::array::from_fn(|_| meta.advice_column()));
         let merkle_fixed_y_q: [Column<plonk::Fixed>; MERKLE_LANES] =
             core::array::from_fn(|_| meta.fixed_column());
-        let imt_poseidon_round_constants: [Column<plonk::Fixed>; 6] =
-            core::array::from_fn(|_| meta.fixed_column());
+        let imt_poseidon_round_constants: [[Column<plonk::Fixed>; 6]; MERKLE_LANES] =
+            core::array::from_fn(|_| core::array::from_fn(|_| meta.fixed_column()));
 
         // ── Column properties ────────────────────────────────────────────
 
@@ -718,23 +717,25 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             lagrange_coeffs[1],
         );
 
-        let merkle_configs = core::array::from_fn(|lane| {
+        let merkle_configs = core::array::from_fn(|slot| {
             let sinsemilla = configure_sinsemilla(
                 meta,
-                merkle_advices[lane],
-                merkle_advices[lane][2],
-                merkle_fixed_y_q[lane],
+                merkle_advices[slot],
+                merkle_advices[slot][2],
+                merkle_fixed_y_q[slot],
             );
             MerkleChip::configure(meta, sinsemilla)
         });
 
-        let imt_poseidon_config = PoseidonChip::configure::<poseidon::P128Pow5T3>(
-            meta,
-            merkle_advices[MERKLE_LANES - 1][..3].try_into().unwrap(),
-            merkle_advices[MERKLE_LANES - 1][3],
-            imt_poseidon_round_constants[..3].try_into().unwrap(),
-            imt_poseidon_round_constants[3..].try_into().unwrap(),
-        );
+        let imt_poseidon_configs = core::array::from_fn(|slot| {
+            PoseidonChip::configure::<poseidon::P128Pow5T3>(
+                meta,
+                merkle_advices[slot][..3].try_into().unwrap(),
+                merkle_advices[slot][3],
+                imt_poseidon_round_constants[slot][..3].try_into().unwrap(),
+                imt_poseidon_round_constants[slot][3..].try_into().unwrap(),
+            )
+        });
 
         // Configuration to handle decomposition and canonicity checking for CommitIvk.
         let commit_ivk_config = CommitIvkChip::configure(meta, advices);
@@ -761,7 +762,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             new_note_commit_config,
             range_check,
             merkle_configs,
-            imt_poseidon_config,
+            imt_poseidon_configs,
             q_per_note,
             q_scope_select,
             imt_config,
@@ -1801,7 +1802,7 @@ fn synthesize_note_slot(
             .path
             .map(|typed_path| typed_path.map(|node| node.inner()));
         let merkle_inputs = GadgetMerklePath::construct(
-            [config.merkle_chip_for_slot(slot)],
+            config.merkle_chips(),
             OrchardHashDomains::MerkleCrh,
             note.pos,
             path,
@@ -1816,17 +1817,9 @@ fn synthesize_note_slot(
     // Condition 13: IMT non-membership.
     // ---------------------------------------------------------------
 
-    // Odd slots occupy the less-loaded Merkle lane. Scheduling their IMT paths
-    // on the dedicated configuration balances the two Merkle lanes and the
-    // shared core Poseidon configuration.
-    let imt_poseidon_config = if slot % MERKLE_LANES == MERKLE_LANES - 1 {
-        &config.imt_poseidon_config
-    } else {
-        &config.poseidon_config
-    };
     let imt_root = synthesize_imt_non_membership(
         &config.imt_config,
-        imt_poseidon_config,
+        &config.imt_poseidon_configs,
         &config.ecc_config,
         layouter,
         note.imt_nf_bounds,
