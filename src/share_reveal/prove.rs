@@ -174,9 +174,45 @@ pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ProveError;
+    use crate::{
+        share_commitment,
+        share_reveal::{build_share_reveal, ShareRevealBundle},
+        ProveError, VOTE_COMM_TREE_DEPTH,
+    };
     use halo2_proofs::plonk;
     use pasta_curves::pallas;
+
+    fn valid_bundle() -> ShareRevealBundle {
+        let blinds: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(1_001 + i as u64));
+        let c1_x: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(2_001 + i as u64));
+        let c2_x: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(3_001 + i as u64));
+        let c1_y: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(4_001 + i as u64));
+        let c2_y: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(5_001 + i as u64));
+        let share_comms = core::array::from_fn(|i| {
+            share_commitment(blinds[i], c1_x[i], c2_x[i], c1_y[i], c2_y[i])
+        });
+        let share_index = 2usize;
+
+        build_share_reveal(
+            [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH],
+            0,
+            share_comms,
+            blinds[share_index],
+            c1_x[share_index],
+            c2_x[share_index],
+            c1_y[share_index],
+            c2_y[share_index],
+            share_index as u32,
+            pallas::Base::from(3),
+            pallas::Base::from(1),
+            pallas::Base::from(999),
+        )
+    }
 
     fn minimal_instance() -> Instance {
         Instance::from_parts(
@@ -203,6 +239,26 @@ mod tests {
         let err = create_share_reveal_proof(Circuit::default(), &instance).unwrap_err();
 
         assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
+    }
+
+    #[test]
+    #[ignore = "long-running real proof roundtrip; run with `cargo test -- --ignored real_proof_roundtrip`"]
+    fn real_proof_roundtrip_stays_within_downstream_limit() {
+        // vote-sdk rejects Halo2 proofs larger than 8 KiB.
+        const DOWNSTREAM_MAX_PROOF_SIZE: usize = 8_192;
+
+        let ShareRevealBundle { circuit, instance } = valid_bundle();
+        let proof = create_share_reveal_proof(circuit, &instance)
+            .expect("share reveal proof creation should succeed");
+
+        verify_share_reveal_proof(&proof, &instance)
+            .expect("share reveal verifier should accept the generated proof");
+        assert!(
+            proof.len() <= DOWNSTREAM_MAX_PROOF_SIZE,
+            "share reveal proof is {} bytes, exceeding the downstream {}-byte limit",
+            proof.len(),
+            DOWNSTREAM_MAX_PROOF_SIZE,
+        );
     }
 
     // TODO(sean): VK-stability tripwire. Hashes the `PinnedVerificationKey`
