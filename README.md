@@ -94,7 +94,7 @@ Reusable halo2 gadgets that appear in more than one circuit:
 |---------|---|------|------------|------|
 | Delegation | 12 | 4 096 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) |
 | Vote Proof | 13 | 8 192 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
-| Share Reveal | 11 | 2 048 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
+| Share Reveal | 10 | 1 024 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
 
 ## Dependency on `orchard`
 
