@@ -1,7 +1,7 @@
 //! Real Halo2 prove/verify for the Share Reveal circuit (ZKP #3).
 //!
 //! Follows the same pattern as `delegation/prove.rs` but for the
-//! 5-condition share reveal circuit at K=11.
+//! 5-condition share reveal circuit at K=10.
 
 use std::{string::String, vec::Vec};
 
@@ -33,7 +33,7 @@ static SHARE_REVEAL_PK_CACHE: std::sync::OnceLock<Result<ShareRevealKeys, String
 /// Generate the IPA params (SRS) for the share reveal circuit.
 /// Deterministic for a given `K`.
 ///
-/// **Expensive**: K=11 params generation takes ~1 second.
+/// **Expensive**: K=10 params generation takes measurable setup time.
 /// Callers should cache the result.
 pub fn share_reveal_params() -> Params<EqAffine> {
     Params::new(K)
@@ -90,7 +90,7 @@ pub fn warm_share_reveal_keys() -> Result<(), ProveError> {
 /// provides a circuit without all witnesses populated or an instance
 /// that Halo2 cannot prove against.
 ///
-/// **Expensive**: K=11 proof generation takes ~5-15 seconds in release mode.
+/// **Expensive**: proof generation should run in release mode.
 /// Params and keys are cached so only the first call pays keygen.
 pub fn create_share_reveal_proof(
     circuit: Circuit,
@@ -210,7 +210,7 @@ mod tests {
     // either the circuit shape changed (and the VK must be regenerated and
     // redistributed) or an unintended drift has been introduced.
     #[test]
-    #[ignore = "TODO(sean): runs K=11 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
+    #[ignore = "runs K=10 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
     fn vk_fingerprint_unchanged() {
         let (_, _, vk) = share_reveal_cached_keys().expect("share reveal keys");
         let pinned = format!("{:?}", vk.pinned());
@@ -220,9 +220,9 @@ mod tests {
         let actual: &[u8] = fingerprint.as_bytes();
 
         let expected: [u8; 32] = [
-            0xed, 0x17, 0x19, 0xda, 0xf7, 0x90, 0x4f, 0xd8, 0x2f, 0xe6, 0x93, 0x53, 0x52, 0x55,
-            0x29, 0xb4, 0x4e, 0xa4, 0x96, 0x29, 0x29, 0xb0, 0x3e, 0x26, 0x72, 0xe7, 0xae, 0xdc,
-            0xbd, 0x69, 0xd9, 0x8b,
+            0xb2, 0xe4, 0x88, 0x56, 0x6d, 0x05, 0x5c, 0x40, 0xcb, 0x37, 0x7b, 0xf6, 0x00, 0xf5,
+            0x0d, 0x36, 0x90, 0x45, 0xe2, 0xc4, 0x7b, 0x2e, 0xcd, 0xa3, 0x58, 0x97, 0x2a, 0x95,
+            0x36, 0x9f, 0x0d, 0x25,
         ];
 
         assert_eq!(

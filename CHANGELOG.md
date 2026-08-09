@@ -15,6 +15,10 @@
   verifiers must deploy the new key and accept proofs larger than 8 KiB.
 - Used separate El Gamal randomness domains for standard and single-share vote
   layouts while preserving deterministic recovery within each layout.
+- Reduced the share reveal circuit to K=10 by distributing its vote-commitment
+  Merkle path across two Poseidon column configurations. This changes the share
+  reveal proving and verifying keys and increases the proof size from 4,000 to
+  5,152 bytes, which remains below the existing 8 KiB proof limit.
 
 ## v0.9.0-rc.3
 
