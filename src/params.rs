@@ -22,8 +22,11 @@ pub(crate) const SHARE_VALUE_BITS: usize = 30;
 /// Exclusive upper bound for each encrypted vote share.
 pub(crate) const SHARE_VALUE_LIMIT: u64 = 1 << SHARE_VALUE_BITS;
 
-/// Number of 10-bit lookup words used to range-check each vote share.
-pub(crate) const SHARE_VALUE_RANGE_WORDS: usize = SHARE_VALUE_BITS / 10;
+/// Bit width of each lookup range-check word.
+pub(crate) const RANGE_CHECK_WORD_BITS: usize = 10;
+
+/// Number of lookup words used to range-check each vote share.
+pub(crate) const SHARE_VALUE_RANGE_WORDS: usize = SHARE_VALUE_BITS / RANGE_CHECK_WORD_BITS;
 
 /// Depth of the Poseidon-based vote commitment tree. Shared by ZKP #2
 /// (vote_proof) Merkle membership and ZKP #3 (share_reveal) Merkle membership.

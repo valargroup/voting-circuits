@@ -90,7 +90,7 @@ use crate::{
         poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate},
         van_integrity, vote_commitment,
     },
-    params::{SHARE_VALUE_RANGE_WORDS, VOTE_COMM_TREE_DEPTH},
+    params::{RANGE_CHECK_WORD_BITS, SHARE_VALUE_RANGE_WORDS, VOTE_COMM_TREE_DEPTH},
     shares_hash::compute_shares_hash_in_circuit,
 };
 
@@ -283,7 +283,7 @@ pub struct Config {
     /// so `num_words` × 10 gives the total bit-width checked.
     /// Used in condition 6 to ensure authority values and diff are in [0, 2^16)
     /// (16-bit bitmask), and condition 9 to ensure each share is in `[0, 2^30)`.
-    range_check: LookupRangeCheckConfig<pallas::Base, 10>,
+    range_check: LookupRangeCheckConfig<pallas::Base, RANGE_CHECK_WORD_BITS>,
     /// Merkle conditional swap gate (condition 1).
     ///
     /// At each of the 24 Merkle tree levels, conditionally swaps
@@ -330,7 +330,7 @@ impl Config {
     }
 
     /// Returns the range check configuration (10-bit words).
-    fn range_check_config(&self) -> LookupRangeCheckConfig<pallas::Base, 10> {
+    fn range_check_config(&self) -> LookupRangeCheckConfig<pallas::Base, RANGE_CHECK_WORD_BITS> {
         self.range_check
     }
 }

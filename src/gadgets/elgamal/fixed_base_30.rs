@@ -21,10 +21,16 @@ use lazy_static::lazy_static;
 use orchard::constants::fixed_bases::spend_auth_g;
 use pasta_curves::{arithmetic::CurveAffine, pallas};
 
-use crate::params::SHARE_VALUE_BITS;
+use crate::params::{RANGE_CHECK_WORD_BITS, SHARE_VALUE_BITS};
 
 const WINDOW_BITS: usize = 3;
 const NUM_WINDOWS: usize = SHARE_VALUE_BITS / WINDOW_BITS;
+const PRECOMPUTED_NUM_WINDOWS: usize = 10;
+
+const _: () = assert!(SHARE_VALUE_BITS % WINDOW_BITS == 0);
+const _: () = assert!(SHARE_VALUE_BITS % RANGE_CHECK_WORD_BITS == 0);
+// `FINAL_WINDOW_Z` and `FINAL_WINDOW_U` are precomputed for this window count.
+const _: () = assert!(NUM_WINDOWS == PRECOMPUTED_NUM_WINDOWS);
 
 // The first nine windows use the full SpendAuthG table. The final window is
 // different because it cancels the offset accumulated by those nine windows.
@@ -77,6 +83,20 @@ struct AssignedPoint {
     y: AssignedCell<pallas::Base, pallas::Base>,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Tamper {
+    SelectedY,
+    SelectedU,
+    IncompleteAddX,
+    CompleteAddLambda,
+    CompleteAddAlpha,
+    CompleteAddBeta,
+    CompleteAddGamma,
+    CompleteAddDelta,
+    RunningSumWord,
+}
+
 /// Configuration for unsigned 30-bit multiplication by SpendAuthG followed by
 /// complete addition of another constrained point.
 #[derive(Clone, Debug)]
@@ -88,6 +108,10 @@ pub(crate) struct SpendAuthGFixedBase30Config {
     q_coords: Selector,
     q_add_incomplete: Selector,
     q_add_complete: Selector,
+    #[cfg(test)]
+    q_range_check: Selector,
+    #[cfg(test)]
+    tamper: Option<Tamper>,
 }
 
 impl SpendAuthGFixedBase30Config {
@@ -106,6 +130,10 @@ impl SpendAuthGFixedBase30Config {
             q_coords: meta.selector(),
             q_add_incomplete: meta.selector(),
             q_add_complete: meta.selector(),
+            #[cfg(test)]
+            q_range_check,
+            #[cfg(test)]
+            tamper: None,
         };
 
         config.create_window_gates(meta);
@@ -285,6 +313,41 @@ impl SpendAuthGFixedBase30Config {
         Ok((result.x, result.y))
     }
 
+    #[cfg(test)]
+    fn assign_tampered_running_sum(
+        &self,
+        mut layouter: impl Layouter<pallas::Base>,
+    ) -> Result<(), Error> {
+        layouter.assign_region(
+            || "tampered running-sum word",
+            |mut region| {
+                self.q_range_check.enable(&mut region, 0)?;
+                region.assign_advice(
+                    || "z_cur",
+                    self.advices[4],
+                    0,
+                    || Value::known(pallas::Base::from(1 << WINDOW_BITS)),
+                )?;
+                region.assign_advice(
+                    || "z_next",
+                    self.advices[4],
+                    1,
+                    || Value::known(pallas::Base::zero()),
+                )?;
+                Ok(())
+            },
+        )
+    }
+
+    #[cfg(test)]
+    fn corrupt_value(&self, target: Tamper, value: Value<pallas::Base>) -> Value<pallas::Base> {
+        if self.tamper == Some(target) {
+            value + Value::known(pallas::Base::one())
+        } else {
+            value
+        }
+    }
+
     fn assign_windows(
         &self,
         region: &mut Region<'_, pallas::Base>,
@@ -392,11 +455,18 @@ impl SpendAuthGFixedBase30Config {
             window,
             || coordinates.map(|coordinates| coordinates.0),
         )?;
+        let selected_y = coordinates.map(|coordinates| coordinates.1);
+        #[cfg(test)]
+        let selected_y = if self.tamper == Some(Tamper::SelectedY) && window == 0 {
+            selected_y.map(|y| -y)
+        } else {
+            selected_y
+        };
         let y = region.assign_advice(
             || format!("window {window} selected y"),
             self.advices[1],
             window,
-            || coordinates.map(|coordinates| coordinates.1),
+            || selected_y,
         )?;
 
         let u = digit.map(|digit| {
@@ -407,6 +477,12 @@ impl SpendAuthGFixedBase30Config {
             };
             pallas::Base::from_repr(repr).unwrap()
         });
+        #[cfg(test)]
+        let u = if window == 0 {
+            self.corrupt_value(Tamper::SelectedU, u)
+        } else {
+            u
+        };
         region.assign_advice(
             || format!("window {window} u"),
             self.advices[5],
@@ -443,12 +519,15 @@ impl SpendAuthGFixedBase30Config {
                 let y_r = lambda * (*x_p - x_r) - y_p;
                 (x_r, y_r)
             });
-        let x = region.assign_advice(
-            || "incomplete sum x",
-            self.advices[2],
-            row + 1,
-            || result.map(|result| result.0),
-        )?;
+        let result_x = result.map(|result| result.0);
+        #[cfg(test)]
+        let result_x = if row == 1 {
+            self.corrupt_value(Tamper::IncompleteAddX, result_x)
+        } else {
+            result_x
+        };
+        let x =
+            region.assign_advice(|| "incomplete sum x", self.advices[2], row + 1, || result_x)?;
         let y = region.assign_advice(
             || "incomplete sum y",
             self.advices[3],
@@ -504,6 +583,17 @@ impl SpendAuthGFixedBase30Config {
                         }
                     },
                 );
+
+                #[cfg(test)]
+                let lambda = self.corrupt_value(Tamper::CompleteAddLambda, lambda);
+                #[cfg(test)]
+                let alpha = self.corrupt_value(Tamper::CompleteAddAlpha, alpha);
+                #[cfg(test)]
+                let beta = self.corrupt_value(Tamper::CompleteAddBeta, beta);
+                #[cfg(test)]
+                let gamma = self.corrupt_value(Tamper::CompleteAddGamma, gamma);
+                #[cfg(test)]
+                let delta = self.corrupt_value(Tamper::CompleteAddDelta, delta);
 
                 for (name, column, value) in [
                     ("lambda", self.advices[4], lambda),
@@ -568,6 +658,7 @@ fn window_scalar(window: usize, digit: usize) -> pallas::Scalar {
 mod tests {
     use super::*;
     use crate::params::SHARE_VALUE_LIMIT;
+    use group::Group;
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::MockProver,
@@ -575,6 +666,7 @@ mod tests {
     };
 
     const TEST_K: u32 = 6;
+    const TEST_SHARE: u64 = 625;
 
     #[derive(Clone, Debug)]
     struct TestConfig {
@@ -586,7 +678,8 @@ mod tests {
     #[derive(Clone, Debug, Default)]
     struct TestCircuit {
         share: Value<pallas::Base>,
-        addend: Value<pallas::Affine>,
+        addend: Value<(pallas::Base, pallas::Base)>,
+        tamper: Option<Tamper>,
     }
 
     impl Circuit<pallas::Base> for TestCircuit {
@@ -621,13 +714,14 @@ mod tests {
 
         fn synthesize(
             &self,
-            config: Self::Config,
+            mut config: Self::Config,
             mut layouter: impl Layouter<pallas::Base>,
         ) -> Result<(), Error> {
-            let coordinates = self.addend.map(|point| {
-                let coordinates = point.coordinates().unwrap();
-                (*coordinates.x(), *coordinates.y())
-            });
+            if self.tamper == Some(Tamper::RunningSumWord) {
+                return config.fixed_base_30.assign_tampered_running_sum(layouter);
+            }
+            config.fixed_base_30.tamper = self.tamper;
+
             let (share, addend_x, addend_y) = layouter.assign_region(
                 || "witness inputs",
                 |mut region| {
@@ -637,13 +731,13 @@ mod tests {
                         || "addend x",
                         config.witness,
                         1,
-                        || coordinates.map(|coordinates| coordinates.0),
+                        || self.addend.map(|coordinates| coordinates.0),
                     )?;
                     let addend_y = region.assign_advice(
                         || "addend y",
                         config.witness,
                         2,
-                        || coordinates.map(|coordinates| coordinates.1),
+                        || self.addend.map(|coordinates| coordinates.1),
                     )?;
                     Ok((share, addend_x, addend_y))
                 },
@@ -660,19 +754,64 @@ mod tests {
         }
     }
 
+    fn point_coordinates(point: pallas::Affine) -> (pallas::Base, pallas::Base) {
+        let coordinates = point.coordinates();
+        if bool::from(coordinates.is_some()) {
+            let coordinates = coordinates.unwrap();
+            (*coordinates.x(), *coordinates.y())
+        } else {
+            (pallas::Base::zero(), pallas::Base::zero())
+        }
+    }
+
+    fn run_mul_add(
+        share: u64,
+        addend: pallas::Affine,
+        expected: pallas::Affine,
+        tamper: Option<Tamper>,
+    ) -> MockProver<pallas::Base> {
+        let expected = point_coordinates(expected);
+        let circuit = TestCircuit {
+            share: Value::known(pallas::Base::from(share)),
+            addend: Value::known(point_coordinates(addend)),
+            tamper,
+        };
+        MockProver::run(TEST_K, &circuit, vec![vec![expected.0, expected.1]]).unwrap()
+    }
+
     fn test_mul_add(share: u64, should_succeed: bool) {
         let generator = spend_auth_g::generator();
         let addend = (generator * pallas::Scalar::from(13)).to_affine();
         let expected = (generator * pallas::Scalar::from(share) + addend).to_affine();
-        let expected = expected.coordinates().unwrap();
-        let circuit = TestCircuit {
-            share: Value::known(pallas::Base::from(share)),
-            addend: Value::known(addend),
-        };
-        let prover =
-            MockProver::run(TEST_K, &circuit, vec![vec![*expected.x(), *expected.y()]]).unwrap();
+        let prover = run_mul_add(share, addend, expected, None);
 
         assert_eq!(prover.verify().is_ok(), should_succeed);
+    }
+
+    fn assert_tamper_fails_at_gate(tamper: Tamper, expected_gate: &str) {
+        let prover = if tamper == Tamper::RunningSumWord {
+            let circuit = TestCircuit {
+                tamper: Some(tamper),
+                ..TestCircuit::default()
+            };
+            MockProver::run(TEST_K, &circuit, vec![vec![]]).unwrap()
+        } else {
+            let generator = spend_auth_g::generator();
+            let addend = (generator * pallas::Scalar::from(13)).to_affine();
+            let expected = (generator * pallas::Scalar::from(TEST_SHARE) + addend).to_affine();
+            run_mul_add(TEST_SHARE, addend, expected, Some(tamper))
+        };
+
+        let failures = prover.verify().expect_err("tampered witness must fail");
+        let failures = failures
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            failures.contains(expected_gate),
+            "expected failure in gate '{expected_gate}', got:\n{failures}"
+        );
     }
 
     #[test]
@@ -711,5 +850,110 @@ mod tests {
     #[test]
     fn mul_add_rejects_share_at_limit() {
         test_mul_add(SHARE_VALUE_LIMIT, false);
+    }
+
+    #[test]
+    fn mul_add_accepts_doubling() {
+        let generator = spend_auth_g::generator();
+        let magnitude = generator * pallas::Scalar::from(TEST_SHARE);
+        let prover = run_mul_add(
+            TEST_SHARE,
+            magnitude.to_affine(),
+            (magnitude + magnitude).to_affine(),
+            None,
+        );
+
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
+    #[test]
+    fn mul_add_accepts_inverse_points() {
+        let generator = spend_auth_g::generator();
+        let magnitude = generator * pallas::Scalar::from(TEST_SHARE);
+        let prover = run_mul_add(
+            TEST_SHARE,
+            (-magnitude).to_affine(),
+            pallas::Point::identity().to_affine(),
+            None,
+        );
+
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
+    #[test]
+    fn mul_add_accepts_identity_addend() {
+        let generator = spend_auth_g::generator();
+        let magnitude = generator * pallas::Scalar::from(TEST_SHARE);
+        let prover = run_mul_add(
+            TEST_SHARE,
+            pallas::Point::identity().to_affine(),
+            magnitude.to_affine(),
+            None,
+        );
+
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
+    #[test]
+    fn rejects_selected_y_sign_flip() {
+        assert_tamper_fails_at_gate(Tamper::SelectedY, "30-bit fixed-base window coordinates");
+    }
+
+    #[test]
+    fn rejects_selected_u_corruption() {
+        assert_tamper_fails_at_gate(Tamper::SelectedU, "30-bit fixed-base window coordinates");
+    }
+
+    #[test]
+    fn rejects_incomplete_add_output_corruption() {
+        assert_tamper_fails_at_gate(
+            Tamper::IncompleteAddX,
+            "30-bit fixed-base incomplete addition",
+        );
+    }
+
+    #[test]
+    fn rejects_complete_add_lambda_corruption() {
+        assert_tamper_fails_at_gate(
+            Tamper::CompleteAddLambda,
+            "30-bit fixed-base complete addition",
+        );
+    }
+
+    #[test]
+    fn rejects_complete_add_alpha_corruption() {
+        assert_tamper_fails_at_gate(
+            Tamper::CompleteAddAlpha,
+            "30-bit fixed-base complete addition",
+        );
+    }
+
+    #[test]
+    fn rejects_complete_add_beta_corruption() {
+        assert_tamper_fails_at_gate(
+            Tamper::CompleteAddBeta,
+            "30-bit fixed-base complete addition",
+        );
+    }
+
+    #[test]
+    fn rejects_complete_add_gamma_corruption() {
+        assert_tamper_fails_at_gate(
+            Tamper::CompleteAddGamma,
+            "30-bit fixed-base complete addition",
+        );
+    }
+
+    #[test]
+    fn rejects_complete_add_delta_corruption() {
+        assert_tamper_fails_at_gate(
+            Tamper::CompleteAddDelta,
+            "30-bit fixed-base complete addition",
+        );
+    }
+
+    #[test]
+    fn rejects_out_of_range_running_sum_word() {
+        assert_tamper_fails_at_gate(Tamper::RunningSumWord, "range check");
     }
 }
