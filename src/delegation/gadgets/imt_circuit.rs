@@ -262,7 +262,7 @@ impl ImtNonMembershipConfig {
 /// K=2 punctured-range model. Orchestrates:
 /// 1. Witness nf_lo, nf_mid, nf_hi
 /// 2. Poseidon3 leaf hash = Poseidon3(nf_lo, nf_mid, nf_hi)
-/// 3. 29-level Merkle path via [`synthesize_poseidon_merkle_path`]
+/// 3. 29-level Merkle path via [`synthesize_poseidon_merkle_path_with_configs`]
 /// 4. Punctured interval check: nf_lo < real_nf < nf_hi AND real_nf != nf_mid
 /// 5. Range checks on x_lo, x_hi to [0, 2^250)
 ///
