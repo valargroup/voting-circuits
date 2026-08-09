@@ -83,20 +83,6 @@ struct AssignedPoint {
     y: AssignedCell<pallas::Base, pallas::Base>,
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Tamper {
-    SelectedY,
-    SelectedU,
-    IncompleteAddX,
-    CompleteAddLambda,
-    CompleteAddAlpha,
-    CompleteAddBeta,
-    CompleteAddGamma,
-    CompleteAddDelta,
-    RunningSumWord,
-}
-
 /// Configuration for unsigned 30-bit multiplication by SpendAuthG followed by
 /// complete addition of another constrained point.
 #[derive(Clone, Debug)]
@@ -108,10 +94,6 @@ pub(crate) struct SpendAuthGFixedBase30Config {
     q_coords: Selector,
     q_add_incomplete: Selector,
     q_add_complete: Selector,
-    #[cfg(test)]
-    q_range_check: Selector,
-    #[cfg(test)]
-    tamper: Option<Tamper>,
 }
 
 impl SpendAuthGFixedBase30Config {
@@ -130,10 +112,6 @@ impl SpendAuthGFixedBase30Config {
             q_coords: meta.selector(),
             q_add_incomplete: meta.selector(),
             q_add_complete: meta.selector(),
-            #[cfg(test)]
-            q_range_check,
-            #[cfg(test)]
-            tamper: None,
         };
 
         config.create_window_gates(meta);
@@ -313,41 +291,6 @@ impl SpendAuthGFixedBase30Config {
         Ok((result.x, result.y))
     }
 
-    #[cfg(test)]
-    fn assign_tampered_running_sum(
-        &self,
-        mut layouter: impl Layouter<pallas::Base>,
-    ) -> Result<(), Error> {
-        layouter.assign_region(
-            || "tampered running-sum word",
-            |mut region| {
-                self.q_range_check.enable(&mut region, 0)?;
-                region.assign_advice(
-                    || "z_cur",
-                    self.advices[4],
-                    0,
-                    || Value::known(pallas::Base::from(1 << WINDOW_BITS)),
-                )?;
-                region.assign_advice(
-                    || "z_next",
-                    self.advices[4],
-                    1,
-                    || Value::known(pallas::Base::zero()),
-                )?;
-                Ok(())
-            },
-        )
-    }
-
-    #[cfg(test)]
-    fn corrupt_value(&self, target: Tamper, value: Value<pallas::Base>) -> Value<pallas::Base> {
-        if self.tamper == Some(target) {
-            value + Value::known(pallas::Base::one())
-        } else {
-            value
-        }
-    }
-
     fn assign_windows(
         &self,
         region: &mut Region<'_, pallas::Base>,
@@ -455,18 +398,11 @@ impl SpendAuthGFixedBase30Config {
             window,
             || coordinates.map(|coordinates| coordinates.0),
         )?;
-        let selected_y = coordinates.map(|coordinates| coordinates.1);
-        #[cfg(test)]
-        let selected_y = if self.tamper == Some(Tamper::SelectedY) && window == 0 {
-            selected_y.map(|y| -y)
-        } else {
-            selected_y
-        };
         let y = region.assign_advice(
             || format!("window {window} selected y"),
             self.advices[1],
             window,
-            || selected_y,
+            || coordinates.map(|coordinates| coordinates.1),
         )?;
 
         let u = digit.map(|digit| {
@@ -477,12 +413,6 @@ impl SpendAuthGFixedBase30Config {
             };
             pallas::Base::from_repr(repr).unwrap()
         });
-        #[cfg(test)]
-        let u = if window == 0 {
-            self.corrupt_value(Tamper::SelectedU, u)
-        } else {
-            u
-        };
         region.assign_advice(
             || format!("window {window} u"),
             self.advices[5],
@@ -519,15 +449,12 @@ impl SpendAuthGFixedBase30Config {
                 let y_r = lambda * (*x_p - x_r) - y_p;
                 (x_r, y_r)
             });
-        let result_x = result.map(|result| result.0);
-        #[cfg(test)]
-        let result_x = if row == 1 {
-            self.corrupt_value(Tamper::IncompleteAddX, result_x)
-        } else {
-            result_x
-        };
-        let x =
-            region.assign_advice(|| "incomplete sum x", self.advices[2], row + 1, || result_x)?;
+        let x = region.assign_advice(
+            || "incomplete sum x",
+            self.advices[2],
+            row + 1,
+            || result.map(|result| result.0),
+        )?;
         let y = region.assign_advice(
             || "incomplete sum y",
             self.advices[3],
@@ -583,17 +510,6 @@ impl SpendAuthGFixedBase30Config {
                         }
                     },
                 );
-
-                #[cfg(test)]
-                let lambda = self.corrupt_value(Tamper::CompleteAddLambda, lambda);
-                #[cfg(test)]
-                let alpha = self.corrupt_value(Tamper::CompleteAddAlpha, alpha);
-                #[cfg(test)]
-                let beta = self.corrupt_value(Tamper::CompleteAddBeta, beta);
-                #[cfg(test)]
-                let gamma = self.corrupt_value(Tamper::CompleteAddGamma, gamma);
-                #[cfg(test)]
-                let delta = self.corrupt_value(Tamper::CompleteAddDelta, delta);
 
                 for (name, column, value) in [
                     ("lambda", self.advices[4], lambda),
@@ -679,7 +595,6 @@ mod tests {
     struct TestCircuit {
         share: Value<pallas::Base>,
         addend: Value<(pallas::Base, pallas::Base)>,
-        tamper: Option<Tamper>,
     }
 
     impl Circuit<pallas::Base> for TestCircuit {
@@ -714,14 +629,9 @@ mod tests {
 
         fn synthesize(
             &self,
-            mut config: Self::Config,
+            config: Self::Config,
             mut layouter: impl Layouter<pallas::Base>,
         ) -> Result<(), Error> {
-            if self.tamper == Some(Tamper::RunningSumWord) {
-                return config.fixed_base_30.assign_tampered_running_sum(layouter);
-            }
-            config.fixed_base_30.tamper = self.tamper;
-
             let (share, addend_x, addend_y) = layouter.assign_region(
                 || "witness inputs",
                 |mut region| {
@@ -754,6 +664,256 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum Tamper {
+        SelectedY,
+        SelectedU,
+        IncompleteAddX,
+        CompleteAddLambda,
+        CompleteAddAlpha,
+        CompleteAddBeta,
+        CompleteAddGamma,
+        CompleteAddDelta,
+        RunningSumWord,
+    }
+
+    #[derive(Clone, Debug)]
+    struct TamperConfig {
+        fixed_base_30: SpendAuthGFixedBase30Config,
+        q_range_check: Selector,
+    }
+
+    #[derive(Clone, Debug)]
+    struct TamperCircuit {
+        tamper: Tamper,
+    }
+
+    impl TamperCircuit {
+        fn assign_selected_point(
+            &self,
+            config: &TamperConfig,
+            mut layouter: impl Layouter<pallas::Base>,
+        ) -> Result<(), Error> {
+            let window = 0;
+            let digit = 5;
+            let point = (spend_auth_g::generator() * window_scalar(window, digit)).to_affine();
+            let (x, mut y) = point_coordinates(point);
+            if self.tamper == Tamper::SelectedY {
+                y = -y;
+            }
+            let mut u = pallas::Base::from_repr(spend_auth_g::U[window][digit]).unwrap();
+            if self.tamper == Tamper::SelectedU {
+                u += pallas::Base::one();
+            }
+
+            layouter.assign_region(
+                || "tampered selected point",
+                |mut region| {
+                    config.fixed_base_30.q_coords.enable(&mut region, 0)?;
+                    for (column, coefficient) in config
+                        .fixed_base_30
+                        .lagrange_coeffs
+                        .iter()
+                        .zip(LAGRANGE_COEFFS[window].iter())
+                    {
+                        region.assign_fixed(
+                            || "Lagrange coefficient",
+                            *column,
+                            0,
+                            || Value::known(*coefficient),
+                        )?;
+                    }
+                    region.assign_fixed(
+                        || "z",
+                        config.fixed_base_30.fixed_z,
+                        0,
+                        || Value::known(pallas::Base::from(spend_auth_g::Z[window])),
+                    )?;
+                    for (name, column, row, value) in [
+                        ("x", config.fixed_base_30.advices[0], 0, x),
+                        ("y", config.fixed_base_30.advices[1], 0, y),
+                        (
+                            "z_cur",
+                            config.fixed_base_30.advices[4],
+                            0,
+                            pallas::Base::from(digit as u64),
+                        ),
+                        (
+                            "z_next",
+                            config.fixed_base_30.advices[4],
+                            1,
+                            pallas::Base::zero(),
+                        ),
+                        ("u", config.fixed_base_30.advices[5], 0, u),
+                    ] {
+                        region.assign_advice(|| name, column, row, || Value::known(value))?;
+                    }
+                    Ok(())
+                },
+            )
+        }
+
+        fn assign_incomplete_add(
+            &self,
+            config: &TamperConfig,
+            mut layouter: impl Layouter<pallas::Base>,
+        ) -> Result<(), Error> {
+            let generator = spend_auth_g::generator();
+            let p = generator * pallas::Scalar::from(5);
+            let q = generator * pallas::Scalar::from(7);
+            let (x_p, y_p) = point_coordinates(p.to_affine());
+            let (x_q, y_q) = point_coordinates(q.to_affine());
+            let (mut x_r, y_r) = point_coordinates((p + q).to_affine());
+            x_r += pallas::Base::one();
+
+            layouter.assign_region(
+                || "tampered incomplete addition",
+                |mut region| {
+                    config
+                        .fixed_base_30
+                        .q_add_incomplete
+                        .enable(&mut region, 0)?;
+                    for (name, column, row, value) in [
+                        ("x_p", config.fixed_base_30.advices[0], 0, x_p),
+                        ("y_p", config.fixed_base_30.advices[1], 0, y_p),
+                        ("x_q", config.fixed_base_30.advices[2], 0, x_q),
+                        ("y_q", config.fixed_base_30.advices[3], 0, y_q),
+                        ("x_r", config.fixed_base_30.advices[2], 1, x_r),
+                        ("y_r", config.fixed_base_30.advices[3], 1, y_r),
+                    ] {
+                        region.assign_advice(|| name, column, row, || Value::known(value))?;
+                    }
+                    Ok(())
+                },
+            )
+        }
+
+        fn assign_complete_add(
+            &self,
+            config: &TamperConfig,
+            mut layouter: impl Layouter<pallas::Base>,
+        ) -> Result<(), Error> {
+            let generator = spend_auth_g::generator();
+            let p = generator * pallas::Scalar::from(5);
+            let q = generator * pallas::Scalar::from(7);
+            let (x_p, y_p) = point_coordinates(p.to_affine());
+            let (x_q, y_q) = point_coordinates(q.to_affine());
+            let (x_r, y_r) = point_coordinates((p + q).to_affine());
+            let mut alpha = invert_or_zero(x_q - x_p);
+            let mut beta = invert_or_zero(x_p);
+            let mut gamma = invert_or_zero(x_q);
+            let mut delta = pallas::Base::zero();
+            let mut lambda = (y_q - y_p) * alpha;
+            let one = pallas::Base::one();
+            match self.tamper {
+                Tamper::CompleteAddLambda => lambda += one,
+                Tamper::CompleteAddAlpha => alpha += one,
+                Tamper::CompleteAddBeta => beta += one,
+                Tamper::CompleteAddGamma => gamma += one,
+                Tamper::CompleteAddDelta => delta += one,
+                _ => unreachable!("complete-add tamper variant"),
+            }
+
+            layouter.assign_region(
+                || "tampered complete addition",
+                |mut region| {
+                    config.fixed_base_30.q_add_complete.enable(&mut region, 0)?;
+                    for (name, column, row, value) in [
+                        ("x_p", config.fixed_base_30.advices[0], 0, x_p),
+                        ("y_p", config.fixed_base_30.advices[1], 0, y_p),
+                        ("x_q", config.fixed_base_30.advices[2], 0, x_q),
+                        ("y_q", config.fixed_base_30.advices[3], 0, y_q),
+                        ("x_r", config.fixed_base_30.advices[2], 1, x_r),
+                        ("y_r", config.fixed_base_30.advices[3], 1, y_r),
+                        ("lambda", config.fixed_base_30.advices[4], 0, lambda),
+                        ("alpha", config.fixed_base_30.advices[5], 0, alpha),
+                        ("beta", config.fixed_base_30.advices[6], 0, beta),
+                        ("gamma", config.fixed_base_30.advices[7], 0, gamma),
+                        ("delta", config.fixed_base_30.advices[8], 0, delta),
+                    ] {
+                        region.assign_advice(|| name, column, row, || Value::known(value))?;
+                    }
+                    Ok(())
+                },
+            )
+        }
+
+        fn assign_running_sum(
+            &self,
+            config: &TamperConfig,
+            mut layouter: impl Layouter<pallas::Base>,
+        ) -> Result<(), Error> {
+            layouter.assign_region(
+                || "out-of-range running-sum word",
+                |mut region| {
+                    config.q_range_check.enable(&mut region, 0)?;
+                    region.assign_advice(
+                        || "z_cur",
+                        config.fixed_base_30.advices[4],
+                        0,
+                        || Value::known(pallas::Base::from(1 << WINDOW_BITS)),
+                    )?;
+                    region.assign_advice(
+                        || "z_next",
+                        config.fixed_base_30.advices[4],
+                        1,
+                        || Value::known(pallas::Base::zero()),
+                    )?;
+                    Ok(())
+                },
+            )
+        }
+    }
+
+    impl Circuit<pallas::Base> for TamperCircuit {
+        type Config = TamperConfig;
+        type FloorPlanner = SimpleFloorPlanner;
+
+        fn without_witnesses(&self) -> Self {
+            self.clone()
+        }
+
+        fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
+            let advices = core::array::from_fn(|_| meta.advice_column());
+            for advice in advices {
+                meta.enable_equality(advice);
+            }
+            let lagrange_coeffs = core::array::from_fn(|_| meta.fixed_column());
+            let fixed_base_30 =
+                SpendAuthGFixedBase30Config::configure(meta, advices, lagrange_coeffs);
+            let q_range_check = meta.selector();
+            RunningSumConfig::<pallas::Base, WINDOW_BITS>::configure(
+                meta,
+                q_range_check,
+                advices[4],
+            );
+
+            TamperConfig {
+                fixed_base_30,
+                q_range_check,
+            }
+        }
+
+        fn synthesize(
+            &self,
+            config: Self::Config,
+            layouter: impl Layouter<pallas::Base>,
+        ) -> Result<(), Error> {
+            match self.tamper {
+                Tamper::SelectedY | Tamper::SelectedU => {
+                    self.assign_selected_point(&config, layouter)
+                }
+                Tamper::IncompleteAddX => self.assign_incomplete_add(&config, layouter),
+                Tamper::CompleteAddLambda
+                | Tamper::CompleteAddAlpha
+                | Tamper::CompleteAddBeta
+                | Tamper::CompleteAddGamma
+                | Tamper::CompleteAddDelta => self.assign_complete_add(&config, layouter),
+                Tamper::RunningSumWord => self.assign_running_sum(&config, layouter),
+            }
+        }
+    }
+
     fn point_coordinates(point: pallas::Affine) -> (pallas::Base, pallas::Base) {
         let coordinates = point.coordinates();
         if bool::from(coordinates.is_some()) {
@@ -768,13 +928,11 @@ mod tests {
         share: u64,
         addend: pallas::Affine,
         expected: pallas::Affine,
-        tamper: Option<Tamper>,
     ) -> MockProver<pallas::Base> {
         let expected = point_coordinates(expected);
         let circuit = TestCircuit {
             share: Value::known(pallas::Base::from(share)),
             addend: Value::known(point_coordinates(addend)),
-            tamper,
         };
         MockProver::run(TEST_K, &circuit, vec![vec![expected.0, expected.1]]).unwrap()
     }
@@ -783,25 +941,14 @@ mod tests {
         let generator = spend_auth_g::generator();
         let addend = (generator * pallas::Scalar::from(13)).to_affine();
         let expected = (generator * pallas::Scalar::from(share) + addend).to_affine();
-        let prover = run_mul_add(share, addend, expected, None);
+        let prover = run_mul_add(share, addend, expected);
 
         assert_eq!(prover.verify().is_ok(), should_succeed);
     }
 
     fn assert_tamper_fails_at_gate(tamper: Tamper, expected_gate: &str) {
-        let prover = if tamper == Tamper::RunningSumWord {
-            let circuit = TestCircuit {
-                tamper: Some(tamper),
-                ..TestCircuit::default()
-            };
-            MockProver::run(TEST_K, &circuit, vec![vec![]]).unwrap()
-        } else {
-            let generator = spend_auth_g::generator();
-            let addend = (generator * pallas::Scalar::from(13)).to_affine();
-            let expected = (generator * pallas::Scalar::from(TEST_SHARE) + addend).to_affine();
-            run_mul_add(TEST_SHARE, addend, expected, Some(tamper))
-        };
-
+        let circuit = TamperCircuit { tamper };
+        let prover = MockProver::run(TEST_K, &circuit, vec![]).unwrap();
         let failures = prover.verify().expect_err("tampered witness must fail");
         let failures = failures
             .iter()
@@ -860,7 +1007,6 @@ mod tests {
             TEST_SHARE,
             magnitude.to_affine(),
             (magnitude + magnitude).to_affine(),
-            None,
         );
 
         assert_eq!(prover.verify(), Ok(()));
@@ -874,7 +1020,6 @@ mod tests {
             TEST_SHARE,
             (-magnitude).to_affine(),
             pallas::Point::identity().to_affine(),
-            None,
         );
 
         assert_eq!(prover.verify(), Ok(()));
@@ -888,7 +1033,6 @@ mod tests {
             TEST_SHARE,
             pallas::Point::identity().to_affine(),
             magnitude.to_affine(),
-            None,
         );
 
         assert_eq!(prover.verify(), Ok(()));
