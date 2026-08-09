@@ -194,6 +194,69 @@ pub(crate) fn synthesize_poseidon_merkle_path_with_configs<
     label: &str,
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
     assert!(LANES > 0, "a Poseidon Merkle path needs at least one lane");
+    synthesize_poseidon_merkle_path_with_config_selector(
+        swap_gate,
+        poseidon_configs,
+        |level| (level + lane_offset) % LANES,
+        layouter,
+        advice_0,
+        leaf,
+        position,
+        path,
+        label,
+    )
+}
+
+/// Synthesizes a Poseidon Merkle path using an explicit configuration for each
+/// level. Multiple schedule entries may select the same physical configuration.
+pub(crate) fn synthesize_poseidon_merkle_path_with_config_schedule<
+    const DEPTH: usize,
+    const CONFIGS: usize,
+>(
+    swap_gate: &MerkleSwapGate,
+    poseidon_configs: &[PoseidonConfig<pallas::Base, 3, 2>; CONFIGS],
+    config_schedule: &[usize; DEPTH],
+    layouter: &mut impl Layouter<pallas::Base>,
+    advice_0: Column<Advice>,
+    leaf: AssignedCell<pallas::Base, pallas::Base>,
+    position: Value<u32>,
+    path: Value<[pallas::Base; DEPTH]>,
+    label: &str,
+) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
+    assert!(
+        CONFIGS > 0,
+        "a Poseidon Merkle path needs at least one configuration"
+    );
+    assert!(
+        config_schedule.iter().all(|config| *config < CONFIGS),
+        "Poseidon Merkle schedule references a missing configuration"
+    );
+
+    synthesize_poseidon_merkle_path_with_config_selector(
+        swap_gate,
+        poseidon_configs,
+        |level| config_schedule[level],
+        layouter,
+        advice_0,
+        leaf,
+        position,
+        path,
+        label,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn synthesize_poseidon_merkle_path_with_config_selector<const DEPTH: usize>(
+    swap_gate: &MerkleSwapGate,
+    poseidon_configs: &[PoseidonConfig<pallas::Base, 3, 2>],
+    config_for_level: impl Fn(usize) -> usize,
+    layouter: &mut impl Layouter<pallas::Base>,
+    advice_0: Column<Advice>,
+    leaf: AssignedCell<pallas::Base, pallas::Base>,
+    position: Value<u32>,
+    path: Value<[pallas::Base; DEPTH]>,
+    label: &str,
+) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
     let mut current = leaf;
 
     for i in 0..DEPTH {
@@ -215,7 +278,7 @@ pub(crate) fn synthesize_poseidon_merkle_path_with_configs<
         )?;
 
         let parent = poseidon_hash_in_circuit(
-            PoseidonChip::construct(poseidon_configs[(i + lane_offset) % LANES].clone()),
+            PoseidonChip::construct(poseidon_configs[config_for_level(i)].clone()),
             layouter.namespace(|| format!("{label} hash level {i}")),
             "Poseidon(left, right)",
             [left, right],
