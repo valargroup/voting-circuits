@@ -34,7 +34,7 @@ use rand::{CryptoRng, RngCore};
 use super::{
     circuit::{
         self, note_rcm_scalar, rcm_scalar_for_note_parts, rho_binding_hash, van_commitment_hash,
-        NoteSlotWitness,
+        NoteSlotWitness, KEYSTONE_NOTE_VALUE,
     },
     imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
 };
@@ -872,7 +872,7 @@ pub fn build_delegation_bundle(
             .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
         Note::from_parts(
             sender_address,
-            NoteValue::from_raw(1),
+            NoteValue::from_raw(KEYSTONE_NOTE_VALUE),
             signed_rho,
             rseed,
             DELEGATION_NOTE_VERSION,
@@ -882,7 +882,7 @@ pub fn build_delegation_bundle(
     } else {
         Note::new(
             sender_address,
-            NoteValue::from_raw(1),
+            NoteValue::from_raw(KEYSTONE_NOTE_VALUE),
             signed_rho,
             DELEGATION_NOTE_VERSION,
             &mut *rng,
@@ -2196,7 +2196,7 @@ mod tests {
         let rseed_signed = random_seed_for_rho(&signed_rho, &mut rng);
         let expected_signed_note = Note::from_parts(
             sender_address,
-            NoteValue::from_raw(1),
+            NoteValue::from_raw(KEYSTONE_NOTE_VALUE),
             signed_rho,
             rseed_signed,
             DELEGATION_NOTE_VERSION,

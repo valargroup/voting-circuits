@@ -1,6 +1,6 @@
 //! The Delegation circuit implementation.
 //!
-//! A single circuit proving all 14 conditions of the delegation ZKP:
+//! A single circuit proving all 15 conditions of the delegation ZKP:
 //!
 //! The "signed" / keystone note (conditions 1–6) is a synthetic
 //! Ironwood spend shape constructed locally by the voting client so that
@@ -13,7 +13,7 @@
 //! `wallet → rk → nf_signed → rho_signed → van_comm` (binding) and the
 //! Ironwood Action shape mimicry that surrounds it.
 //!
-//! - **Condition 1**: Signed note commitment integrity.
+//! - **Condition 1**: Signed note commitment integrity and nonzero value.
 //! - **Condition 2**: Nullifier integrity.
 //! - **Condition 3**: Rho binding — keystone rho = Poseidon(cmx_1..5, van_comm, vote_round_id).
 //! - **Condition 4**: Spend authority.
@@ -90,7 +90,7 @@ use super::{
     imt::{gov_auth_domain_tag, IMT_DEPTH},
 };
 use crate::{
-    gadgets::{address_ownership::prove_address_ownership, van_integrity},
+    gadgets::{address_ownership::prove_address_ownership, nonzero::NonZeroConfig, van_integrity},
     params::{BALLOT_DIVISOR, RANGE_CHECK_WORD_BITS, SHARE_VALUE_BITS, SHARE_VALUE_RANGE_WORDS},
     protocol_hash::poseidon_hash_in_circuit,
 };
@@ -114,6 +114,9 @@ const BALLOT_REMAINDER_SHIFT: usize = SHARE_VALUE_BITS - BALLOT_REMAINDER_BITS;
 
 /// Dedicated column lanes shared by Orchard Merkle and IMT Poseidon paths.
 const MERKLE_LANES: usize = 4;
+
+/// Signed-note value chosen by the honest builder for hardware-wallet display.
+pub(super) const KEYSTONE_NOTE_VALUE: u64 = 1;
 
 pub(super) fn rcm_scalar_for_note_parts(
     version: NoteVersion,
@@ -300,6 +303,9 @@ pub struct Config {
     commit_ivk_config: CommitIvkConfig,
     // Configuration for decomposition and canonicity checking for the signed note's NoteCommit.
     signed_note_commit_config: NoteCommitConfig,
+    // Rejects a zero-valued signed note so hardware-wallet authorization cannot
+    // be hidden by the wallet's zero-value-spend UI behavior.
+    signed_value_nonzero: NonZeroConfig,
     // Configuration for decomposition and canonicity checking for the output note's NoteCommit.
     new_note_commit_config: NoteCommitConfig,
     // Range check configuration for the 10-bit lookup table.
@@ -424,6 +430,7 @@ pub struct Circuit {
     rivk: Value<CommitIvkRandomness>,
     rivk_internal: Value<CommitIvkRandomness>,
     rcm_signed: Value<pallas::Scalar>,
+    v_signed: Value<NoteValue>,
     g_d_signed: Value<NonIdentityPallasPoint>,
     pk_d_signed: Value<DiversifiedTransmissionKey>,
     // Output note witnesses (condition 6).
@@ -465,6 +472,7 @@ impl Circuit {
             rivk: Value::known(fvk.rivk(Scope::External)),
             rivk_internal: Value::known(fvk.rivk(Scope::Internal)),
             rcm_signed: Value::known(rcm_signed),
+            v_signed: Value::known(note.value()),
             g_d_signed: Value::known(sender_address.g_d()),
             pk_d_signed: Value::known(*sender_address.pk_d()),
             ..Default::default()
@@ -743,6 +751,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Configuration for decomposition and canonicity checking for the signed note's NoteCommit.
         let signed_note_commit_config =
             NoteCommitChip::configure(meta, advices, sinsemilla_config_1.clone());
+        let signed_value_nonzero = NonZeroConfig::configure(meta, [advices[0], advices[1]]);
 
         // Configuration for decomposition and canonicity checking for the output note's NoteCommit.
         let new_note_commit_config =
@@ -759,6 +768,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             sinsemilla_config_2,
             commit_ivk_config,
             signed_note_commit_config,
+            signed_value_nonzero,
             new_note_commit_config,
             range_check,
             merkle_configs,
@@ -1001,22 +1011,24 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 self.rcm_signed.as_ref().copied(),
             )?;
 
-            // The keystone note's value is 1 zatoshi by convention, so Keystone-class
-            // hardware wallets render the wrapping Ironwood Action for user approval.
-            // This is not an independent circuit-level value check: nf_signed is a
-            // public input supplied by the same host that computes it from v_signed.
-            // The load-bearing check is the wallet UI and user approval of "1 zat";
-            // zero-value spends are not rendered by Keystone. See `delegation/README.md`
-            // ("Integration: the Keystone (signed) note is synthetic").
+            // The honest builder uses 1 zatoshi so Keystone-class hardware
+            // wallets render the wrapping Ironwood Action for user approval.
+            // The circuit permits any nonzero signed value, but rejects zero
+            // because Keystone does not render zero-value spends.
             let v_signed = assign_free_advice(
-                layouter.namespace(|| "v_signed = 1"),
+                layouter.namespace(|| "witness v_signed"),
                 config.advices[0],
-                Value::known(NoteValue::from_raw(1)),
+                self.v_signed,
+            )?;
+            config.signed_value_nonzero.constrain_nonzero(
+                layouter.namespace(|| "v_signed != 0"),
+                "v_signed nonzero",
+                &v_signed,
             )?;
 
             // Compute NoteCommit from witness data.
             let derived_cm_signed = note_commit(
-                layouter.namespace(|| "NoteCommit_rcm_signed(g_d, pk_d, 1, rho, psi)"),
+                layouter.namespace(|| "NoteCommit_rcm_signed(g_d, pk_d, v, rho, psi)"),
                 config.sinsemilla_chip_1(),
                 config.ecc_chip(),
                 config.note_commit_chip_signed(),
@@ -2066,7 +2078,10 @@ mod tests {
     }
 
     /// Build a valid merged circuit with 1 real note + 4 padded notes.
-    fn make_test_data_with_alpha(alpha_override: Option<pallas::Scalar>) -> TestData {
+    fn make_test_data_with_overrides(
+        alpha_override: Option<pallas::Scalar>,
+        signed_value: NoteValue,
+    ) -> TestData {
         let mut rng = OsRng;
 
         let sk = SpendingKey::random(&mut rng);
@@ -2200,11 +2215,11 @@ mod tests {
             vote_round_id,
         );
 
-        // Create signed note with this rho (value = 1 per ZIP §Dummy Signed Note).
+        // Create the signed note with this rho.
         let sender_address = fvk.address_at(0u32, Scope::External);
         let signed_note = Note::new(
             sender_address,
-            NoteValue::from_raw(1),
+            signed_value,
             Rho::from_nf_old(Nullifier::from_inner(rho)),
             NoteVersion::V3,
             &mut rng,
@@ -2260,6 +2275,14 @@ mod tests {
         }
     }
 
+    fn make_test_data_with_alpha(alpha_override: Option<pallas::Scalar>) -> TestData {
+        make_test_data_with_overrides(alpha_override, NoteValue::from_raw(KEYSTONE_NOTE_VALUE))
+    }
+
+    fn make_test_data_with_signed_value(signed_value: NoteValue) -> TestData {
+        make_test_data_with_overrides(None, signed_value)
+    }
+
     fn make_test_data() -> TestData {
         make_test_data_with_alpha(None)
     }
@@ -2272,6 +2295,30 @@ mod tests {
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn happy_path() {
         let t = make_test_data();
+        let pi = t.instance.to_halo2_instance();
+
+        let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
+    /// A fully consistent zero-valued keystone note must still be rejected so
+    /// the authorization cannot be hidden by a hardware wallet's UI.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn signed_value_zero_fails() {
+        let t = make_test_data_with_signed_value(NoteValue::ZERO);
+        let pi = t.instance.to_halo2_instance();
+
+        let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
+        assert_rejects(prover);
+    }
+
+    /// The proof relation requires a nonzero value, while the honest builder
+    /// separately chooses the one-zatoshi convention.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn signed_value_above_one_is_accepted_by_relation() {
+        let t = make_test_data_with_signed_value(NoteValue::from_raw(2));
         let pi = t.instance.to_halo2_instance();
 
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();

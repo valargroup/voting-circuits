@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Required the synthetic keystone note's signed value to be nonzero in the
+  delegation circuit, ensuring hardware-wallet authorization cannot be hidden
+  as a zero-value spend. This changes the delegation proving and verifying
+  keys.
 - Reduced the vote-proof circuit domain from K=13 to K=11 by splitting its El
   Gamal operations across two ten-column tracks and its shares hash across the
   primary and a four-column Poseidon track. This changes the vote-proof
