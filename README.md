@@ -50,7 +50,7 @@ src/
 │   └── vote_commitment.rs        #   Vote commitment hash
 ├── shares_hash.rs                # Shares-hash gadget (shared by ZKP 2 & 3)
 │
-├── delegation/                   # ZKP #1 — Delegation circuit (K=14)
+├── delegation/                   # ZKP #1 — Delegation circuit (K=13)
 │   ├── circuit.rs                #   15-condition halo2 circuit
 │   ├── builder.rs                #   Multi-note bundle builder (up to 5 notes)
 │   ├── prove.rs                  #   Prove / verify helpers
@@ -92,8 +92,8 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 | Circuit | K | Rows | Conditions | Spec |
 |---------|---|------|------------|------|
-| Delegation | 14 | 16 384 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) |
-| Vote Proof | 13 | 8 192 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
+| Delegation | 13 | 8 192 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) |
+| Vote Proof | 11 | 2 048 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
 | Share Reveal | 11 | 2 048 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
 
 ## Dependency on `orchard`
@@ -136,7 +136,13 @@ cargo test row_budget -- --ignored --nocapture
 cargo test cost_breakdown -- --ignored --nocapture
 ```
 
-The long tests are slow because they synthesize Halo 2 circuits and run `MockProver` verification over the configured `K` domain (`delegation` uses K=14, while `vote_proof` and `share_reveal` use K=11). Some gadget stress tests are also long-running because they repeat many `MockProver` checks, for example one K=12 shares-hash test runs 16 separate prover checks. The real proof roundtrip also performs proving-key/proof generation and verification, so it is intentionally outside the default unit-test path.
+The long tests are slow because they synthesize Halo 2 circuits and run
+`MockProver` verification over the configured `K` domain (`delegation` uses
+K=13, while `vote_proof` and `share_reveal` use K=11). Some gadget stress
+tests are also long-running because they repeat many `MockProver` checks, for
+example one K=12 shares-hash test runs 16 separate prover checks. The real
+proof roundtrip also performs proving-key/proof generation and verification,
+so it is intentionally outside the default unit-test path.
 
 ## Benchmarks
 
