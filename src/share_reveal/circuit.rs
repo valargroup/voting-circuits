@@ -359,9 +359,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // overlap Merkle hashes assigned to different column sets. The hash chain
         // is preserved by equality-constrained copies between configuration outputs.
         let merkle_advice: [Column<Advice>; 4] = core::array::from_fn(|_| meta.advice_column());
-        for col in &merkle_advice {
-            meta.enable_equality(*col);
-        }
+        // `Pow5Chip::configure` equality-enables the three state columns used
+        // for cross-region handoffs. The partial-S-box column is internal
+        // scratch space and must not be added to the permutation argument.
         let merkle_round_constants: [Column<Fixed>; 6] =
             core::array::from_fn(|_| meta.fixed_column());
         let merkle_poseidon_config = PoseidonChip::configure::<poseidon::P128Pow5T3>(
