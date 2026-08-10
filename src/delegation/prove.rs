@@ -1,7 +1,7 @@
 //! Real Halo2 prove/verify for the delegation circuit (ZKP #1).
 //!
 //! Follows the same pattern as `sdk/circuits/src/toy.rs` but for the full
-//! 15-condition delegation circuit at K=13.
+//! 15-condition delegation circuit at K=12.
 
 use std::{string::String, vec::Vec};
 
@@ -33,7 +33,7 @@ static DELEGATION_PK_CACHE: std::sync::OnceLock<Result<DelegationKeys, String>> 
 /// Generate the IPA params (SRS) for the delegation circuit.
 /// Deterministic for a given `K`.
 ///
-/// **Expensive**: K=13 params generation takes several seconds.
+/// **Expensive**: K=12 params generation takes several seconds.
 /// Callers should cache the result.
 pub fn delegation_params() -> Params<EqAffine> {
     Params::new(K)
@@ -210,7 +210,7 @@ mod prove_tests {
     }
 
     #[test]
-    #[ignore = "long-running K=13 proof keygen; run when touching delegation proof creation"]
+    #[ignore = "long-running K=12 proof keygen; run when touching delegation proof creation"]
     fn create_delegation_proof_returns_err_for_missing_witnesses() {
         let instance = minimal_instance();
         let err = create_delegation_proof(Circuit::default(), &instance).unwrap_err();
@@ -223,7 +223,7 @@ mod prove_tests {
     // either the circuit shape changed (and the VK must be regenerated and
     // redistributed) or an unintended drift has been introduced.
     #[test]
-    #[ignore = "TODO(sean): runs K=13 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
+    #[ignore = "TODO(sean): runs K=12 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
     fn vk_fingerprint_unchanged() {
         let (_, _, vk) = delegation_cached_keys().expect("delegation keys");
         let pinned = format!("{:?}", vk.pinned());
@@ -233,9 +233,9 @@ mod prove_tests {
         let actual: &[u8] = fingerprint.as_bytes();
 
         let expected: [u8; 32] = [
-            0x6d, 0x84, 0xb4, 0xf4, 0x47, 0xc5, 0xd1, 0xcf, 0x3b, 0x95, 0x13, 0x33, 0x51, 0x02,
-            0x01, 0xd2, 0x70, 0x82, 0xc9, 0x4b, 0x99, 0xd7, 0x73, 0x77, 0xea, 0x68, 0x59, 0xda,
-            0xd6, 0x88, 0x23, 0x24,
+            0xcf, 0x33, 0x0f, 0xed, 0x5b, 0x2e, 0xff, 0x61, 0x63, 0x38, 0xa0, 0x2b, 0xb4, 0xca,
+            0x0e, 0x49, 0x0d, 0x2c, 0xd2, 0xcb, 0xee, 0x01, 0x87, 0x35, 0x87, 0x77, 0xe8, 0x2c,
+            0x2a, 0x04, 0x82, 0xd6,
         ];
 
         assert_eq!(

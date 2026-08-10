@@ -980,7 +980,7 @@ mod tests {
     use std::cell::{Cell, RefCell};
 
     /// Merged circuit K value.
-    const K: u32 = 14;
+    const K: u32 = circuit::K;
 
     #[derive(Debug)]
     struct RecordingImtProvider {
@@ -2007,6 +2007,15 @@ mod tests {
                 Scope::External,
             ],
         );
+    }
+
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn test_five_real_notes_satisfy_circuit() {
+        // Exercise every note slot with a nonzero value so each slot's
+        // Merkle-root binding is checked by the circuit.
+        let bundle = build_bundle(&[2_500_000; 5], &[Scope::External; 5]);
+        verify_bundle(&bundle);
     }
 
     #[test]

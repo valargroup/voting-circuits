@@ -161,6 +161,39 @@ pub(crate) fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
     path: Value<[pallas::Base; DEPTH]>,
     label: &str,
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
+    let poseidon_configs = [poseidon_config.clone()];
+    synthesize_poseidon_merkle_path_with_configs(
+        swap_gate,
+        &poseidon_configs,
+        0,
+        layouter,
+        advice_0,
+        leaf,
+        position,
+        path,
+        label,
+    )
+}
+
+/// Synthesizes a Poseidon Merkle path while rotating hash levels across
+/// independent Poseidon configurations.
+///
+/// Level `i` uses configuration `(i + lane_offset) % LANES`.
+pub(crate) fn synthesize_poseidon_merkle_path_with_configs<
+    const DEPTH: usize,
+    const LANES: usize,
+>(
+    swap_gate: &MerkleSwapGate,
+    poseidon_configs: &[PoseidonConfig<pallas::Base, 3, 2>; LANES],
+    lane_offset: usize,
+    layouter: &mut impl Layouter<pallas::Base>,
+    advice_0: Column<Advice>,
+    leaf: AssignedCell<pallas::Base, pallas::Base>,
+    position: Value<u32>,
+    path: Value<[pallas::Base; DEPTH]>,
+    label: &str,
+) -> Result<AssignedCell<pallas::Base, pallas::Base>, plonk::Error> {
+    assert!(LANES > 0, "a Poseidon Merkle path needs at least one lane");
     let mut current = leaf;
 
     for i in 0..DEPTH {
@@ -182,7 +215,7 @@ pub(crate) fn synthesize_poseidon_merkle_path<const DEPTH: usize>(
         )?;
 
         let parent = poseidon_hash_in_circuit(
-            PoseidonChip::construct(poseidon_config.clone()),
+            PoseidonChip::construct(poseidon_configs[(i + lane_offset) % LANES].clone()),
             layouter.namespace(|| format!("{label} hash level {i}")),
             "Poseidon(left, right)",
             [left, right],
