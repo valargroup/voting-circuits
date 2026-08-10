@@ -594,9 +594,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             meta.enable_equality(*col);
         }
         let hash_advices: [Column<Advice>; 4] = core::array::from_fn(|_| meta.advice_column());
-        for col in &hash_advices {
-            meta.enable_equality(*col);
-        }
+        // `Pow5Chip::configure` equality-enables the three state columns used
+        // for cross-region handoffs. The partial-S-box column is internal
+        // scratch space and must not be added to the permutation argument.
 
         // Instance column for public inputs.
         let primary = meta.instance_column();
