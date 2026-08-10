@@ -100,10 +100,10 @@ use crate::{
 
 /// Circuit size (2^K rows).
 ///
-/// K=12 (4,096 rows). Condition 11 uses a second set of ten advice columns so
-/// that the `V1` floor planner can place its El Gamal regions alongside the
-/// rest of the circuit. `CircuitCost::measure` reports a floor-planner
-/// high-water mark of **3,956 rows** (96.6%), leaving 140 rows of headroom.
+/// K=11 (2,048 rows). Condition 11 is divided between two sets of ten advice
+/// columns, and condition 10 uses a separate four-column Poseidon track.
+/// [`halo2_proofs::dev::CircuitCost`] reports a 2,021-row high-water mark,
+/// leaving 27 rows of headroom.
 ///
 /// Key contributors (rough per-region heights, not per-column sums):
 /// - 24-level Merkle path: 24 Poseidon regions stacked sequentially — the
@@ -114,7 +114,13 @@ use crate::{
 ///
 /// Run the `row_budget` diagnostic to re-measure after circuit changes:
 ///   `cargo test vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
-pub const K: u32 = 12;
+pub const K: u32 = 11;
+
+/// First share index assigned to the second El Gamal track.
+const ELGAMAL_TRACK_SPLIT: usize = 8;
+
+/// Number of condition-10 share hashes assigned to the primary track.
+const PRIMARY_SHARES_HASH_COUNT: usize = 2;
 
 pub(super) use van_integrity::DOMAIN_VAN;
 pub(super) use vote_commitment::DOMAIN_VC;
@@ -248,6 +254,8 @@ pub struct Config {
     /// Separating these from [`Self::advices`] lets the floor planner overlap
     /// the encryption regions with the rest of the circuit.
     elgamal_advices: [Column<Advice>; 10],
+    /// Second dedicated El Gamal track for encryptions 8 through 15.
+    elgamal_advices_b: [Column<Advice>; 10],
     /// Poseidon hash chip configuration.
     ///
     /// P128Pow5T3 with width 3, rate 2. Used for VAN integrity (condition 2),
@@ -255,6 +263,8 @@ pub struct Config {
     /// vote commitment Merkle path (condition 1), and vote commitment
     /// integrity (conditions 10, 12).
     poseidon_config: PoseidonConfig<pallas::Base, 3, 2>,
+    /// Poseidon configuration on the dedicated condition-10 track.
+    hash_poseidon_config: PoseidonConfig<pallas::Base, 3, 2>,
     /// AddChip: constrains `a + b = c` on a single row.
     ///
     /// Uses advices[7] (a), advices[8] (b), advices[6] (c), matching
@@ -271,6 +281,8 @@ pub struct Config {
     ecc_config: EccConfig<OrchardFixedBases>,
     /// ECC configuration on [`Self::elgamal_advices`] for condition 11.
     elgamal_ecc_config: EccConfig<OrchardFixedBases>,
+    /// ECC configuration on [`Self::elgamal_advices_b`].
+    elgamal_ecc_config_b: EccConfig<OrchardFixedBases>,
     /// Sinsemilla chip configuration (condition 3: CommitIvk requires Sinsemilla).
     ///
     /// Uses advices[0..5] for Sinsemilla message hashing, advices[6] for
@@ -300,8 +312,12 @@ pub struct Config {
     authority_decrement: AuthorityDecrementConfig,
     /// Inverse-witness checks on the dedicated El Gamal columns.
     nonzero: NonZeroConfig,
+    /// Inverse-witness checks on the second El Gamal track.
+    nonzero_b: NonZeroConfig,
     /// Unsigned 30-bit fixed-base multiplication used for El Gamal C2 values.
     spend_auth_g_fixed_base_30: SpendAuthGFixedBase30Config,
+    /// Unsigned 30-bit fixed-base multiplication on the second El Gamal track.
+    spend_auth_g_fixed_base_30_b: SpendAuthGFixedBase30Config,
 }
 
 impl Config {
@@ -311,6 +327,11 @@ impl Config {
     /// per permutation — halves the number of rounds vs rate 1).
     fn poseidon_chip(&self) -> PoseidonChip<pallas::Base, 3, 2> {
         PoseidonChip::construct(self.poseidon_config.clone())
+    }
+
+    /// Constructs a Poseidon chip on the condition-10 track.
+    fn hash_poseidon_chip(&self) -> PoseidonChip<pallas::Base, 3, 2> {
+        PoseidonChip::construct(self.hash_poseidon_config.clone())
     }
 
     /// Constructs an AddChip for field element addition (`c = a + b`).
@@ -327,6 +348,14 @@ impl Config {
     fn elgamal_ecc_chip(&self) -> EccChip<OrchardFixedBases> {
         EccChip::construct(
             self.elgamal_ecc_config.clone(),
+            CircuitVersion::AnchoredBase,
+        )
+    }
+
+    /// Constructs the ECC chip used by the second condition-11 track.
+    fn elgamal_ecc_chip_b(&self) -> EccChip<OrchardFixedBases> {
+        EccChip::construct(
+            self.elgamal_ecc_config_b.clone(),
             CircuitVersion::AnchoredBase,
         )
     }
@@ -536,10 +565,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
     fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
         // The primary 10 advice columns match the delegation circuit layout.
-        // A second set of 10 columns lets condition 11 run alongside the
-        // primary layout at K=12. Each ECC chip requires all 10 columns for its
-        // internal scalar-multiplication gates. The remaining chips tile
-        // within the primary 10-column window:
+        // Two additional sets of 10 columns split condition 11 across parallel
+        // ECC tracks at K=11. Each ECC chip requires all 10 columns for its
+        // internal scalar-multiplication gates. Four more columns hold the
+        // condition-10 Poseidon track. The remaining chips tile within the
+        // primary 10-column window:
         //
         //   advices[0..5]  — general witness assignment, Sinsemilla pair 1
         //                    message columns, and the Merkle swap gate
@@ -558,6 +588,15 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         for col in &elgamal_advices {
             meta.enable_equality(*col);
         }
+        let elgamal_advices_b: [Column<Advice>; 10] =
+            core::array::from_fn(|_| meta.advice_column());
+        for col in &elgamal_advices_b {
+            meta.enable_equality(*col);
+        }
+        let hash_advices: [Column<Advice>; 4] = core::array::from_fn(|_| meta.advice_column());
+        // `Pow5Chip::configure` equality-enables the three state columns used
+        // for cross-region handoffs. The partial-S-box column is internal
+        // scratch space and must not be added to the permutation argument.
 
         // Instance column for public inputs.
         let primary = meta.instance_column();
@@ -598,6 +637,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let range_check = LookupRangeCheckConfig::configure(meta, advices[9], table_idx);
         let elgamal_range_check =
             LookupRangeCheckConfig::configure(meta, elgamal_advices[9], table_idx);
+        let elgamal_range_check_b =
+            LookupRangeCheckConfig::configure(meta, elgamal_advices_b[9], table_idx);
 
         // Primary ECC chip for conditions 3 and 4. It shares columns with
         // Poseidon per the delegation circuit layout. Condition 11 gets a
@@ -614,6 +655,19 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         );
         let spend_auth_g_fixed_base_30 =
             SpendAuthGFixedBase30Config::configure(meta, elgamal_advices, elgamal_lagrange_coeffs);
+        let elgamal_lagrange_coeffs_b: [Column<Fixed>; 8] =
+            core::array::from_fn(|_| meta.fixed_column());
+        let elgamal_ecc_config_b = EccChip::<OrchardFixedBases>::configure(
+            meta,
+            elgamal_advices_b,
+            elgamal_lagrange_coeffs_b,
+            elgamal_range_check_b,
+        );
+        let spend_auth_g_fixed_base_30_b = SpendAuthGFixedBase30Config::configure(
+            meta,
+            elgamal_advices_b,
+            elgamal_lagrange_coeffs_b,
+        );
 
         // Sinsemilla chip: required by CommitIvk for condition 3.
         // Uses advices[0..5] for Sinsemilla message hashing, advices[6] for
@@ -644,6 +698,15 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             rc_a,
             rc_b,
         );
+        let hash_round_constants: [Column<Fixed>; 6] =
+            core::array::from_fn(|_| meta.fixed_column());
+        let hash_poseidon_config = PoseidonChip::configure::<poseidon::P128Pow5T3>(
+            meta,
+            hash_advices[..3].try_into().unwrap(),
+            hash_advices[3],
+            hash_round_constants[..3].try_into().unwrap(),
+            hash_round_constants[3..].try_into().unwrap(),
+        );
 
         // Merkle conditional swap gate (condition 1).
         let merkle_swap = MerkleSwapGate::configure(
@@ -654,22 +717,29 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Condition 6: Proposal Authority Decrement.
         let authority_decrement = AuthorityDecrementChip::configure(meta, advices);
         let nonzero = NonZeroConfig::configure(meta, [elgamal_advices[0], elgamal_advices[1]]);
+        let nonzero_b =
+            NonZeroConfig::configure(meta, [elgamal_advices_b[0], elgamal_advices_b[1]]);
 
         Config {
             primary,
             advices,
             elgamal_advices,
+            elgamal_advices_b,
             poseidon_config,
+            hash_poseidon_config,
             add_config,
             ecc_config,
             elgamal_ecc_config,
+            elgamal_ecc_config_b,
             sinsemilla_config,
             commit_ivk_config,
             range_check,
             merkle_swap,
             authority_decrement,
             nonzero,
+            nonzero_b,
             spend_auth_g_fixed_base_30,
+            spend_auth_g_fixed_base_30_b,
         }
     }
 
@@ -1238,6 +1308,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         let shares_hash = compute_shares_hash_in_circuit(
             || config.poseidon_chip(),
+            || config.hash_poseidon_chip(),
+            PRIMARY_SHARES_HASH_COUNT,
             layouter.namespace(|| "cond10: shares hash"),
             blinds,
             enc_c1,
@@ -1257,9 +1329,14 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         {
             let r_cells: [_; 16] = (0..16usize)
                 .map(|i| {
+                    let column = if i < ELGAMAL_TRACK_SPLIT {
+                        config.elgamal_advices[0]
+                    } else {
+                        config.elgamal_advices_b[0]
+                    };
                     assign_free_advice(
                         layouter.namespace(|| format!("witness r[{i}]")),
-                        config.elgamal_advices[0],
+                        column,
                         self.share_randomness[i],
                     )
                 })
@@ -1271,8 +1348,29 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 config.elgamal_ecc_chip(),
                 config.nonzero,
                 &config.spend_auth_g_fixed_base_30,
-                layouter.namespace(|| "cond11 El Gamal"),
-                "cond11",
+                layouter.namespace(|| "cond11 El Gamal first track"),
+                "cond11a",
+                0..ELGAMAL_TRACK_SPLIT,
+                self.ea_pk,
+                EaPkInstanceLoc {
+                    instance: config.primary,
+                    x_row: EA_PK_X_PUBLIC_OFFSET,
+                    y_row: EA_PK_Y_PUBLIC_OFFSET,
+                },
+                share_cells.clone(),
+                r_cells.clone(),
+                enc_c1_cond11.clone(),
+                enc_c2_cond11.clone(),
+                enc_c1_y_cond11.clone(),
+                enc_c2_y_cond11.clone(),
+            )?;
+            prove_elgamal_encryptions(
+                config.elgamal_ecc_chip_b(),
+                config.nonzero_b,
+                &config.spend_auth_g_fixed_base_30_b,
+                layouter.namespace(|| "cond11 El Gamal second track"),
+                "cond11b",
+                ELGAMAL_TRACK_SPLIT..16,
                 self.ea_pk,
                 EaPkInstanceLoc {
                     instance: config.primary,
@@ -3444,6 +3542,19 @@ mod tests {
 
         // Corrupt the randomness for share 0 — C1 will change.
         circuit.share_randomness[0] = Value::known(pallas::Base::from(9999u64));
+
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert!(prover.verify().is_err());
+    }
+
+    /// A corrupted randomness witness on the second El Gamal track should
+    /// fail condition 11.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn encryption_integrity_second_track_wrong_randomness_fails() {
+        let (mut circuit, instance) = make_test_data();
+
+        circuit.share_randomness[ELGAMAL_TRACK_SPLIT] = Value::known(pallas::Base::from(9999u64));
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
