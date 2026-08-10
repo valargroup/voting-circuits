@@ -13,6 +13,7 @@
   paths across four shared column lanes. This changes the delegation proving
   and verifying keys and increases the proof size to 11,328 bytes; downstream
   verifiers must deploy the new key and accept proofs larger than 8 KiB.
+
 ## v0.9.0-rc.3
 
 ### Changed
