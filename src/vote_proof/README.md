@@ -3,7 +3,7 @@
 Proves that a registered voter is casting a valid vote, without revealing which VAN they hold. The structure follows the delegation circuit's pattern (ZKP 1). Numbering matches Gov Steps V1 (ZKP #2): 12 conditions total; all conditions 1–12 are fully constrained in-circuit (condition 4 enforces spend authority `r_vpk = vsk.ak + [alpha_v]*G` in-circuit; the vote signature is verified out-of-circuit under `r_vpk`).
 
 **Public inputs:** 11 field elements.
-**Current K:** 13 (8,192 rows) — accommodates conditions 1–4 and 5–12, including the El Gamal integrity gadget, two-level shares hash, and the 10-bit lookup table. High-water mark is 7,753 rows (94.6% utilization).
+**Current K:** 12 (4,096 rows) — condition 11 uses a dedicated second set of 10 advice columns so its El Gamal regions overlap the rest of the circuit. The high-water mark is 3,956 rows (96.6% utilization), leaving 140 rows of headroom.
 
 **Authoritative hash sources:** this README is explanatory. Reusable hash
 preimages are owned by `crate::circuit::van_integrity` (VAN integrity),
@@ -52,7 +52,7 @@ Domain-tag encoding is owned by `crate::domain_tags`.
    * **domain_van_nullifier cell**: constant encoding of `"vote authority spend"` (condition 5).
    * **proposal_authority_new**: derived as `proposal_authority_old - (1 << proposal_id)` (condition 6).
    * **shares_hash**: two-level Poseidon hash over 16 blinded share commitments (condition 10). Internal wire consumed by condition 12. See `crate::shares_hash` for the authoritative preimage shape; y-coordinates defend against ciphertext sign-malleability.
-   * **SpendAuthG fixed-base tables**: El Gamal generator tables for the full `[r_i]*G` path and short `[v_i]*G` path (condition 11). Baked into the verification key.
+   * **SpendAuthG fixed-base tables**: El Gamal generator tables for the full `[r_i]*G` path and custom 30-bit `[v_i]*G` path (condition 11). Baked into the verification key.
    * **ea_pk_x, ea_pk_y cells**: copied from the instance column (condition 11). Each ea_pk `NonIdentityPoint` witness is constrained to match these cells.
    * **DOMAIN_VC constant**: `1`. Domain separation tag for Vote Commitments (condition 12). Baked into the verification key.
    * **proposal_id cell**: copied from the instance column (condition 12). Used in the vote commitment Poseidon hash.

@@ -528,7 +528,7 @@ fn deterministic_shuffle(
 /// This allows the client to re-derive the same secrets after a crash without
 /// persisting them.
 ///
-/// **Expensive**: K=13 proof generation takes ~30-60 seconds in release mode.
+/// **Expensive**: K=12 proof generation should run in release mode.
 pub fn build_vote_proof_from_delegation(
     sk: &SpendingKey,
     address_index: u32,
