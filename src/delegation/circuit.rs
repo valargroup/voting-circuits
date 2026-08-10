@@ -91,7 +91,7 @@ use super::{
 };
 use crate::{
     gadgets::{address_ownership::prove_address_ownership, van_integrity},
-    params::BALLOT_DIVISOR,
+    params::{BALLOT_DIVISOR, RANGE_CHECK_WORD_BITS, SHARE_VALUE_BITS, SHARE_VALUE_RANGE_WORDS},
     protocol_hash::poseidon_hash_in_circuit,
 };
 
@@ -105,6 +105,9 @@ use crate::{
 /// with Sinsemilla NoteCommit, Merkle paths, IMT non-membership, and
 /// ECC operations.
 pub const K: u32 = 14;
+
+const BALLOT_REMAINDER_BITS: usize = 24;
+const BALLOT_REMAINDER_SHIFT: usize = SHARE_VALUE_BITS - BALLOT_REMAINDER_BITS;
 
 pub(super) fn rcm_scalar_for_note_parts(
     version: NoteVersion,
@@ -296,7 +299,7 @@ pub struct Config {
     // Range check configuration for the 10-bit lookup table.
     // Used in condition 8 (ballot scaling) to range-check nb_minus_one (30 bits
     // direct) and remainder (24 bits via shift-by-2^6 into 30-bit check).
-    range_check: LookupRangeCheckConfig<pallas::Base, 10>,
+    range_check: LookupRangeCheckConfig<pallas::Base, RANGE_CHECK_WORD_BITS>,
     // Merkle config 1 — Sinsemilla-based Merkle path verification for condition 10.
     // Paired with sinsemilla_config_1. Uses advices[..5].
     merkle_config_1: MerkleConfig<OrchardHashDomains, OrchardCommitDomains, OrchardFixedBases>,
@@ -372,7 +375,7 @@ impl Config {
         MerkleChip::construct(self.merkle_config_2.clone())
     }
 
-    fn range_check_config(&self) -> LookupRangeCheckConfig<pallas::Base, 10> {
+    fn range_check_config(&self) -> LookupRangeCheckConfig<pallas::Base, RANGE_CHECK_WORD_BITS> {
         self.range_check
     }
 }
@@ -1398,20 +1401,25 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             // 24 is not a multiple of 10, so we multiply by 2^(30-24) = 2^6 = 64
             // and range-check the shifted value to 30 bits (3 words × 10 bits).
             // If remainder >= 2^24, then remainder * 64 >= 2^30, failing the check.
-            let shift_6 = assign_constant(
-                layouter.namespace(|| "2^6 shift constant"),
+            let remainder_shift = assign_constant(
+                layouter.namespace(|| format!("2^{BALLOT_REMAINDER_SHIFT} shift constant")),
                 config.advices[0],
-                pallas::Base::from(1u64 << 6),
+                pallas::Base::from(1u64 << BALLOT_REMAINDER_SHIFT),
             )?;
             let remainder_shifted = config.mul_chip().mul(
-                layouter.namespace(|| "remainder * 2^6"),
+                layouter.namespace(|| format!("remainder * 2^{BALLOT_REMAINDER_SHIFT}")),
                 &remainder,
-                &shift_6,
+                &remainder_shift,
             )?;
             config.range_check_config().copy_check(
-                layouter.namespace(|| "remainder * 2^6 < 2^30 (i.e. remainder < 2^24)"),
+                layouter.namespace(|| {
+                    format!(
+                        "remainder * 2^{BALLOT_REMAINDER_SHIFT} < 2^{SHARE_VALUE_BITS} \
+                         (i.e. remainder < 2^{BALLOT_REMAINDER_BITS})"
+                    )
+                }),
                 remainder_shifted,
-                3,    // num_words: 3 * 10 = 30 bits
+                SHARE_VALUE_RANGE_WORDS,
                 true, // strict: running sum terminates at 0
             )?;
 
@@ -1446,9 +1454,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             )?;
 
             config.range_check_config().copy_check(
-                layouter.namespace(|| "nb_minus_one < 2^30"),
+                layouter.namespace(|| format!("nb_minus_one < 2^{SHARE_VALUE_BITS}")),
                 nb_minus_one,
-                3,    // num_words: 3 * 10 = 30 bits
+                SHARE_VALUE_RANGE_WORDS,
                 true, // strict: running sum terminates at 0
             )?;
 

@@ -85,12 +85,12 @@ use crate::{
     domain_tags,
     gadgets::{
         address_ownership::{prove_address_ownership, spend_auth_g_mul},
-        elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc},
+        elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc, SpendAuthGFixedBase30Config},
         nonzero::NonZeroConfig,
         poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate},
         van_integrity, vote_commitment,
     },
-    params::VOTE_COMM_TREE_DEPTH,
+    params::{RANGE_CHECK_WORD_BITS, SHARE_VALUE_RANGE_WORDS, VOTE_COMM_TREE_DEPTH},
     shares_hash::compute_shares_hash_in_circuit,
 };
 
@@ -101,7 +101,7 @@ use crate::{
 /// Circuit size (2^K rows).
 ///
 /// K=13 (8,192 rows). `CircuitCost::measure` reports a floor-planner
-/// high-water mark of **7,945 rows** (97.0% of 8,192). The `V1` floor planner
+/// high-water mark of **7,753 rows** (94.6% of 8,192). The `V1` floor planner
 /// packs non-overlapping regions into the same row range across different
 /// columns, so the high-water mark is much lower than a naive sum-of-heights
 /// estimate.
@@ -283,7 +283,7 @@ pub struct Config {
     /// so `num_words` × 10 gives the total bit-width checked.
     /// Used in condition 6 to ensure authority values and diff are in [0, 2^16)
     /// (16-bit bitmask), and condition 9 to ensure each share is in `[0, 2^30)`.
-    range_check: LookupRangeCheckConfig<pallas::Base, 10>,
+    range_check: LookupRangeCheckConfig<pallas::Base, RANGE_CHECK_WORD_BITS>,
     /// Merkle conditional swap gate (condition 1).
     ///
     /// At each of the 24 Merkle tree levels, conditionally swaps
@@ -294,6 +294,8 @@ pub struct Config {
     authority_decrement: AuthorityDecrementConfig,
     /// Shared inverse-witness checks for zero randomizer/randomness rejection.
     nonzero: NonZeroConfig,
+    /// Unsigned 30-bit fixed-base multiplication used for El Gamal C2 values.
+    spend_auth_g_fixed_base_30: SpendAuthGFixedBase30Config,
 }
 
 impl Config {
@@ -328,7 +330,7 @@ impl Config {
     }
 
     /// Returns the range check configuration (10-bit words).
-    fn range_check_config(&self) -> LookupRangeCheckConfig<pallas::Base, 10> {
+    fn range_check_config(&self) -> LookupRangeCheckConfig<pallas::Base, RANGE_CHECK_WORD_BITS> {
         self.range_check
     }
 }
@@ -583,6 +585,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Shares columns with Poseidon per delegation circuit layout.
         let ecc_config =
             EccChip::<OrchardFixedBases>::configure(meta, advices, lagrange_coeffs, range_check);
+        let spend_auth_g_fixed_base_30 =
+            SpendAuthGFixedBase30Config::configure(meta, advices, lagrange_coeffs);
 
         // Sinsemilla chip: required by CommitIvk for condition 3.
         // Uses advices[0..5] for Sinsemilla message hashing, advices[6] for
@@ -636,6 +640,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             merkle_swap,
             authority_decrement,
             nonzero,
+            spend_auth_g_fixed_base_30,
         }
     }
 
@@ -1094,7 +1099,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Shares are denominated in ballots (1 ballot = 0.125 ZEC),
         // converted from zatoshi in ZKP #1's condition 8 (ballot
         // scaling). Uses 3 × 10-bit lookup words with strict mode,
-        // giving [0, 2^30). halo2_gadgets v0.3's `short_range_check`
+        // giving [0, 2^30). halo2_gadgets v0.5's `short_range_check`
         // is private, so exact non-10-bit-aligned bounds (e.g. 24-bit)
         // are unavailable. 2^30 ballots ≈ 134M ZEC — well above the
         // 21M ZEC supply — so the bound is never binding in practice.
@@ -1110,7 +1115,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             config.range_check_config().copy_check(
                 layouter.namespace(|| format!("share_{i} < 2^30")),
                 cell.clone(),
-                3,    // num_words: 3 × 10 = 30 bits
+                SHARE_VALUE_RANGE_WORDS,
                 true, // strict: running sum terminates at 0
             )?;
         }
@@ -1236,6 +1241,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             prove_elgamal_encryptions(
                 ecc_chip.clone(),
                 config.nonzero,
+                &config.spend_auth_g_fixed_base_30,
                 layouter.namespace(|| "cond11 El Gamal"),
                 "cond11",
                 self.ea_pk,
@@ -1244,7 +1250,6 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                     x_row: EA_PK_X_PUBLIC_OFFSET,
                     y_row: EA_PK_Y_PUBLIC_OFFSET,
                 },
-                config.advices[0],
                 share_cells,
                 r_cells,
                 enc_c1_cond11,
@@ -1454,6 +1459,7 @@ impl Instance {
 mod tests {
     use super::*;
     use crate::gadgets::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
+    use crate::params::SHARE_VALUE_LIMIT;
     use crate::protocol_hash::poseidon_hash_2;
     use crate::shares_hash::{hash_share_commitment_in_circuit, share_commitment, shares_hash};
     use core::iter;
@@ -2882,7 +2888,7 @@ mod tests {
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn shares_range_max_valid() {
-        let max_share = pallas::Base::from((1u64 << 30) - 1); // 1,073,741,823
+        let max_share = pallas::Base::from(SHARE_VALUE_LIMIT - 1); // 1,073,741,823
         let total = (0..16).fold(pallas::Base::zero(), |acc, _| acc + max_share);
 
         let mut rng = OsRng;
@@ -2923,7 +2929,7 @@ mod tests {
         );
 
         // Condition 11: real El Gamal encryption with max-value shares.
-        let max_share_u64 = (1u64 << 30) - 1;
+        let max_share_u64 = SHARE_VALUE_LIMIT - 1;
         let shares_u64: [u64; 16] = [max_share_u64; 16];
         let (_ea_sk, ea_pk) = generate_ea_keypair();
         let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
@@ -2987,7 +2993,7 @@ mod tests {
         // Set share_0 to 2^30 (one above the max valid value).
         // This will fail condition 9 AND condition 8 (sum mismatch),
         // but the important thing is the circuit rejects it.
-        circuit.shares[0] = Value::known(pallas::Base::from(1u64 << 30));
+        circuit.shares[0] = Value::known(pallas::Base::from(SHARE_VALUE_LIMIT));
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
@@ -3018,7 +3024,7 @@ mod tests {
     fn shares_range_single_overflow_correct_sum_fails() {
         let mut rng = OsRng;
 
-        let overflow_share = pallas::Base::from(1u64 << 30); // 2^30 — just above [0, 2^30)
+        let overflow_share = pallas::Base::from(SHARE_VALUE_LIMIT);
         let normal_share_u64 = 625u64;
         // total_note_value = 2^30 + 15 * 625 so sum(shares) == total_note_value.
         let total_note_value = overflow_share + pallas::Base::from(15u64 * normal_share_u64);
@@ -3062,7 +3068,7 @@ mod tests {
         // The encryption is computed with these exact values so condition 11 is consistent.
         let shares_u64: [u64; 16] = {
             let mut arr = [normal_share_u64; 16];
-            arr[0] = 1u64 << 30;
+            arr[0] = SHARE_VALUE_LIMIT;
             arr
         };
         let (_ea_sk, ea_pk) = generate_ea_keypair();

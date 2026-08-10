@@ -3,7 +3,7 @@
 Proves that a registered voter is casting a valid vote, without revealing which VAN they hold. The structure follows the delegation circuit's pattern (ZKP 1). Numbering matches Gov Steps V1 (ZKP #2): 12 conditions total; all conditions 1–12 are fully constrained in-circuit (condition 4 enforces spend authority `r_vpk = vsk.ak + [alpha_v]*G` in-circuit; the vote signature is verified out-of-circuit under `r_vpk`).
 
 **Public inputs:** 11 field elements.
-**Current K:** 13 (8,192 rows) — accommodates conditions 1–4 and 5–12, including the El Gamal integrity gadget, two-level shares hash, and the 10-bit lookup table. High-water mark is 7,945 rows (97.0% utilization).
+**Current K:** 13 (8,192 rows) — accommodates conditions 1–4 and 5–12, including the El Gamal integrity gadget, two-level shares hash, and the 10-bit lookup table. High-water mark is 7,753 rows (94.6% utilization).
 
 **Authoritative hash sources:** this README is explanatory. Reusable hash
 preimages are owned by `crate::circuit::van_integrity` (VAN integrity),
@@ -324,7 +324,7 @@ Where:
 
 Secondary benefit: after accumulation the EA decrypts to `total_value * G` and must solve a bounded DLOG (baby-step giant-step, O(√n)) to recover `total_value`. Bounded shares keep the per-decision aggregate small enough for efficient recovery.
 
-**Bound:** `[0, 2^30)` via 3 × 10-bit words with strict mode. Shares are denominated in ballots (1 ballot = 0.125 ZEC, converted from zatoshi by ZKP #1's condition 8; see the delegation README §8 for the proven relation). halo2_gadgets v0.3's `short_range_check` is `pub(crate)` (private to the gadget crate), so exact non-10-bit-aligned bounds (e.g. 24-bit) are unavailable. 2^30 ballots ≈ 134M ZEC — well above the 21M ZEC supply — so the bound is never binding in practice.
+**Bound:** `[0, 2^30)` via 3 × 10-bit words with strict mode. Shares are denominated in ballots (1 ballot = 0.125 ZEC, converted from zatoshi by ZKP #1's condition 8; see the delegation README §8 for the proven relation). halo2_gadgets v0.5's `short_range_check` is `pub(crate)` (private to the gadget crate), so exact non-10-bit-aligned bounds (e.g. 24-bit) are unavailable. 2^30 ballots ≈ 134M ZEC — well above the 21M ZEC supply — so the bound is never binding in practice.
 
 **Structure:** For each share, one `copy_check` call (16 calls total, ~64 rows):
 - `copy_check(share_i, 3, true)` — decomposes the share into 3 × 10-bit lookup words. Each word is range-checked via the 10-bit lookup table. The `true` (strict) flag constrains the final running sum `z_3` to equal 0, enforcing `share < 2^30`.
@@ -385,36 +385,35 @@ For each share i (0..15):
 ```
 
 Where:
-- **G**: SpendAuthG, the El Gamal generator. C1's `[r_i]*G` term uses `FixedPointBaseField::from_inner(ecc_chip, SpendAuthGBase)` for full-field randomness, while C2's `[v_i]*G` term uses `FixedPointShort::from_inner(ecc_chip, SpendAuthGShort)` because shares are range-checked to fit the short-scalar path. Both route scalar multiplication through fixed lookup tables loaded by the circuit. No `NonIdentityPoint` witness or advice-from-constant assignment is needed — the generator is structurally baked into the proving key via the lookup tables, preventing a malicious prover from substituting a different base point.
+- **G**: SpendAuthG, the El Gamal generator. C1's `[r_i]*G` term uses `FixedPointBaseField::from_inner(ecc_chip, SpendAuthGBase)` for full-field randomness. C2's `[v_i]*G` term uses a custom unsigned ten-window fixed-base multiplication specialized to the 30-bit share bound. Both routes bake the generator and fixed tables into the proving key, preventing a malicious prover from substituting another base point.
 - **r_i**: El Gamal randomness for share `i` (private witness, `pallas::Base`). Used as the input to `spend_auth_g_base.clone().mul(r_cells[i])` for C1 and as `ScalarVar::from_base(r_cells[i])` for the variable-base `ea_pk` multiplication in C2. The same advice cell is cloned for both calls, ensuring the same randomness binds both ciphertext components. The circuit constrains `r_i != 0` with an inverse-witness check, rejecting the exact ciphertext-degeneracy case `C1_i = identity, C2_i = [v_i]G`.
-- **v_i**: plaintext share value from conditions 8/9. Cell-equality-linked to the same cells used in `AddChip` (condition 8) and range check (condition 9). Wrapped as a `ScalarFixedShort` and passed to `spend_auth_g_short.clone().mul(...)` for the `[v_i]*G` component of C2.
+- **v_i**: plaintext share value from conditions 8/9. The custom gadget copies the same cell into a strict 30-bit decomposition, so the `[v_i]*G` component of C2 is bound to the summed and range-checked share. Its unsigned encoding has no sign witness.
 - **ea_pk**: election authority public key (Pallas curve point, public input at offsets 9–10). Witnessed once as a `NonIdentityPoint` (on-curve constraint included). Its x and y advice cells are immediately pinned to the instance column via `layouter.constrain_instance`, preventing a prover from using a different or negated key. The same `NonIdentityPoint` is reused (cloned) across all 16 iterations — no re-witnessing.
 - **enc_share_c1_x/y[i]**, **enc_share_c2_x/y[i]**: the coordinate cells from condition 10's witness region. These are the same cells that were hashed into `shares_hash` by condition 10's Poseidon hash. Condition 11 constrains the ECC computation output to match them via `constrain_equal`, creating a binding between the Poseidon hash (condition 10) and the actual El Gamal encryption.
 
 **Structure:**
 1. Witness ea_pk once as `NonIdentityPoint`; `constrain_instance` x and y to public inputs (rows `EA_PK_X_PUBLIC_OFFSET`, `EA_PK_Y_PUBLIC_OFFSET`)
-2. Construct the full `FixedPointBaseField` and short `FixedPointShort` descriptors once (hoisted above loop)
+2. Construct the full `FixedPointBaseField` descriptor for C1; the custom C2 fixed-base configuration is part of the circuit configuration
 3. For each share i (0..15):
    a. `r_i * r_i_inv = 1` rejects exact zero randomness
    b. `spend_auth_g_base.clone().mul(r_cells[i])` → C1 point (fixed-base)
    c. `constrain_equal(C1.x/y, enc_c1_x/y[i])`
-   d. `ScalarFixedShort::new(share_cells[i])` → `spend_auth_g_short.clone().mul(...)` → vG point (short fixed-base)
-   e. `ScalarVar::from_base(r_cells[i])` → `ea_pk.mul(r_i_scalar)` → rP point (variable-base)
-   f. `vG.add(rP)` → C2 point
-   g. `constrain_equal(C2.x/y, enc_c2_x/y[i])`
+   d. `ScalarVar::from_base(r_cells[i])` → `ea_pk.mul(r_i_scalar)` → rP point (variable-base)
+   e. `fixed_base_30.mul_add(share_cells[i], rP)` → C2 point (ten-window unsigned fixed-base multiplication with fused final addition)
+   f. `constrain_equal(C2.x/y, enc_c2_x/y[i])`
 
-Total: 16 non-zero checks, 32 fixed-base scalar multiplications, 16 variable-base scalar multiplications (ea_pk), 16 point additions, 1 `NonIdentityPoint` witness (ea_pk, reused), 64 `constrain_equal` constraints.
+Total: 16 non-zero checks, 16 full-width and 16 custom 30-bit fixed-base scalar multiplications, 16 variable-base scalar multiplications (ea_pk), 16 fused C2 point additions, 1 `NonIdentityPoint` witness (ea_pk, reused), and 64 `constrain_equal` constraints. The custom path saves 12 rows per share, or 192 rows across the circuit.
 
-**Scalar field handling:** All scalars (r_i, v_i) are base field elements. C1's `[r_i]*G` fixed-base path passes the randomness cell directly as a `BaseFieldElem` input to `FixedPointBaseField::mul`. C2's `[v_i]*G` path wraps the range-checked share cell as a `ScalarFixedShort`, which is valid because condition 9 proves shares are below 2^30. For the variable-base path (`[r_i]*ea_pk`), `ScalarVar::from_base` decomposes the randomness cell into a running-sum `ScalarVar`. Every canonical Pallas base field element fits in the scalar field because the base field modulus is smaller than the scalar field modulus.
+**Scalar field handling:** All scalars (r_i, v_i) are base field elements. C1's `[r_i]*G` fixed-base path passes the randomness cell directly as a `BaseFieldElem` input to `FixedPointBaseField::mul`. C2's `[v_i]*G` path copies the same share cell into a strict 30-bit, ten-window decomposition and fuses its final complete addition with `[r_i]*ea_pk`. For the variable-base path (`[r_i]*ea_pk`), `ScalarVar::from_base` decomposes the randomness cell into a running-sum `ScalarVar`. Every canonical Pallas base field element fits in the scalar field because the base field modulus is smaller than the scalar field modulus.
 
 **Security properties:**
-- **Generator binding:** G = SpendAuthG is structurally fixed via the full and short fixed-base lookup tables loaded into the proving key. A prover cannot substitute −G or any other base point because the table entries are committed to during setup.
+- **Generator binding:** G = SpendAuthG is structurally fixed via the full and custom fixed-base tables loaded into the proving key. A prover cannot substitute −G or another base point because the table entries are committed during setup.
 - **ea_pk binding:** Witnessed once as `NonIdentityPoint` and immediately pinned to the instance column (both x and y). The verifier checks the instance against the published round parameter.
 - **Randomness binding:** The same `r_cells[i]` advice cell is cloned for both the C1 fixed-base mul and the C2 variable-base mul. Cell equality ensures both paths decompose the same value.
 
 **Out-of-circuit helper:** `vote_proof::spend_auth_g_affine()` returns the SpendAuthG generator used by the circuit and downstream encryption code.
 
-**Constructions:** Shared `circuit::elgamal::prove_elgamal_encryptions`; `EccChip`, `FixedPointBaseField` (for C1 [r_i]*G, 85 windows), `FixedPointShort` (for C2 [v_i]*G, 22 windows), `NonIdentityPoint`, `ScalarVar`, `Point::add`, `Point::extract_p`.
+**Constructions:** Shared `circuit::elgamal::prove_elgamal_encryptions`; `EccChip`, `FixedPointBaseField` (for C1 [r_i]*G, 85 windows), the custom unsigned fixed-base gadget (for C2 [v_i]*G, 10 windows), `NonIdentityPoint`, `ScalarVar`, and complete point addition.
 
 ## Condition 12: Vote Commitment Integrity ✅
 

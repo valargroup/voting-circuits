@@ -29,7 +29,7 @@ use super::{
 use crate::{
     domain_tags,
     gadgets::elgamal::{base_to_scalar, spend_auth_g_affine},
-    params::{BALLOT_DIVISOR, VOTE_COMM_TREE_DEPTH},
+    params::{BALLOT_DIVISOR, SHARE_VALUE_LIMIT, VOTE_COMM_TREE_DEPTH},
     shares_hash::{share_commitment, shares_hash},
     ProveError,
 };
@@ -681,7 +681,7 @@ pub fn build_vote_proof_from_delegation(
 
     // Verify all shares are in range
     for (i, &s) in shares_u64.iter().enumerate() {
-        if s >= (1u64 << 30) {
+        if s >= SHARE_VALUE_LIMIT {
             return Err(VoteProofBuildError::InvalidShares(format!(
                 "share {} = {} exceeds 2^30",
                 i, s
@@ -1486,7 +1486,7 @@ mod tests {
             let shares = denomination_split(v, &sk, rid, 1, van);
             for (i, &s) in shares.iter().enumerate() {
                 assert!(
-                    s < (1u64 << 30),
+                    s < SHARE_VALUE_LIMIT,
                     "share {} = {} exceeds 2^30 for {}",
                     i,
                     s,
