@@ -39,6 +39,8 @@ pub const VOTE_PRF_DOMAIN_BLIND: u8 = 0x01;
 pub const VOTE_PRF_DOMAIN_SHUFFLE: u8 = 0x02;
 /// PRF domain for vote-proof remainder distribution weights.
 pub const VOTE_PRF_DOMAIN_REMAINDER: u8 = 0x03;
+/// PRF domain for single-share vote-proof El Gamal encryption randomness.
+pub const VOTE_PRF_DOMAIN_ELGAMAL_SINGLE_SHARE: u8 = 0x04;
 
 /// Encodes a short ASCII tag as a canonical Pallas base-field element.
 ///
@@ -115,6 +117,7 @@ mod tests {
         assert_eq!(VOTE_PRF_DOMAIN_BLIND, 0x01);
         assert_eq!(VOTE_PRF_DOMAIN_SHUFFLE, 0x02);
         assert_eq!(VOTE_PRF_DOMAIN_REMAINDER, 0x03);
+        assert_eq!(VOTE_PRF_DOMAIN_ELGAMAL_SINGLE_SHARE, 0x04);
     }
 
     #[test]
@@ -144,6 +147,7 @@ mod tests {
             ("blind", VOTE_PRF_DOMAIN_BLIND),
             ("shuffle", VOTE_PRF_DOMAIN_SHUFFLE),
             ("remainder", VOTE_PRF_DOMAIN_REMAINDER),
+            ("single-share elgamal", VOTE_PRF_DOMAIN_ELGAMAL_SINGLE_SHARE),
         ];
 
         for (i, (left_name, left)) in domains.iter().enumerate() {
