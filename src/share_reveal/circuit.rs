@@ -1147,7 +1147,7 @@ mod tests {
         );
 
         let (auth_path, position, vote_comm_tree_root) =
-            build_single_leaf_merkle_path(vote_commitment);
+            build_single_leaf_merkle_path(vote_commitment, 0);
 
         let share_index_fp = pallas::Base::from(share_idx as u64);
         let share_nullifier = share_nullifier_hash(
@@ -1182,6 +1182,7 @@ mod tests {
 
     fn build_single_leaf_merkle_path(
         leaf: pallas::Base,
+        position: u32,
     ) -> ([pallas::Base; VOTE_COMM_TREE_DEPTH], u32, pallas::Base) {
         let mut empty_roots = [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH];
         empty_roots[0] = poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
@@ -1191,16 +1192,38 @@ mod tests {
 
         let auth_path = empty_roots;
         let mut current = leaf;
-        for i in 0..VOTE_COMM_TREE_DEPTH {
-            current = poseidon_hash_2(current, auth_path[i]);
+        for (level, sibling) in auth_path.iter().enumerate() {
+            let (left, right) = if (position >> level) & 1 == 0 {
+                (current, *sibling)
+            } else {
+                (*sibling, current)
+            };
+            current = poseidon_hash_2(left, right);
         }
-        (auth_path, 0, current)
+        (auth_path, position, current)
     }
 
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_valid() {
         let (circuit, instance) = make_test_data(0);
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert_eq!(prover.verify(), Ok(()));
+    }
+
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn merkle_schedule_accepts_mixed_nonzero_position() {
+        // Exercise both left- and right-child branches across all 24 scheduled
+        // levels, including handoffs between the two Poseidon configurations.
+        const POSITION: u32 = 0xA5_5A_C3;
+
+        let (mut circuit, mut instance, vote_commitment) = make_test_ballot(0, [625; 16]);
+        let (path, position, root) = build_single_leaf_merkle_path(vote_commitment, POSITION);
+        circuit.vote_comm_tree_path = Value::known(path);
+        circuit.vote_comm_tree_position = Value::known(position);
+        instance.vote_comm_tree_root = root;
+
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert_eq!(prover.verify(), Ok(()));
     }
@@ -1251,7 +1274,7 @@ mod tests {
     fn merkle_schedule_rejects_each_sibling_and_position_bit_mutation() {
         for level in 0..VOTE_COMM_TREE_DEPTH {
             let (mut circuit, instance, vote_commitment) = make_test_ballot(0, [625; 16]);
-            let (mut path, _, _) = build_single_leaf_merkle_path(vote_commitment);
+            let (mut path, _, _) = build_single_leaf_merkle_path(vote_commitment, 0);
             path[level] += pallas::Base::one();
             circuit.vote_comm_tree_path = Value::known(path);
             let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
