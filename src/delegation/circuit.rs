@@ -1,6 +1,6 @@
 //! The Delegation circuit implementation.
 //!
-//! A single circuit proving all 15 conditions of the delegation ZKP:
+//! A single circuit proving all 14 conditions of the delegation ZKP:
 //!
 //! The "signed" / keystone note (conditions 1–6) is a synthetic
 //! Ironwood spend shape constructed locally by the voting client so that
@@ -103,7 +103,7 @@ use crate::{
 ///
 /// The Orchard Merkle paths distribute their levels across four shared
 /// advice-column lanes, and the IMT paths rotate across the same lanes. This
-/// fits all 15 conditions into K=12 (4,096 rows).
+/// fits all 14 conditions into K=12 (4,096 rows).
 pub const K: u32 = 12;
 
 /// Advice columns required by one Sinsemilla chip.
@@ -417,7 +417,7 @@ pub(super) struct NoteSlotWitness {
 
 /// The Delegation circuit.
 ///
-/// Proves all 15 conditions of the delegation ZKP (see README for details).
+/// Proves all 14 conditions of the delegation ZKP (see README for details).
 #[derive(Clone, Debug, Default)]
 pub struct Circuit {
     // Signed note witnesses (conditions 1–5).
@@ -2310,7 +2310,14 @@ mod tests {
         let pi = t.instance.to_halo2_instance();
 
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
-        assert_rejects(prover);
+        let errs = prover
+            .verify()
+            .expect_err("zero-valued keystone note must be rejected");
+        assert!(
+            errs.iter()
+                .any(|err| err.to_string().contains("value * inv = 1")),
+            "expected the v_signed nonzero gate to fail, got: {errs:?}"
+        );
     }
 
     /// The proof relation requires a nonzero value, while the honest builder
