@@ -65,7 +65,7 @@ src/
 │   ├── authority_decrement.rs    #   Proposal-authority decrement gadget
 │   └── README.md                 #   Detailed specification
 │
-└── share_reveal/                 # ZKP #3 — Share Reveal circuit (K=11)
+└── share_reveal/                 # ZKP #3 — Share Reveal circuit (K=10)
     ├── circuit.rs                #   5-condition halo2 circuit
     ├── builder.rs                #   Builder
     └── prove.rs                  #   Prove / verify helpers
@@ -94,7 +94,7 @@ Reusable halo2 gadgets that appear in more than one circuit:
 |---------|---|------|------------|------|
 | Delegation | 12 | 4 096 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) |
 | Vote Proof | 11 | 2 048 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
-| Share Reveal | 11 | 2 048 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
+| Share Reveal | 10 | 1 024 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
 
 ## Dependency on `orchard`
 
@@ -138,11 +138,11 @@ cargo test cost_breakdown -- --ignored --nocapture
 
 The long tests are slow because they synthesize Halo 2 circuits and run
 `MockProver` verification over the configured `K` domain (`delegation` uses
-K=12, while `vote_proof` and `share_reveal` use K=11). Some gadget stress
-tests are also long-running because they repeat many `MockProver` checks, for
-example one K=12 shares-hash test runs 16 separate prover checks. The real
-proof roundtrip also performs proving-key/proof generation and verification,
-so it is intentionally outside the default unit-test path.
+K=12, `vote_proof` uses K=11, and `share_reveal` uses K=10). Some gadget
+stress tests are also long-running because they repeat many `MockProver`
+checks, for example one K=12 shares-hash test runs 16 separate prover checks.
+The real proof roundtrip also performs proving-key/proof generation and
+verification, so it is intentionally outside the default unit-test path.
 
 ## Benchmarks
 

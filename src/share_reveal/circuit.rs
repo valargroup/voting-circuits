@@ -50,11 +50,12 @@
 //!
 //! ## Column layout
 //!
-//! - 9 advice columns: advices\[0..4\] general + Merkle swap, \[5\] Poseidon partial
-//!   S-box, \[6..8\] Poseidon state.
-//! - 8 fixed columns for Poseidon round constants + constants.
+//! - 13 advice columns: 9 shared by the general gadgets and primary Poseidon
+//!   configuration, plus 4 for the second Merkle Poseidon configuration.
+//! - 14 explicitly allocated fixed columns for the two Poseidon configurations
+//!   and general constants.
 //! - 1 instance column (9 public inputs).
-//! - K = 11 (2,048 rows).
+//! - K = 10 (1,024 rows).
 
 use std::vec::Vec;
 
@@ -79,7 +80,7 @@ use pasta_curves::{pallas, vesta};
 
 use crate::{
     gadgets::{
-        poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate},
+        poseidon_merkle::{synthesize_poseidon_merkle_path_with_config_schedule, MerkleSwapGate},
         vote_commitment,
     },
     params::VOTE_COMM_TREE_DEPTH,
@@ -92,14 +93,22 @@ use crate::{
 
 /// Circuit size (2^K rows).
 ///
-/// K=11 (2,048 rows). `CircuitCost::measure` reports a floor-planner
-/// high-water mark of ~1,592 rows (78% of 2,048). The `V1` floor
-/// planner packs non-overlapping regions into the same row range across
-/// different columns.
+/// K=10 (1,024 rows). `CircuitCost::measure` reports a floor-planner
+/// high-water mark of 976 rows. The `V1` floor planner packs Poseidon regions
+/// on the two independent column configurations into overlapping row ranges.
 ///
 /// Run the `row_budget` test to re-measure after circuit changes:
 ///   `cargo test row_budget -- --nocapture --ignored`
-pub const K: u32 = 11;
+pub const K: u32 = 10;
+
+/// Independent Poseidon configurations used by the vote-commitment Merkle path.
+const MERKLE_CONFIGS: usize = 2;
+
+/// The primary Poseidon configuration also handles all non-Merkle hashes, so
+/// the 24 Merkle levels are weighted 8/16 across the two configurations.
+const MERKLE_CONFIG_SCHEDULE: [usize; VOTE_COMM_TREE_DEPTH] = [
+    0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1,
+];
 
 // ================================================================
 // Public input offsets (9 field elements).
@@ -202,6 +211,8 @@ pub struct Config {
     advices: [Column<Advice>; 9],
     /// Poseidon hash chip configuration.
     poseidon_config: PoseidonConfig<pallas::Base, 3, 2>,
+    /// Independent Poseidon configurations used by scheduled Merkle levels.
+    merkle_poseidon_configs: [PoseidonConfig<pallas::Base, 3, 2>; MERKLE_CONFIGS],
     /// Merkle conditional swap gate (condition 1).
     merkle_swap: MerkleSwapGate,
     /// Selector for the share commitment multiplexer gate (condition 4).
@@ -344,6 +355,24 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             rc_b,
         );
 
+        // A second independent Poseidon configuration lets the V1 floor planner
+        // overlap Merkle hashes assigned to different column sets. The hash chain
+        // is preserved by equality-constrained copies between configuration outputs.
+        let merkle_advice: [Column<Advice>; 4] = core::array::from_fn(|_| meta.advice_column());
+        // `Pow5Chip::configure` equality-enables the three state columns used
+        // for cross-region handoffs. The partial-S-box column is internal
+        // scratch space and must not be added to the permutation argument.
+        let merkle_round_constants: [Column<Fixed>; 6] =
+            core::array::from_fn(|_| meta.fixed_column());
+        let merkle_poseidon_config = PoseidonChip::configure::<poseidon::P128Pow5T3>(
+            meta,
+            merkle_advice[1..4].try_into().unwrap(),
+            merkle_advice[0],
+            merkle_round_constants[..3].try_into().unwrap(),
+            merkle_round_constants[3..].try_into().unwrap(),
+        );
+        let merkle_poseidon_configs = [poseidon_config.clone(), merkle_poseidon_config];
+
         // Merkle conditional swap gate (condition 1).
         let merkle_swap = MerkleSwapGate::configure(
             meta,
@@ -456,6 +485,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             primary,
             advices,
             poseidon_config,
+            merkle_poseidon_configs,
             merkle_swap,
             q_share_comm_mux,
         }
@@ -793,9 +823,13 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Uses the shared poseidon_merkle gadget.
         // ---------------------------------------------------------------
         {
-            let root = synthesize_poseidon_merkle_path::<VOTE_COMM_TREE_DEPTH>(
+            let root = synthesize_poseidon_merkle_path_with_config_schedule::<
+                VOTE_COMM_TREE_DEPTH,
+                MERKLE_CONFIGS,
+            >(
                 &config.merkle_swap,
-                &config.poseidon_config,
+                &config.merkle_poseidon_configs,
+                &MERKLE_CONFIG_SCHEDULE,
                 &mut layouter,
                 config.advices[0],
                 vote_commitment,
@@ -1213,6 +1247,30 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "exhaustive Merkle lane-schedule mutation diagnostic"]
+    fn merkle_schedule_rejects_each_sibling_and_position_bit_mutation() {
+        for level in 0..VOTE_COMM_TREE_DEPTH {
+            let (mut circuit, instance, vote_commitment) = make_test_ballot(0, [625; 16]);
+            let (mut path, _, _) = build_single_leaf_merkle_path(vote_commitment);
+            path[level] += pallas::Base::one();
+            circuit.vote_comm_tree_path = Value::known(path);
+            let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+            assert!(
+                prover.verify().is_err(),
+                "tampered sibling at level {level} must fail"
+            );
+
+            let (mut circuit, instance, _) = make_test_ballot(0, [625; 16]);
+            circuit.vote_comm_tree_position = Value::known(1u32 << level);
+            let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+            assert!(
+                prover.verify().is_err(),
+                "tampered position bit at level {level} must fail"
+            );
+        }
+    }
+
+    #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_nullifier() {
         let (circuit, mut instance) = make_test_data(0);
@@ -1479,7 +1537,7 @@ mod tests {
         println!("  VOTE_COMM_TREE_DEPTH (circuit constant): {VOTE_COMM_TREE_DEPTH}");
 
         // Minimum-K probe: find the smallest K at which MockProver passes.
-        for probe_k in 11u32..=K {
+        for probe_k in 9u32..=K {
             let (c, inst) = make_test_data(0);
             match MockProver::run(probe_k, &c, vec![inst.to_halo2_instance()]) {
                 Err(_) => {

@@ -1,7 +1,7 @@
 //! Real Halo2 prove/verify for the Share Reveal circuit (ZKP #3).
 //!
 //! Follows the same pattern as `delegation/prove.rs` but for the
-//! 5-condition share reveal circuit at K=11.
+//! 5-condition share reveal circuit at K=10.
 
 use std::{string::String, vec::Vec};
 
@@ -33,7 +33,7 @@ static SHARE_REVEAL_PK_CACHE: std::sync::OnceLock<Result<ShareRevealKeys, String
 /// Generate the IPA params (SRS) for the share reveal circuit.
 /// Deterministic for a given `K`.
 ///
-/// **Expensive**: K=11 params generation takes ~1 second.
+/// **Expensive**: K=10 params generation takes measurable setup time.
 /// Callers should cache the result.
 pub fn share_reveal_params() -> Params<EqAffine> {
     Params::new(K)
@@ -90,7 +90,7 @@ pub fn warm_share_reveal_keys() -> Result<(), ProveError> {
 /// provides a circuit without all witnesses populated or an instance
 /// that Halo2 cannot prove against.
 ///
-/// **Expensive**: K=11 proof generation takes ~5-15 seconds in release mode.
+/// **Expensive**: proof generation should run in release mode.
 /// Params and keys are cached so only the first call pays keygen.
 pub fn create_share_reveal_proof(
     circuit: Circuit,
@@ -174,9 +174,45 @@ pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ProveError;
+    use crate::{
+        share_commitment,
+        share_reveal::{build_share_reveal, ShareRevealBundle},
+        ProveError, VOTE_COMM_TREE_DEPTH,
+    };
     use halo2_proofs::plonk;
     use pasta_curves::pallas;
+
+    fn valid_bundle() -> ShareRevealBundle {
+        let blinds: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(1_001 + i as u64));
+        let c1_x: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(2_001 + i as u64));
+        let c2_x: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(3_001 + i as u64));
+        let c1_y: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(4_001 + i as u64));
+        let c2_y: [pallas::Base; 16] =
+            core::array::from_fn(|i| pallas::Base::from(5_001 + i as u64));
+        let share_comms = core::array::from_fn(|i| {
+            share_commitment(blinds[i], c1_x[i], c2_x[i], c1_y[i], c2_y[i])
+        });
+        let share_index = 2usize;
+
+        build_share_reveal(
+            [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH],
+            0,
+            share_comms,
+            blinds[share_index],
+            c1_x[share_index],
+            c2_x[share_index],
+            c1_y[share_index],
+            c2_y[share_index],
+            share_index as u32,
+            pallas::Base::from(3),
+            pallas::Base::from(1),
+            pallas::Base::from(999),
+        )
+    }
 
     fn minimal_instance() -> Instance {
         Instance::from_parts(
@@ -205,12 +241,32 @@ mod tests {
         assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
     }
 
+    #[test]
+    #[ignore = "long-running real proof roundtrip; run with `cargo test -- --ignored real_proof_roundtrip`"]
+    fn real_proof_roundtrip_stays_within_downstream_limit() {
+        // vote-sdk rejects Halo2 proofs larger than 8 KiB.
+        const DOWNSTREAM_MAX_PROOF_SIZE: usize = 8_192;
+
+        let ShareRevealBundle { circuit, instance } = valid_bundle();
+        let proof = create_share_reveal_proof(circuit, &instance)
+            .expect("share reveal proof creation should succeed");
+
+        verify_share_reveal_proof(&proof, &instance)
+            .expect("share reveal verifier should accept the generated proof");
+        assert!(
+            proof.len() <= DOWNSTREAM_MAX_PROOF_SIZE,
+            "share reveal proof is {} bytes, exceeding the downstream {}-byte limit",
+            proof.len(),
+            DOWNSTREAM_MAX_PROOF_SIZE,
+        );
+    }
+
     // TODO(sean): VK-stability tripwire. Hashes the `PinnedVerificationKey`
     // debug repr and compares against a baked-in fingerprint. A mismatch means
     // either the circuit shape changed (and the VK must be regenerated and
     // redistributed) or an unintended drift has been introduced.
     #[test]
-    #[ignore = "TODO(sean): runs K=11 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
+    #[ignore = "runs K=10 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
     fn vk_fingerprint_unchanged() {
         let (_, _, vk) = share_reveal_cached_keys().expect("share reveal keys");
         let pinned = format!("{:?}", vk.pinned());
@@ -220,9 +276,9 @@ mod tests {
         let actual: &[u8] = fingerprint.as_bytes();
 
         let expected: [u8; 32] = [
-            0xed, 0x17, 0x19, 0xda, 0xf7, 0x90, 0x4f, 0xd8, 0x2f, 0xe6, 0x93, 0x53, 0x52, 0x55,
-            0x29, 0xb4, 0x4e, 0xa4, 0x96, 0x29, 0x29, 0xb0, 0x3e, 0x26, 0x72, 0xe7, 0xae, 0xdc,
-            0xbd, 0x69, 0xd9, 0x8b,
+            0xe7, 0x16, 0x5d, 0xa4, 0x31, 0xd5, 0xc6, 0xf8, 0x39, 0x6d, 0x08, 0x2a, 0xba, 0x6a,
+            0xbf, 0xd0, 0x21, 0x3c, 0x56, 0x70, 0x71, 0xca, 0x44, 0x35, 0xb3, 0x8d, 0x09, 0x22,
+            0x42, 0xcc, 0x48, 0x37,
         ];
 
         assert_eq!(
