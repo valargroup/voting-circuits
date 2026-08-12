@@ -150,12 +150,13 @@ buckets, useful for auditing future refactors:
   which the wallet's spend-auth signature cryptographically commits to
   `van_comm` and `vote_round_id`. Remove any link in this chain and the
   binding breaks.
-- **Ironwood Action shape mimicry.** Condition 1 (`cm_signed`
-  well-formed under the keystone diversified address) and condition 6
-  (`cmx_new` derivation from the synthetic output note). These exist to
-  make the wrapping Action's public-input layout look like a standard
-  Ironwood spend; the voting protocol does not consume `cm_signed` or
-  `cmx_new` for any of its own invariants.
+- **Ironwood Action shape compatibility.** Condition 1 also constrains the
+  signed note's diversified address and commitment shape, while condition 6
+  derives `cmx_new` from the synthetic output note. The
+  `v_signed -> cm_signed -> nf_signed` portion of condition 1 is
+  load-bearing for the nonzero-value authorization guarantee and must not be
+  dropped as mimicry. The remaining structural details preserve the wrapping
+  Action's standard Ironwood public-input layout.
 
 ## 1. Signed Note Commitment Integrity
 
