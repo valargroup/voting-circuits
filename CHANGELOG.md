@@ -27,6 +27,13 @@
   reveal proving and verifying keys and increases the proof size from 4,000 to
   4,992 bytes, which remains below vote-sdk's 15 KiB proof limit.
 
+## v0.9.0
+
+### Changed
+
+- Released the exact `v0.9.0-rc.3` implementation as `v0.9.0` without circuit
+  or verifying-key changes.
+
 ## v0.9.0-rc.3
 
 ### Changed
