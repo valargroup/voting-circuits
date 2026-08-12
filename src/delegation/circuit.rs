@@ -425,7 +425,6 @@ pub struct Circuit {
     rivk: Value<CommitIvkRandomness>,
     rivk_internal: Value<CommitIvkRandomness>,
     rcm_signed: Value<pallas::Scalar>,
-    v_signed: Value<NoteValue>,
     g_d_signed: Value<NonIdentityPallasPoint>,
     pk_d_signed: Value<DiversifiedTransmissionKey>,
     // Output note witnesses (condition 6).
@@ -467,7 +466,6 @@ impl Circuit {
             rivk: Value::known(fvk.rivk(Scope::External)),
             rivk_internal: Value::known(fvk.rivk(Scope::Internal)),
             rcm_signed: Value::known(rcm_signed),
-            v_signed: Value::known(note.value()),
             g_d_signed: Value::known(sender_address.g_d()),
             pk_d_signed: Value::known(*sender_address.pk_d()),
             ..Default::default()
@@ -1005,20 +1003,17 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 self.rcm_signed.as_ref().copied(),
             )?;
 
-            // Require the one-zatoshi value that Keystone-class hardware
-            // wallets render for approval. An advice assignment alone would
-            // not constrain an adversarial prover to use the builder's value.
-            let v_signed = assign_free_advice(
-                layouter.namespace(|| "witness v_signed"),
-                config.advices[0],
-                self.v_signed,
-            )?;
-            layouter.assign_region(
+            // NoteCommit consumes a typed advice cell for the value. Load the
+            // protocol constant through a fixed column so an adversarial prover
+            // cannot substitute another value.
+            let v_signed = layouter.assign_region(
                 || "v_signed = 1",
                 |mut region| {
-                    region.constrain_constant(
-                        v_signed.cell(),
-                        pallas::Base::from(KEYSTONE_NOTE_VALUE),
+                    region.assign_advice_from_constant(
+                        || "v_signed",
+                        config.advices[0],
+                        0,
+                        NoteValue::from_raw(KEYSTONE_NOTE_VALUE),
                     )
                 },
             )?;

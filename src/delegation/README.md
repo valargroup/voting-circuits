@@ -40,7 +40,6 @@ in `imt.rs` for delegation-only hashes.
    * **dom** (offset 13): the nullifier domain — Poseidon("governance authorization", vote_round_id). Exposed as a public input for API compatibility; the circuit constrains it against vote_round_id rather than trusting an arbitrary value.
 
 - Private (keystone note)
-   * **v_signed**: the one-zatoshi value of the synthetic signed note.
    * **rho_signed** ("rho"): the nullifier of the note that was spent to create the signed note.
    * **psi_signed** ("psi"): a pseudorandom field element derived from the note's `rseed` and rho.
    * **cm_signed**: the note commitment, witnessed as an ECC point.
@@ -132,10 +131,11 @@ Unlike each of the five real-note slots, which carry a Sinsemilla
 Merkle membership proof against the public `nc_root` anchor (gated by
 `v * (root - nc_root) = 0` so that `v = 0` padding slots can skip the
 check), the keystone branch witnesses **no Merkle path** and performs
-**no anchor check**. `cm_signed` is recomputed from witnessed
-`(g_d_signed, pk_d_signed, v_signed, rho_signed, psi_signed, rcm_signed)`
-and constrained equal to a separately-witnessed `cm_signed` ECC point;
-this is a "the prover knows the opening" check, not a membership check.
+**no anchor check**. `cm_signed` is recomputed from the fixed value
+`v_signed = 1` and witnessed
+`(g_d_signed, pk_d_signed, rho_signed, psi_signed, rcm_signed)`, then constrained
+equal to a separately-witnessed `cm_signed` ECC point. This is a "the prover
+knows the opening" check, not a membership check.
 The voter does not own a 1-zatoshi keystone note that the proof spends.
 
 The keystone branch's in-circuit conditions therefore sort into three
