@@ -1,6 +1,8 @@
 # Delegation Circuit (ZKP 1)
 
-A single circuit proving all 15 conditions of the delegation ZKP at K=12 (4,096 rows). The circuit handles the keystone note (conditions 1–8) and five per-note slots (conditions 9–15 ×5) in one proof.
+A single circuit proving all 14 conditions of the delegation ZKP at K=12
+(4,096 rows). The circuit handles the keystone note (conditions 1–8) and five
+per-note slots (conditions 9–14 ×5) in one proof.
 
 The five Orchard Merkle paths distribute their levels across four independent
 five-advice-column Sinsemilla lanes. The five IMT paths rotate their Poseidon
@@ -14,9 +16,9 @@ to five real notes per proof, and keeps the circuit within K=12. Wallets with
 more than five notes produce multiple delegation proofs.
 
 **Note value asymmetry:** the builder gives the keystone (signed) note value `1`
-zatoshi, and the circuit requires its value to be nonzero, so Keystone-class
-hardware wallets render the spend for user approval. The output (change) note
-has value `0`. See conditions 1 and 6.
+zatoshi, and the circuit requires that exact value, so Keystone-class hardware
+wallets render the spend for user approval. The output (change) note has value
+`0`. See conditions 1 and 6.
 
 **Authoritative hash sources:** this README is explanatory. The in-tree source
 of truth for reusable hash preimages is the owning module:
@@ -38,6 +40,7 @@ in `imt.rs` for delegation-only hashes.
    * **dom** (offset 13): the nullifier domain — Poseidon("governance authorization", vote_round_id). Exposed as a public input for API compatibility; the circuit constrains it against vote_round_id rather than trusting an arbitrary value.
 
 - Private (keystone note)
+   * **v_signed**: the one-zatoshi value of the synthetic signed note.
    * **rho_signed** ("rho"): the nullifier of the note that was spent to create the signed note.
    * **psi_signed** ("psi"): a pseudorandom field element derived from the note's `rseed` and rho.
    * **cm_signed**: the note commitment, witnessed as an ECC point.
@@ -56,7 +59,7 @@ in `imt.rs` for delegation-only hashes.
    * **psi_new**: pseudorandom field element for the output note.
    * **rcm_new**: the output note commitment trapdoor.
 
-- Private (per-note slot ×5 — conditions 9–15)
+- Private (per-note slot ×5 — conditions 9–14)
    * **g_d**: diversified generator from the note recipient's address.
    * **pk_d**: diversified transmission key from the note recipient's address.
    * **v**: the note value (in zatoshi).
@@ -119,9 +122,9 @@ so that:
    the wrapping Ironwood Action's ZIP-244 sighash. The voting protocol
    piggybacks on the shared Orchard protocol wallet UX surface rather than
    adding a new signing protocol.
-2. The wallet's UI renders the builder's `v_signed = 1` zatoshi for user
-   approval. Zero-value spends are not rendered, so the circuit requires
-   `v_signed != 0` (see condition 1 below).
+2. The wallet's UI renders `v_signed = 1` zatoshi for user approval. Zero-value
+   spends are not rendered, so the circuit requires that exact value (see
+   condition 1 below).
 3. The proof's public-input layout `(nf_signed, rk, cmx_new, ...)`
    matches what the wrapping Ironwood Action expects.
 
@@ -142,7 +145,7 @@ buckets, useful for auditing future refactors:
   consistent with the real-note slots' `ivk`); condition 4
   (`rk = [α]·SpendAuthG + ak`).
 - **Wallet-authorization binding (load-bearing as a chain).** Condition
-  1 requires `v_signed != 0`, ensuring the wallet renders the spend.
+  1 requires `v_signed = 1`, ensuring the wallet renders the spend.
   Condition 3 (`rho_signed = Poseidon(cmx_1..5, van_comm, vote_round_id)`) and
   condition 2 (`nf_signed = DeriveNullifier(nk, rho_signed, psi_signed, cm_signed)`,
   exposed as a public input). Together with the verifier-enforced
@@ -153,17 +156,17 @@ buckets, useful for auditing future refactors:
 - **Ironwood Action shape compatibility.** Condition 1 also constrains the
   signed note's diversified address and commitment shape, while condition 6
   derives `cmx_new` from the synthetic output note. The
-  `v_signed -> cm_signed -> nf_signed` portion of condition 1 is
-  load-bearing for the nonzero-value authorization guarantee and must not be
-  dropped as mimicry. The remaining structural details preserve the wrapping
-  Action's standard Ironwood public-input layout.
+  `v_signed -> cm_signed -> nf_signed` portion of condition 1 is load-bearing
+  for the one-zatoshi authorization guarantee and must not be dropped as
+  mimicry. The remaining structural details preserve the wrapping Action's
+  standard Ironwood public-input layout.
 
 ## 1. Signed Note Commitment Integrity
 
 Purpose: ensure that the signed note commitment is correctly constructed. Establishes the binding link between spending authority, nullifier key, and the note itself.
 
 ```
-v_signed != 0
+v_signed = 1
 NoteCommit_rcm_signed(repr(g_d_signed), repr(pk_d_signed), v_signed, rho_signed, psi_signed) = cm_signed
 ```
 
@@ -171,17 +174,17 @@ Where:
 - **rcm_signed**: the note commitment randomness (trapdoor). A scalar derived from the note's `rseed` and `rho`. Blinds the commitment.
 - **repr(g_d_signed)**: the diversified base point from the recipient's payment address.
 - **repr(pk_d_signed)**: the diversified transmission key.
-- **v_signed**: the keystone note value. The circuit requires it to be nonzero;
-  the honest builder chooses 1 zatoshi as the minimum value. Hardware wallets
-  such as Keystone do not render zero-value spends, so this constraint ensures
-  the spend is surfaced for user approval. Contrast condition 6, which uses
-  value 0 for the *output* (change) note; the asymmetry is intentional.
+- **v_signed**: the keystone note value. The circuit requires exactly 1
+  zatoshi. Hardware wallets such as Keystone do not render zero-value spends,
+  so this constraint ensures the spend is surfaced for user approval. Contrast
+  condition 6, which uses value 0 for the *output* (change) note; the asymmetry
+  is intentional.
 - **rho_signed**: the nullifier of the note that was spent to create this note. Bound by condition 3.
 - **psi_signed**: pseudorandom field element from `rseed` and `rho`.
 - **cm_signed**: the witnessed note commitment. The circuit recomputes NoteCommit and enforces strict equality.
 
 The commitment binds together: **who the note belongs to** (g_d, pk_d), **how
-much it's worth** (the nonzero `v_signed`), **where it came from** (rho),
+much it's worth** (the one-zatoshi `v_signed`), **where it came from** (rho),
 **random uniqueness** (psi), **all blinded by randomness** (rcm).
 
 **Constructions:** `SinsemillaChip` (config 1), `EccChip`, `NoteCommitChip` (signed).

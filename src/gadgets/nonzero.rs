@@ -5,7 +5,7 @@
 
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter},
-    plonk::{Advice, Assigned, Column, ConstraintSystem, Constraints, Error, Expression, Selector},
+    plonk::{Advice, Column, ConstraintSystem, Constraints, Error, Expression, Selector},
     poly::Rotation,
 };
 use pasta_curves::{group::ff::Field, pallas};
@@ -42,32 +42,27 @@ impl NonZeroConfig {
     }
 
     /// Constrains `cell != 0` by assigning and checking its multiplicative inverse.
-    pub(crate) fn constrain_nonzero<V>(
+    pub(crate) fn constrain_nonzero(
         &self,
         mut layouter: impl Layouter<pallas::Base>,
         label: &'static str,
-        cell: &AssignedCell<V, pallas::Base>,
-    ) -> Result<(), Error>
-    where
-        for<'v> Assigned<pallas::Base>: From<&'v V>,
-    {
+        cell: &AssignedCell<pallas::Base, pallas::Base>,
+    ) -> Result<(), Error> {
         layouter.assign_region(
             || label,
             |mut region| {
                 self.q_value_nonzero.enable(&mut region, 0)?;
 
-                let value = cell.value_field().map(Assigned::evaluate);
-                let value_copy: AssignedCell<pallas::Base, pallas::Base> = region
-                    .assign_advice::<_, pallas::Base, _, _>(|| "value", self.value, 0, || value)?;
+                let value = cell.value().copied();
+                let value_copy = region.assign_advice(|| "value", self.value, 0, || value)?;
                 region.constrain_equal(value_copy.cell(), cell.cell())?;
 
-                let _: AssignedCell<pallas::Base, pallas::Base> = region
-                    .assign_advice::<_, pallas::Base, _, _>(
-                        || "value_inv",
-                        self.inverse,
-                        0,
-                        || value.map(|value| value.invert().unwrap_or(pallas::Base::zero())),
-                    )?;
+                region.assign_advice(
+                    || "value_inv",
+                    self.inverse,
+                    0,
+                    || value.map(|value| value.invert().unwrap_or(pallas::Base::zero())),
+                )?;
 
                 Ok(())
             },

@@ -13,7 +13,7 @@
 //! `wallet → rk → nf_signed → rho_signed → van_comm` (binding) and the
 //! Ironwood Action shape mimicry that surrounds it.
 //!
-//! - **Condition 1**: Signed note commitment integrity and nonzero value.
+//! - **Condition 1**: Signed note commitment integrity and one-zatoshi value.
 //! - **Condition 2**: Nullifier integrity.
 //! - **Condition 3**: Rho binding — keystone rho = Poseidon(cmx_1..5, van_comm, vote_round_id).
 //! - **Condition 4**: Spend authority.
@@ -88,9 +88,10 @@ use super::{
         mul_chip::{MulChip, MulConfig, MulInstruction},
     },
     imt::{gov_auth_domain_tag, IMT_DEPTH},
+    KEYSTONE_NOTE_VALUE,
 };
 use crate::{
-    gadgets::{address_ownership::prove_address_ownership, nonzero::NonZeroConfig, van_integrity},
+    gadgets::{address_ownership::prove_address_ownership, van_integrity},
     params::{BALLOT_DIVISOR, RANGE_CHECK_WORD_BITS, SHARE_VALUE_BITS, SHARE_VALUE_RANGE_WORDS},
     protocol_hash::poseidon_hash_in_circuit,
 };
@@ -114,9 +115,6 @@ const BALLOT_REMAINDER_SHIFT: usize = SHARE_VALUE_BITS - BALLOT_REMAINDER_BITS;
 
 /// Dedicated column lanes shared by Orchard Merkle and IMT Poseidon paths.
 const MERKLE_LANES: usize = 4;
-
-/// Signed-note value chosen by the honest builder for hardware-wallet display.
-pub(super) const KEYSTONE_NOTE_VALUE: u64 = 1;
 
 pub(super) fn rcm_scalar_for_note_parts(
     version: NoteVersion,
@@ -303,9 +301,6 @@ pub struct Config {
     commit_ivk_config: CommitIvkConfig,
     // Configuration for decomposition and canonicity checking for the signed note's NoteCommit.
     signed_note_commit_config: NoteCommitConfig,
-    // Rejects a zero-valued signed note so hardware-wallet authorization cannot
-    // be hidden by the wallet's zero-value-spend UI behavior.
-    signed_value_nonzero: NonZeroConfig,
     // Configuration for decomposition and canonicity checking for the output note's NoteCommit.
     new_note_commit_config: NoteCommitConfig,
     // Range check configuration for the 10-bit lookup table.
@@ -751,8 +746,6 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Configuration for decomposition and canonicity checking for the signed note's NoteCommit.
         let signed_note_commit_config =
             NoteCommitChip::configure(meta, advices, sinsemilla_config_1.clone());
-        let signed_value_nonzero = NonZeroConfig::configure(meta, [advices[0], advices[1]]);
-
         // Configuration for decomposition and canonicity checking for the output note's NoteCommit.
         let new_note_commit_config =
             NoteCommitChip::configure(meta, advices, sinsemilla_config_2.clone());
@@ -768,7 +761,6 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             sinsemilla_config_2,
             commit_ivk_config,
             signed_note_commit_config,
-            signed_value_nonzero,
             new_note_commit_config,
             range_check,
             merkle_configs,
@@ -981,12 +973,14 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // ---------------------------------------------------------------
         // Condition 1: Signed note commitment integrity.
-        // NoteCommit_rcm_signed(g_d_signed, pk_d_signed, 0, rho_signed, psi_signed) = cm_signed
+        // NoteCommit_rcm_signed(g_d_signed, pk_d_signed, v_signed,
+        //                       rho_signed, psi_signed) = cm_signed,
+        // where v_signed = 1.
         // ---------------------------------------------------------------
 
         // signed note commitment integrity.
-        // NoteCommit_rcm_signed(repr(g_d_signed), repr(pk_d_signed), 0,
-        //                        rho_signed, psi_signed) = cm_signed
+        // NoteCommit_rcm_signed(repr(g_d_signed), repr(pk_d_signed),
+        //                        v_signed, rho_signed, psi_signed) = cm_signed
         // No null option: the signed note must have a valid commitment.
         {
             // Re-witness pk_d_signed for NoteCommit (need inner() from the constrained point).
@@ -1011,19 +1005,22 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 self.rcm_signed.as_ref().copied(),
             )?;
 
-            // The honest builder uses 1 zatoshi so Keystone-class hardware
-            // wallets render the wrapping Ironwood Action for user approval.
-            // The circuit permits any nonzero signed value, but rejects zero
-            // because Keystone does not render zero-value spends.
+            // Require the one-zatoshi value that Keystone-class hardware
+            // wallets render for approval. An advice assignment alone would
+            // not constrain an adversarial prover to use the builder's value.
             let v_signed = assign_free_advice(
                 layouter.namespace(|| "witness v_signed"),
                 config.advices[0],
                 self.v_signed,
             )?;
-            config.signed_value_nonzero.constrain_nonzero(
-                layouter.namespace(|| "v_signed != 0"),
-                "v_signed nonzero",
-                &v_signed,
+            layouter.assign_region(
+                || "v_signed = 1",
+                |mut region| {
+                    region.constrain_constant(
+                        v_signed.cell(),
+                        pallas::Base::from(KEYSTONE_NOTE_VALUE),
+                    )
+                },
             )?;
 
             // Compute NoteCommit from witness data.
@@ -1154,7 +1151,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         )?;
 
         // ---------------------------------------------------------------
-        // Conditions 9–15: prove ownership and unspentness of each delegated note.
+        // Conditions 9–14: prove ownership and unspentness of each delegated note.
         // ---------------------------------------------------------------
 
         // For each of the 5 note slots, synthesize_note_slot proves:
@@ -1163,7 +1160,6 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         //   - The note belongs to my key (cond 11)
         //   - The note's nullifier is NOT in the spent-nullifier IMT (cond 12-13)
         //   - A governance nullifier is correctly derived for this note (cond 14)
-        //   - Padded (unused) slots have zero value (cond 15)
         //
         // Returns three values per slot for use in the global conditions that follow:
         //   cmx_i      — hashed into rho_signed (condition 3)
@@ -2310,26 +2306,19 @@ mod tests {
         let pi = t.instance.to_halo2_instance();
 
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
-        let errs = prover
-            .verify()
-            .expect_err("zero-valued keystone note must be rejected");
-        assert!(
-            errs.iter()
-                .any(|err| err.to_string().contains("value * inv = 1")),
-            "expected the v_signed nonzero gate to fail, got: {errs:?}"
-        );
+        assert_rejects(prover);
     }
 
-    /// The proof relation requires a nonzero value, while the honest builder
-    /// separately chooses the one-zatoshi convention.
+    /// The proof relation requires exactly one zatoshi, not merely a nonzero
+    /// value.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn signed_value_above_one_is_accepted_by_relation() {
+    fn signed_value_above_one_fails() {
         let t = make_test_data_with_signed_value(NoteValue::from_raw(2));
         let pi = t.instance.to_halo2_instance();
 
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
-        assert_eq!(prover.verify(), Ok(()));
+        assert_rejects(prover);
     }
 
     /// Documents the current upstream-compatible spend-authority relation:

@@ -1,7 +1,7 @@
 //! Multi-note delegation bundle builder.
 //!
 //! Orchestrates the creation of a complete delegation proof:
-//! a single merged circuit proving all 15 conditions for up to
+//! a single merged circuit proving all 14 conditions for up to
 //! `circuit::MAX_REAL_NOTES` notes.
 //! Handles padding unused note slots with zero-value notes that still carry
 //! valid IMT non-membership proofs against the real tree root.
@@ -34,9 +34,10 @@ use rand::{CryptoRng, RngCore};
 use super::{
     circuit::{
         self, note_rcm_scalar, rcm_scalar_for_note_parts, rho_binding_hash, van_commitment_hash,
-        NoteSlotWitness, KEYSTONE_NOTE_VALUE,
+        NoteSlotWitness,
     },
     imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
+    KEYSTONE_NOTE_VALUE,
 };
 use crate::{
     gadgets::elgamal::base_to_scalar, params::BALLOT_DIVISOR, protocol_hash::poseidon_hash_2,
@@ -104,7 +105,7 @@ pub struct RealNoteInput {
     pub scope: Scope,
 }
 
-/// Complete delegation bundle: a single circuit proving all 15 conditions.
+/// Complete delegation bundle: a single circuit proving all 14 conditions.
 #[derive(Debug)]
 pub struct DelegationBundle {
     /// The merged delegation circuit.

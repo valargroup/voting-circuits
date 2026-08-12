@@ -1,6 +1,6 @@
 //! Delegation ZKP circuit.
 //!
-//! A single circuit proving all 15 conditions of the delegation ZKP,
+//! A single circuit proving all 14 conditions of the delegation ZKP,
 //! including 5 per-note slots.
 //! The builder layer creates padded notes for unused slots and
 //! produces a single proof.
@@ -10,6 +10,9 @@ mod circuit;
 mod gadgets;
 mod imt;
 mod prove;
+
+/// Signed-note value used for hardware-wallet display.
+const KEYSTONE_NOTE_VALUE: u64 = 1;
 
 pub use builder::{
     build_delegation_bundle, synthetic_padding_note_parts, DelegationBuildError, DelegationBundle,
