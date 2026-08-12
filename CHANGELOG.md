@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.9.0
+
+### Changed
+
+- Promoted `v0.9.0-rc.3` to stable without circuit, proof, public API, or
+  verification-key changes.
+
 ## v0.9.0-rc.3
 
 ### Changed
