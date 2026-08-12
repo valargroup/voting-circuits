@@ -1,7 +1,7 @@
 //! Multi-note delegation bundle builder.
 //!
 //! Orchestrates the creation of a complete delegation proof:
-//! a single merged circuit proving all 15 conditions for up to
+//! a single merged circuit proving all 14 conditions for up to
 //! `circuit::MAX_REAL_NOTES` notes.
 //! Handles padding unused note slots with zero-value notes that still carry
 //! valid IMT non-membership proofs against the real tree root.
@@ -37,6 +37,7 @@ use super::{
         NoteSlotWitness,
     },
     imt::{derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider},
+    KEYSTONE_NOTE_VALUE,
 };
 use crate::{
     gadgets::elgamal::base_to_scalar, params::BALLOT_DIVISOR, protocol_hash::poseidon_hash_2,
@@ -104,7 +105,7 @@ pub struct RealNoteInput {
     pub scope: Scope,
 }
 
-/// Complete delegation bundle: a single circuit proving all 15 conditions.
+/// Complete delegation bundle: a single circuit proving all 14 conditions.
 #[derive(Debug)]
 pub struct DelegationBundle {
     /// The merged delegation circuit.
@@ -872,7 +873,7 @@ pub fn build_delegation_bundle(
             .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
         Note::from_parts(
             sender_address,
-            NoteValue::from_raw(1),
+            NoteValue::from_raw(KEYSTONE_NOTE_VALUE),
             signed_rho,
             rseed,
             DELEGATION_NOTE_VERSION,
@@ -882,7 +883,7 @@ pub fn build_delegation_bundle(
     } else {
         Note::new(
             sender_address,
-            NoteValue::from_raw(1),
+            NoteValue::from_raw(KEYSTONE_NOTE_VALUE),
             signed_rho,
             DELEGATION_NOTE_VERSION,
             &mut *rng,
@@ -2196,7 +2197,7 @@ mod tests {
         let rseed_signed = random_seed_for_rho(&signed_rho, &mut rng);
         let expected_signed_note = Note::from_parts(
             sender_address,
-            NoteValue::from_raw(1),
+            NoteValue::from_raw(KEYSTONE_NOTE_VALUE),
             signed_rho,
             rseed_signed,
             DELEGATION_NOTE_VERSION,

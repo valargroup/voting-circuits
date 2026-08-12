@@ -13,7 +13,7 @@
 //! `wallet → rk → nf_signed → rho_signed → van_comm` (binding) and the
 //! Ironwood Action shape mimicry that surrounds it.
 //!
-//! - **Condition 1**: Signed note commitment integrity.
+//! - **Condition 1**: Signed note commitment integrity and one-zatoshi value.
 //! - **Condition 2**: Nullifier integrity.
 //! - **Condition 3**: Rho binding — keystone rho = Poseidon(cmx_1..5, van_comm, vote_round_id).
 //! - **Condition 4**: Spend authority.
@@ -88,6 +88,7 @@ use super::{
         mul_chip::{MulChip, MulConfig, MulInstruction},
     },
     imt::{gov_auth_domain_tag, IMT_DEPTH},
+    KEYSTONE_NOTE_VALUE,
 };
 use crate::{
     gadgets::{address_ownership::prove_address_ownership, van_integrity},
@@ -103,7 +104,7 @@ use crate::{
 ///
 /// The Orchard Merkle paths distribute their levels across four shared
 /// advice-column lanes, and the IMT paths rotate across the same lanes. This
-/// fits all 15 conditions into K=12 (4,096 rows).
+/// fits all 14 conditions into K=12 (4,096 rows).
 pub const K: u32 = 12;
 
 /// Advice columns required by one Sinsemilla chip.
@@ -411,7 +412,7 @@ pub(super) struct NoteSlotWitness {
 
 /// The Delegation circuit.
 ///
-/// Proves all 15 conditions of the delegation ZKP (see README for details).
+/// Proves all 14 conditions of the delegation ZKP (see README for details).
 #[derive(Clone, Debug, Default)]
 pub struct Circuit {
     // Signed note witnesses (conditions 1–5).
@@ -743,7 +744,6 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Configuration for decomposition and canonicity checking for the signed note's NoteCommit.
         let signed_note_commit_config =
             NoteCommitChip::configure(meta, advices, sinsemilla_config_1.clone());
-
         // Configuration for decomposition and canonicity checking for the output note's NoteCommit.
         let new_note_commit_config =
             NoteCommitChip::configure(meta, advices, sinsemilla_config_2.clone());
@@ -971,12 +971,14 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // ---------------------------------------------------------------
         // Condition 1: Signed note commitment integrity.
-        // NoteCommit_rcm_signed(g_d_signed, pk_d_signed, 0, rho_signed, psi_signed) = cm_signed
+        // NoteCommit_rcm_signed(g_d_signed, pk_d_signed, v_signed,
+        //                       rho_signed, psi_signed) = cm_signed,
+        // where v_signed = 1.
         // ---------------------------------------------------------------
 
         // signed note commitment integrity.
-        // NoteCommit_rcm_signed(repr(g_d_signed), repr(pk_d_signed), 0,
-        //                        rho_signed, psi_signed) = cm_signed
+        // NoteCommit_rcm_signed(repr(g_d_signed), repr(pk_d_signed),
+        //                        v_signed, rho_signed, psi_signed) = cm_signed
         // No null option: the signed note must have a valid commitment.
         {
             // Re-witness pk_d_signed for NoteCommit (need inner() from the constrained point).
@@ -1001,22 +1003,24 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                 self.rcm_signed.as_ref().copied(),
             )?;
 
-            // The keystone note's value is 1 zatoshi by convention, so Keystone-class
-            // hardware wallets render the wrapping Ironwood Action for user approval.
-            // This is not an independent circuit-level value check: nf_signed is a
-            // public input supplied by the same host that computes it from v_signed.
-            // The load-bearing check is the wallet UI and user approval of "1 zat";
-            // zero-value spends are not rendered by Keystone. See `delegation/README.md`
-            // ("Integration: the Keystone (signed) note is synthetic").
-            let v_signed = assign_free_advice(
-                layouter.namespace(|| "v_signed = 1"),
-                config.advices[0],
-                Value::known(NoteValue::from_raw(1)),
+            // NoteCommit consumes a typed advice cell for the value. Load the
+            // protocol constant through a fixed column so an adversarial prover
+            // cannot substitute another value.
+            let v_signed = layouter.assign_region(
+                || "v_signed = 1",
+                |mut region| {
+                    region.assign_advice_from_constant(
+                        || "v_signed",
+                        config.advices[0],
+                        0,
+                        NoteValue::from_raw(KEYSTONE_NOTE_VALUE),
+                    )
+                },
             )?;
 
             // Compute NoteCommit from witness data.
             let derived_cm_signed = note_commit(
-                layouter.namespace(|| "NoteCommit_rcm_signed(g_d, pk_d, 1, rho, psi)"),
+                layouter.namespace(|| "NoteCommit_rcm_signed(g_d, pk_d, v, rho, psi)"),
                 config.sinsemilla_chip_1(),
                 config.ecc_chip(),
                 config.note_commit_chip_signed(),
@@ -1142,7 +1146,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         )?;
 
         // ---------------------------------------------------------------
-        // Conditions 9–15: prove ownership and unspentness of each delegated note.
+        // Conditions 9–14: prove ownership and unspentness of each delegated note.
         // ---------------------------------------------------------------
 
         // For each of the 5 note slots, synthesize_note_slot proves:
@@ -1151,7 +1155,6 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         //   - The note belongs to my key (cond 11)
         //   - The note's nullifier is NOT in the spent-nullifier IMT (cond 12-13)
         //   - A governance nullifier is correctly derived for this note (cond 14)
-        //   - Padded (unused) slots have zero value (cond 15)
         //
         // Returns three values per slot for use in the global conditions that follow:
         //   cmx_i      — hashed into rho_signed (condition 3)
@@ -2066,7 +2069,10 @@ mod tests {
     }
 
     /// Build a valid merged circuit with 1 real note + 4 padded notes.
-    fn make_test_data_with_alpha(alpha_override: Option<pallas::Scalar>) -> TestData {
+    fn make_test_data_with_overrides(
+        alpha_override: Option<pallas::Scalar>,
+        signed_value: NoteValue,
+    ) -> TestData {
         let mut rng = OsRng;
 
         let sk = SpendingKey::random(&mut rng);
@@ -2200,11 +2206,11 @@ mod tests {
             vote_round_id,
         );
 
-        // Create signed note with this rho (value = 1 per ZIP §Dummy Signed Note).
+        // Create the signed note with this rho.
         let sender_address = fvk.address_at(0u32, Scope::External);
         let signed_note = Note::new(
             sender_address,
-            NoteValue::from_raw(1),
+            signed_value,
             Rho::from_nf_old(Nullifier::from_inner(rho)),
             NoteVersion::V3,
             &mut rng,
@@ -2260,6 +2266,14 @@ mod tests {
         }
     }
 
+    fn make_test_data_with_alpha(alpha_override: Option<pallas::Scalar>) -> TestData {
+        make_test_data_with_overrides(alpha_override, NoteValue::from_raw(KEYSTONE_NOTE_VALUE))
+    }
+
+    fn make_test_data_with_signed_value(signed_value: NoteValue) -> TestData {
+        make_test_data_with_overrides(None, signed_value)
+    }
+
     fn make_test_data() -> TestData {
         make_test_data_with_alpha(None)
     }
@@ -2276,6 +2290,30 @@ mod tests {
 
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
         assert_eq!(prover.verify(), Ok(()));
+    }
+
+    /// A fully consistent zero-valued keystone note must still be rejected so
+    /// the authorization cannot be hidden by a hardware wallet's UI.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn signed_value_zero_fails() {
+        let t = make_test_data_with_signed_value(NoteValue::ZERO);
+        let pi = t.instance.to_halo2_instance();
+
+        let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
+        assert_rejects(prover);
+    }
+
+    /// The proof relation requires exactly one zatoshi, not merely a nonzero
+    /// value.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn signed_value_above_one_fails() {
+        let t = make_test_data_with_signed_value(NoteValue::from_raw(2));
+        let pi = t.instance.to_halo2_instance();
+
+        let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
+        assert_rejects(prover);
     }
 
     /// Documents the current upstream-compatible spend-authority relation:
