@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.10.0-rc.1
+
 ### Changed
 
 - Required the synthetic keystone note's signed value to be exactly one
@@ -16,13 +18,21 @@
 - Reduced the delegation circuit to K=12 by distributing its Merkle and IMT
   paths across four shared column lanes. This changes the delegation proving
   and verifying keys and increases the proof size to 11,328 bytes; downstream
-  verifiers must deploy the new key and accept proofs larger than 8 KiB.
+  verifiers must deploy the new key and accept proofs up to at least 11,328
+  bytes.
 - Used separate El Gamal randomness domains for standard and single-share vote
   layouts while preserving deterministic recovery within each layout.
 - Reduced the share reveal circuit to K=10 by distributing its vote-commitment
   Merkle path across two Poseidon column configurations. This changes the share
   reveal proving and verifying keys and increases the proof size from 4,000 to
-  4,992 bytes, which remains below the existing 8 KiB proof limit.
+  4,992 bytes, which remains below vote-sdk's 15 KiB proof limit.
+
+## v0.9.0
+
+### Changed
+
+- Released the exact `v0.9.0-rc.3` implementation as `v0.9.0` without circuit
+  or verifying-key changes.
 
 ## v0.9.0-rc.3
 

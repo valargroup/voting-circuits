@@ -244,8 +244,8 @@ mod tests {
     #[test]
     #[ignore = "long-running real proof roundtrip; run with `cargo test -- --ignored real_proof_roundtrip`"]
     fn real_proof_roundtrip_stays_within_downstream_limit() {
-        // vote-sdk rejects Halo2 proofs larger than 8 KiB.
-        const DOWNSTREAM_MAX_PROOF_SIZE: usize = 8_192;
+        // Keep this aligned with vote-sdk's consensus proof-size limit.
+        const DOWNSTREAM_MAX_PROOF_SIZE: usize = 15 * 1_024;
 
         let ShareRevealBundle { circuit, instance } = valid_bundle();
         let proof = create_share_reveal_proof(circuit, &instance)
