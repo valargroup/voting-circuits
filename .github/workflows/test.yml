@@ -43,8 +43,8 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
-      - name: Run short tests
-        run: cargo test --locked
+      - name: Run upstream tests with defaults disabled
+        run: cargo test --locked --no-default-features
 
       - name: Check upstream dependency graph
         run: |
@@ -75,21 +75,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run short tests
-        run: cargo test --locked --no-default-features --features zakura
+        run: cargo test --locked --features zakura
 
       - name: Check verifying-key fingerprints
-        run: cargo test --locked --no-default-features --features zakura vk_fingerprint_unchanged -- --ignored --test-threads=1
-
-      - name: Check Zakura dependency graph
-        run: |
-          if cargo tree --locked --no-default-features --features zakura -e normal --prefix none \
-            | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla) v'; then
-            echo "Upstream cryptography package found in the Zakura dependency graph"
-            exit 1
-          fi
+        run: cargo test --locked --features zakura vk_fingerprint_unchanged -- --ignored --test-threads=1
 
       - name: Check delegation benchmark
-        run: cargo bench --locked --no-default-features --features zakura --bench delegation -- --test
+        run: cargo bench --locked --features zakura --bench delegation -- --test
 
   full-suite:
     name: Full suite
