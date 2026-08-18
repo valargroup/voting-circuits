@@ -9,7 +9,8 @@ repository = "https://github.com/valargroup/voting-circuits"
 readme = "README.md"
 
 [dependencies]
-voting-crypto-deps = { path = "voting-crypto-deps", version = "0.1.0", default-features = false }
+# Keep this exact so a published release cannot resolve a different circuit dependency graph.
+voting-crypto-deps = { path = "voting-crypto-deps", version = "=0.1.0", default-features = false }
 # ff/group are the shared field and curve traits used by both dependency backends.
 ff = { version = "0.13", default-features = false }
 group = "0.13"
