@@ -316,7 +316,7 @@ impl SpendAuthGFixedBase30Config {
                 .zip(running_sum[window + 1].value())
                 .map(|(current, next)| {
                     let word = *current - *next * pallas::Base::from(1 << WINDOW_BITS);
-                    word.to_repr().as_ref()[0] as usize
+                    word.to_repr()[0] as usize
                 });
             let selected = self.assign_selected_point(region, window, digit)?;
 

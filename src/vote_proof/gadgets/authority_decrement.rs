@@ -574,14 +574,14 @@ impl AuthorityDecrementChip {
                         let proposal_id_base = proposal_id_cell.value().copied();
                         let b_i_val = proposal_authority_old_val.map(|b| {
                             let r = b.to_repr();
-                            let arr = r.as_ref();
+                            let arr: &[u8] = r.as_ref();
                             let low = u64::from_le_bytes(arr[0..8].try_into().unwrap()) & 0xFFFF;
                             let bit = (low >> i) & 1;
                             pallas::Base::from(bit)
                         });
                         let sel_i_val = proposal_id_base.map(|pid| {
                             let r = pid.to_repr();
-                            let arr = r.as_ref();
+                            let arr: &[u8] = r.as_ref();
                             let pid_u64 = u64::from_le_bytes(arr[0..8].try_into().unwrap());
                             pallas::Base::from(if pid_u64 == i as u64 { 1u64 } else { 0 })
                         });

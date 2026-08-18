@@ -345,7 +345,7 @@ fn extract_vsk(sk: &SpendingKey) -> pallas::Scalar {
     let ak_bytes = ak_point.to_bytes();
 
     // If the sign bit of ak is 1, the real ask was negated.
-    if (ak_bytes.as_ref()[31] >> 7) == 1 {
+    if (ak_bytes[31] >> 7) == 1 {
         -ask_raw
     } else {
         ask_raw
