@@ -74,6 +74,9 @@ jobs:
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Check upstream validator facade
+        run: cargo check --locked -p voting-crypto-deps --no-default-features --features upstream-validator
+
       - name: Run short tests
         run: cargo test --locked --no-default-features --features zakura
 
@@ -85,6 +88,16 @@ jobs:
           if cargo tree --locked --no-default-features --features zakura -e normal --prefix none \
             | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla) v'; then
             echo "Upstream cryptography package found in the Zakura dependency graph"
+            exit 1
+          fi
+
+      - name: Check Zakura validator facade
+        run: |
+          cargo check --locked -p voting-crypto-deps --no-default-features --features zakura-validator
+          if cargo tree --locked -p voting-crypto-deps --no-default-features \
+            --features zakura-validator -e normal --prefix none \
+            | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla|zcash_primitives) v'; then
+            echo "Upstream cryptography package found in the Zakura validator graph"
             exit 1
           fi
 

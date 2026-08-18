@@ -12,3 +12,9 @@ voting-crypto-deps = { version = "0.1", default-features = false, features = ["z
 
 Exactly one backend must be enabled. The Zakura backend currently requires
 Rust 1.88; the default upstream backend supports Rust 1.86.
+
+Validator crates that also parse transactions and verify RedPallas signatures
+select `upstream-validator` or `zakura-validator`. These extensions include the
+corresponding base backend and additionally reexport `reddsa` and
+`zcash_primitives` without adding them to lighter circuit, tree, or PIR graphs.
+Both validator extensions require Rust 1.88.
