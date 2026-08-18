@@ -59,14 +59,15 @@
 
 use std::vec::Vec;
 
-use halo2_gadgets::{
+use itertools::Itertools;
+use voting_crypto_deps::halo2_gadgets::{
     poseidon::{
         primitives::{self as poseidon, ConstantLength},
         Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
     },
     utilities::bool_check,
 };
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{floor_planner, AssignedCell, Layouter, Value},
     plonk::{
         self, Advice, Column, ConstraintSystem, Constraints, Expression, Fixed,
@@ -74,9 +75,8 @@ use halo2_proofs::{
     },
     poly::Rotation,
 };
-use itertools::Itertools;
-use orchard::circuit::gadget::assign_free_advice;
-use pasta_curves::{pallas, vesta};
+use voting_crypto_deps::orchard::circuit::gadget::assign_free_advice;
+use voting_crypto_deps::pasta_curves::{pallas, vesta};
 
 use crate::{
     gadgets::{
@@ -1024,8 +1024,8 @@ mod tests {
     use super::*;
     use ff::PrimeField;
     use group::Curve;
-    use halo2_proofs::dev::MockProver;
-    use pasta_curves::pallas;
+    use voting_crypto_deps::halo2_proofs::dev::MockProver;
+    use voting_crypto_deps::pasta_curves::pallas;
 
     use crate::gadgets::elgamal::{elgamal_encrypt, spend_auth_g_affine};
     use crate::gadgets::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
@@ -1494,9 +1494,9 @@ mod tests {
     #[test]
     #[ignore = "long-running row-budget diagnostic; run with `cargo test row_budget -- --ignored --nocapture`"]
     fn row_budget() {
-        use halo2_proofs::dev::CircuitCost;
-        use pasta_curves::vesta;
         use std::println;
+        use voting_crypto_deps::halo2_proofs::dev::CircuitCost;
+        use voting_crypto_deps::pasta_curves::vesta;
 
         let (circuit, _) = make_test_data(0);
 

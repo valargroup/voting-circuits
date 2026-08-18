@@ -5,23 +5,23 @@ use std::{
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use ff::{Field, PrimeField};
-use halo2_proofs::{
+use incrementalmerkletree::{Hashable, Level};
+use rand::{rngs::OsRng, RngCore};
+use voting_circuits::delegation::{
+    build_delegation_bundle, DelegationBundle, ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
+};
+use voting_crypto_deps::halo2_proofs::{
     plonk::{self, SingleVerifier},
     transcript::{Blake2bRead, Blake2bWrite},
 };
-use incrementalmerkletree::{Hashable, Level};
-use orchard::{
+use voting_crypto_deps::orchard::{
     constants::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH,
     keys::{FullViewingKey, Scope, SpendingKey},
     note::{ExtractedNoteCommitment, Note, NoteVersion, RandomSeed, Rho},
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
 };
-use pasta_curves::{pallas, vesta};
-use rand::{rngs::OsRng, RngCore};
-use voting_circuits::delegation::{
-    build_delegation_bundle, DelegationBundle, ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
-};
+use voting_crypto_deps::pasta_curves::{pallas, vesta};
 
 struct TrackingAllocator;
 
@@ -74,7 +74,11 @@ fn format_bytes(bytes: usize) -> String {
 }
 
 /// Create an Ironwood V3 note using only public APIs.
-fn make_note(recipient: orchard::Address, value: NoteValue, rng: &mut impl RngCore) -> Note {
+fn make_note(
+    recipient: voting_crypto_deps::orchard::Address,
+    value: NoteValue,
+    rng: &mut impl RngCore,
+) -> Note {
     // Generate a random nullifier for rho.
     loop {
         let mut rho_bytes = [0u8; 32];
@@ -202,7 +206,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     let instances = [&instance_columns[..]];
 
     // Generate params and keys.
-    let params = halo2_proofs::poly::commitment::Params::<vesta::Affine>::new(K);
+    let params =
+        voting_crypto_deps::halo2_proofs::poly::commitment::Params::<vesta::Affine>::new(K);
     let keygen_circuit = bundle.circuit.clone();
     let vk = plonk::keygen_vk(&params, &keygen_circuit).unwrap();
     let pk = plonk::keygen_pk(&params, vk.clone(), &keygen_circuit).unwrap();
@@ -226,7 +231,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     );
 
     // Sanity-check with MockProver.
-    let mock = halo2_proofs::dev::MockProver::run(K, &bundle.circuit, vec![pi.clone()]).unwrap();
+    let mock = voting_crypto_deps::halo2_proofs::dev::MockProver::run(
+        K,
+        &bundle.circuit,
+        vec![pi.clone()],
+    )
+    .unwrap();
     mock.verify().expect("MockProver failed");
 
     // Generate one proof up-front for verify benchmarks.

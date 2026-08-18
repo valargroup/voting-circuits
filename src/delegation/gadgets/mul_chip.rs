@@ -1,10 +1,10 @@
 use ff::Field;
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Chip, Layouter},
     plonk::{self, Advice, Column, ConstraintSystem, Constraints, Selector},
     poly::Rotation,
 };
-use pasta_curves::pallas;
+use voting_crypto_deps::pasta_curves::pallas;
 
 /// An instruction set for multiplying two circuit words (field elements).
 pub(crate) trait MulInstruction<F: Field>: Chip<F> {

@@ -33,7 +33,24 @@ use voting_circuits::vote_proof::Circuit as VoteProofCircuit;
 // ... assemble public/private inputs and run halo2_proofs
 ```
 
-Minimum supported Rust version: 1.86, as declared by the crate manifest.
+The default upstream backend supports Rust 1.86. The Zakura backend currently
+requires Rust 1.88.
+
+### Cryptography backend
+
+The default `upstream` feature uses the crates.io Orchard, Halo2, Pasta, and
+Sinsemilla packages, so existing consumers do not need to change their
+dependency declaration.
+
+Zakura consumers select the renamed package family explicitly:
+
+```toml
+voting-circuits = { version = "0.10", default-features = false, features = ["zakura"] }
+```
+
+The `upstream` and `zakura` features are mutually exclusive. Disabling default
+features without selecting `zakura` also fails to compile, so a build cannot
+silently omit or combine backends.
 
 Protocol domain-separation tags are registered in [`src/domain_tags.rs`](src/domain_tags.rs). Hash-owning modules document their own preimage layout, but new tags should be added to the registry first so the encoding rule and distinctness test stay centralized.
 
@@ -96,12 +113,13 @@ Reusable halo2 gadgets that appear in more than one circuit:
 | Vote Proof | 11 | 2 048 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
 | Share Reveal | 10 | 1 024 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
 
-## Dependency on `orchard`
+## Dependency on Orchard
 
-This crate depends on the upstream `orchard 0.15.0` release, with the `circuit`
-and `unstable-voting-circuits` features enabled to expose the circuit APIs used
-by the governance proofs. The delegation bundle builder requires Ironwood V3
-notes and constructs its synthetic signed and output notes as V3.
+The default backend uses the upstream `orchard 0.15` release. The opt-in Zakura
+backend uses its API-compatible renamed package. Both enable the `circuit` and
+`unstable-voting-circuits` features required by the governance proofs. The
+delegation bundle builder requires Ironwood V3 notes and constructs its
+synthetic signed and output notes as V3.
 
 The V3 check is a bundle-construction policy, not a note-version bit in the
 Halo2 statement. An Ironwood-only verifier must independently authenticate
@@ -113,6 +131,8 @@ same snapshot height.
 
 ```bash
 cargo build
+# Zakura backend
+cargo build --no-default-features --features zakura
 ```
 
 ## Testing
@@ -121,6 +141,8 @@ Short-running tests are the default:
 
 ```bash
 cargo test
+# Zakura backend
+cargo test --no-default-features --features zakura
 ```
 
 Long-running tests are explicitly ignored and can be run when circuit-level coverage is needed. Skip the row-budget and cost-breakdown diagnostics for a normal regression pass:

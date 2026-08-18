@@ -4,15 +4,15 @@
 //! native helpers, in-circuit gadgets, and test oracles cannot drift into
 //! separate definitions.
 
-use halo2_gadgets::poseidon::{
+use voting_crypto_deps::halo2_gadgets::poseidon::{
     primitives::{self as poseidon, ConstantLength},
     Hash as PoseidonHash, Pow5Chip as PoseidonChip,
 };
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk,
 };
-use pasta_curves::pallas;
+use voting_crypto_deps::pasta_curves::pallas;
 
 /// Computes the protocol Poseidon hash for a fixed number of field inputs.
 fn poseidon_hash<const N: usize>(inputs: [pallas::Base; N]) -> pallas::Base {

@@ -22,16 +22,16 @@
 //! This module extracts those constraints into a single, auditable gadget so
 //! that both circuits provably execute the same hash logic.
 
-use halo2_gadgets::poseidon::{
+use itertools::Itertools;
+use voting_crypto_deps::halo2_gadgets::poseidon::{
     primitives::{self as poseidon, ConstantLength},
     Hash as PoseidonHash, Pow5Chip as PoseidonChip,
 };
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk,
 };
-use itertools::Itertools;
-use pasta_curves::pallas;
+use voting_crypto_deps::pasta_curves::pallas;
 
 /// Native per-share blinded commitment:
 ///
@@ -236,13 +236,13 @@ mod tests {
     use super::*;
 
     use ff::{Field, PrimeField};
-    use halo2_gadgets::poseidon::Pow5Config as PoseidonConfig;
-    use halo2_proofs::{
+    use rand::rngs::OsRng;
+    use voting_crypto_deps::halo2_gadgets::poseidon::Pow5Config as PoseidonConfig;
+    use voting_crypto_deps::halo2_proofs::{
         circuit::{floor_planner, Value},
         dev::MockProver,
         plonk::{Advice, Column, ConstraintSystem, Fixed, Instance as InstanceColumn},
     };
-    use rand::rngs::OsRng;
 
     // ---------------------------------------------------------------
     // Shared minimal circuit config (Poseidon only, no ECC).

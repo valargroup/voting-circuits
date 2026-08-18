@@ -13,9 +13,9 @@ use std::{string::String, vec::Vec};
 
 use ff::{Field, FromUniformBytes, PrimeField};
 use group::{Curve, GroupEncoding};
-use halo2_proofs::circuit::Value;
-use orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
-use pasta_curves::{
+use voting_crypto_deps::halo2_proofs::circuit::Value;
+use voting_crypto_deps::orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
+use voting_crypto_deps::pasta_curves::{
     arithmetic::{Coordinates, CurveAffine},
     pallas,
 };
@@ -591,8 +591,10 @@ pub fn build_vote_proof_from_delegation(
     {
         use core::iter;
         use group::ff::PrimeFieldBits;
-        use halo2_gadgets::sinsemilla::primitives::CommitDomain;
-        use orchard::constants::{fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
+        use voting_crypto_deps::halo2_gadgets::sinsemilla::primitives::CommitDomain;
+        use voting_crypto_deps::orchard::constants::{
+            fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE,
+        };
 
         // Check 1: [vsk] * SpendAuthG must match the ak from the FullViewingKey.
         let ak_from_vsk = (spend_auth_g_affine() * vsk).to_affine();
@@ -1661,8 +1663,9 @@ mod tests {
 
     #[test]
     fn prove_error_maps_into_build_error() {
-        let err =
-            VoteProofBuildError::from(ProveError::Halo2(halo2_proofs::plonk::Error::Synthesis));
+        let err = VoteProofBuildError::from(ProveError::Halo2(
+            voting_crypto_deps::halo2_proofs::plonk::Error::Synthesis,
+        ));
 
         assert!(matches!(err, VoteProofBuildError::Prove(_)));
     }

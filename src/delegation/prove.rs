@@ -5,7 +5,7 @@
 
 use std::{string::String, vec::Vec};
 
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     pasta::EqAffine,
     plonk::{self, keygen_pk, keygen_vk},
     poly::commitment::Params,
@@ -172,16 +172,16 @@ mod prove_tests {
     use crate::delegation::imt::{ImtProvider, SpacedLeafImtProvider};
     use crate::ProveError;
     use ff::Field;
-    use halo2_proofs::plonk;
     use incrementalmerkletree::{Hashable, Level};
-    use orchard::{
+    use rand::rngs::OsRng;
+    use voting_crypto_deps::halo2_proofs::plonk;
+    use voting_crypto_deps::orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
         note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, NoteVersion, Rho},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
-    use pasta_curves::pallas;
-    use rand::rngs::OsRng;
+    use voting_crypto_deps::pasta_curves::pallas;
 
     fn minimal_instance() -> Instance {
         let mut rng = OsRng;

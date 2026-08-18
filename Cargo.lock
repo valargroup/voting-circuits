@@ -1397,17 +1397,30 @@ dependencies = [
  "criterion",
  "ff",
  "group",
- "halo2_gadgets",
- "halo2_poseidon",
- "halo2_proofs",
  "imt-tree",
  "incrementalmerkletree",
  "itertools 0.14.0",
  "lazy_static",
+ "rand",
+ "voting-crypto-deps",
+]
+
+[[package]]
+name = "voting-crypto-deps"
+version = "0.1.0"
+dependencies = [
+ "halo2_gadgets",
+ "halo2_poseidon",
+ "halo2_proofs",
  "orchard",
  "pasta_curves",
- "rand",
  "sinsemilla",
+ "zakura-halo2-gadgets",
+ "zakura-halo2-poseidon",
+ "zakura-halo2-proofs",
+ "zakura-orchard",
+ "zakura-pasta-curves",
+ "zakura-sinsemilla",
 ]
 
 [[package]]
@@ -1534,6 +1547,136 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
+]
+
+[[package]]
+name = "zakura-halo2-gadgets"
+version = "1.0.0-rc.1"
+source = "git+https://github.com/zakura-core/libraries?rev=80a5dd73bc12f6a513c6afd14488911f11f2a9db#80a5dd73bc12f6a513c6afd14488911f11f2a9db"
+dependencies = [
+ "arrayvec",
+ "bitvec",
+ "ff",
+ "group",
+ "lazy_static",
+ "rand",
+ "subtle",
+ "uint",
+ "zakura-halo2-poseidon",
+ "zakura-halo2-proofs",
+ "zakura-pasta-curves",
+ "zakura-sinsemilla",
+]
+
+[[package]]
+name = "zakura-halo2-legacy-pdqsort"
+version = "1.0.0-rc.1"
+source = "git+https://github.com/zakura-core/libraries?rev=80a5dd73bc12f6a513c6afd14488911f11f2a9db#80a5dd73bc12f6a513c6afd14488911f11f2a9db"
+
+[[package]]
+name = "zakura-halo2-poseidon"
+version = "1.0.0-rc.1"
+source = "git+https://github.com/zakura-core/libraries?rev=80a5dd73bc12f6a513c6afd14488911f11f2a9db#80a5dd73bc12f6a513c6afd14488911f11f2a9db"
+dependencies = [
+ "bitvec",
+ "ff",
+ "group",
+ "zakura-pasta-curves",
+]
+
+[[package]]
+name = "zakura-halo2-proofs"
+version = "1.0.0-rc.1"
+source = "git+https://github.com/zakura-core/libraries?rev=80a5dd73bc12f6a513c6afd14488911f11f2a9db#80a5dd73bc12f6a513c6afd14488911f11f2a9db"
+dependencies = [
+ "blake2b_simd",
+ "ff",
+ "group",
+ "indexmap",
+ "maybe-rayon",
+ "rand_core",
+ "tracing",
+ "zakura-halo2-legacy-pdqsort",
+ "zakura-pasta-curves",
+]
+
+[[package]]
+name = "zakura-orchard"
+version = "1.0.0-rc.1"
+source = "git+https://github.com/zakura-core/libraries?rev=80a5dd73bc12f6a513c6afd14488911f11f2a9db#80a5dd73bc12f6a513c6afd14488911f11f2a9db"
+dependencies = [
+ "aes",
+ "bitvec",
+ "blake2b_simd",
+ "corez",
+ "ff",
+ "fpe",
+ "getset",
+ "group",
+ "hex",
+ "incrementalmerkletree",
+ "lazy_static",
+ "memuse",
+ "nonempty",
+ "rand",
+ "rand_core",
+ "serde",
+ "subtle",
+ "tracing",
+ "visibility",
+ "zakura-halo2-gadgets",
+ "zakura-halo2-poseidon",
+ "zakura-halo2-proofs",
+ "zakura-pasta-curves",
+ "zakura-reddsa",
+ "zakura-sinsemilla",
+ "zcash_note_encryption",
+ "zcash_spec",
+ "zip32",
+]
+
+[[package]]
+name = "zakura-pasta-curves"
+version = "1.0.0-rc.1"
+source = "git+https://github.com/zakura-core/libraries?rev=80a5dd73bc12f6a513c6afd14488911f11f2a9db#80a5dd73bc12f6a513c6afd14488911f11f2a9db"
+dependencies = [
+ "blake2b_simd",
+ "cc",
+ "ff",
+ "group",
+ "lazy_static",
+ "rand",
+ "static_assertions",
+ "subtle",
+]
+
+[[package]]
+name = "zakura-reddsa"
+version = "1.0.0-rc.1"
+source = "git+https://github.com/zakura-core/libraries?rev=80a5dd73bc12f6a513c6afd14488911f11f2a9db#80a5dd73bc12f6a513c6afd14488911f11f2a9db"
+dependencies = [
+ "blake2b_simd",
+ "byteorder",
+ "frost-rerandomized",
+ "group",
+ "hex",
+ "jubjub",
+ "rand_core",
+ "serde",
+ "thiserror",
+ "zakura-pasta-curves",
+ "zeroize",
+]
+
+[[package]]
+name = "zakura-sinsemilla"
+version = "1.0.0-rc.1"
+source = "git+https://github.com/zakura-core/libraries?rev=80a5dd73bc12f6a513c6afd14488911f11f2a9db#80a5dd73bc12f6a513c6afd14488911f11f2a9db"
+dependencies = [
+ "group",
+ "lazy_static",
+ "subtle",
+ "zakura-pasta-curves",
 ]
 
 [[package]]

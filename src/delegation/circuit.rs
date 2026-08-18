@@ -31,7 +31,7 @@
 use std::vec::Vec;
 
 use group::{Curve, GroupEncoding};
-use halo2_gadgets::{
+use voting_crypto_deps::halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
         CircuitVersion, NonIdentityPoint, Point, ScalarFixed, ScalarVar,
@@ -52,12 +52,12 @@ use halo2_gadgets::{
         lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
     },
 };
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{floor_planner, AssignedCell, Layouter, Value},
     plonk::{self, Advice, Column, Constraints, Instance as InstanceColumn, Selector},
     poly::Rotation,
 };
-use orchard::{
+use voting_crypto_deps::orchard::{
     circuit::{
         commit_ivk::{CommitIvkChip, CommitIvkConfig},
         gadget::{
@@ -79,7 +79,7 @@ use orchard::{
     tree::MerkleHashOrchard,
     value::NoteValue,
 };
-use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
+use voting_crypto_deps::pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
 
 use super::{
     gadgets::{
@@ -951,7 +951,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Used by Condition 11 for notes with internal (change) scope.
         // ---------------------------------------------------------------
         let ivk_internal_cell = {
-            use orchard::circuit::commit_ivk::gadgets::commit_ivk;
+            use voting_crypto_deps::orchard::circuit::commit_ivk::gadgets::commit_ivk;
             let rivk_internal = ScalarFixed::new(
                 ecc_chip.clone(),
                 layouter.namespace(|| "rivk_internal"),
@@ -2016,15 +2016,15 @@ mod tests {
         derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider, SpacedLeafImtProvider,
     };
     use ff::Field;
-    use halo2_proofs::dev::MockProver;
     use incrementalmerkletree::{Hashable, Level};
-    use orchard::{
+    use rand::rngs::OsRng;
+    use std::string::{String, ToString};
+    use voting_crypto_deps::halo2_proofs::dev::MockProver;
+    use voting_crypto_deps::orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
         note::{commitment::ExtractedNoteCommitment, Note, NoteVersion, Rho},
     };
-    use pasta_curves::{arithmetic::CurveAffine, pallas};
-    use rand::rngs::OsRng;
-    use std::string::{String, ToString};
+    use voting_crypto_deps::pasta_curves::{arithmetic::CurveAffine, pallas};
 
     // Re-use the public K constant from the circuit module.
     use super::K;
@@ -2600,8 +2600,9 @@ mod tests {
     fn default_circuit_shape() {
         let t = make_test_data();
         let empty = plonk::Circuit::without_witnesses(&t.circuit);
-        let params = halo2_proofs::poly::commitment::Params::<vesta::Affine>::new(K);
-        let vk = halo2_proofs::plonk::keygen_vk(&params, &empty);
+        let params =
+            voting_crypto_deps::halo2_proofs::poly::commitment::Params::<vesta::Affine>::new(K);
+        let vk = voting_crypto_deps::halo2_proofs::plonk::keygen_vk(&params, &empty);
         assert!(
             vk.is_ok(),
             "keygen_vk must succeed on without_witnesses circuit"
@@ -2706,7 +2707,9 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use halo2_proofs::plonk::{Any, Assigned, Assignment, Column, Error, Fixed, FloorPlanner};
+    use voting_crypto_deps::halo2_proofs::plonk::{
+        Any, Assigned, Assignment, Column, Error, Fixed, FloorPlanner,
+    };
 
     struct RegionInfo {
         name: String,
@@ -2984,9 +2987,9 @@ mod tests {
     #[test]
     #[ignore = "long-running row-budget diagnostic; run with `cargo test row_budget -- --ignored --nocapture`"]
     fn row_budget() {
-        use halo2_proofs::dev::CircuitCost;
-        use pasta_curves::vesta;
         use std::println;
+        use voting_crypto_deps::halo2_proofs::dev::CircuitCost;
+        use voting_crypto_deps::pasta_curves::vesta;
 
         let t = make_test_data();
 

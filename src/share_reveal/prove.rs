@@ -5,7 +5,7 @@
 
 use std::{string::String, vec::Vec};
 
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     pasta::EqAffine,
     plonk::{self, keygen_pk, keygen_vk},
     poly::commitment::Params,
@@ -179,8 +179,8 @@ mod tests {
         share_reveal::{build_share_reveal, ShareRevealBundle},
         ProveError, VOTE_COMM_TREE_DEPTH,
     };
-    use halo2_proofs::plonk;
-    use pasta_curves::pallas;
+    use voting_crypto_deps::halo2_proofs::plonk;
+    use voting_crypto_deps::pasta_curves::pallas;
 
     fn valid_bundle() -> ShareRevealBundle {
         let blinds: [pallas::Base; 16] =
