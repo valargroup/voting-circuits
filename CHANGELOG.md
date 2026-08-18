@@ -4,10 +4,10 @@
 
 ### Added
 
-- Added a cryptography dependency facade whose single `zakura` feature switches
-  imports to the renamed Zakura packages. Without that feature, including when
-  default features are disabled, imports continue to use upstream packages.
-  Zakura currently requires Rust 1.88; upstream retains Rust 1.86 support.
+- Added an upstream-default, Zakura-opt-in cryptography dependency facade so
+  downstream applications can select one coherent package family without
+  maintaining separate voting-circuits releases. The Zakura backend currently
+  requires Rust 1.88; the default upstream backend retains Rust 1.86 support.
 
 ## v0.10.0
 

@@ -20,12 +20,13 @@ incrementalmerkletree = "0.8.1"
 lazy_static = "1"
 # zip_eq makes length-pairing fail loudly if fixed-size share arrays are ever generalized.
 itertools = "0.14.0"
+# Reference IMT implementation used by the opt-in integration tests to
+# cross-check the in-tree provider. It is optional so selecting the Zakura
+# backend does not activate an upstream cryptography family through test-only
+# code while imt-tree's own backend migration is developed independently.
+imt-tree = { version = "=0.2.0", optional = true }
 
 [dev-dependencies]
-# Reference IMT implementation used by integration tests to cross-check the
-# in-tree provider. Keep exact-pinned so patch releases cannot silently move
-# tree semantics without updating the equivalence tests.
-imt-tree = "=0.2.0"
 criterion = "0.8"
 rand = "0.8"
 incrementalmerkletree = "0.8.1"
@@ -40,13 +41,15 @@ type_complexity = "allow"
 needless_range_loop = "allow"
 
 [features]
-default = []
-# Use Zakura's renamed cryptography family. Its absence selects upstream.
+default = ["upstream"]
+# Use the crates.io Zcash cryptography family. This is the compatibility default.
+upstream = ["voting-crypto-deps/upstream"]
+# Use Zakura's renamed cryptography family. Consumers must disable default features.
 zakura = ["voting-crypto-deps/zakura"]
 # Re-exports `delegation::build_nullifier_list`, used by the in-tree IMT
 # integration test. Not part of the stable public API; downstream consumers
 # should not enable this.
-unstable-internal-api = []
+unstable-internal-api = ["dep:imt-tree"]
 
 [lib]
 bench = false

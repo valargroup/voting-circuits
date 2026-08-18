@@ -38,19 +38,19 @@ requires Rust 1.88.
 
 ### Cryptography backend
 
-Without the `zakura` feature, the crate uses the crates.io Orchard, Halo2,
-Pasta, and Sinsemilla packages. This remains true when a consumer disables
-default features, so existing upstream consumers do not need to select a mode.
+The default `upstream` feature uses the crates.io Orchard, Halo2, Pasta, and
+Sinsemilla packages, so existing consumers do not need to change their
+dependency declaration.
 
 Zakura consumers select the renamed package family explicitly:
 
 ```toml
-voting-circuits = { version = "0.10", features = ["zakura"] }
+voting-circuits = { version = "0.10", default-features = false, features = ["zakura"] }
 ```
 
-Cargo cannot conditionally activate a dependency when a feature is absent, so
-the upstream packages remain present in Zakura dependency graphs. The facade's
-reexports and all voting-circuits imports still select only the Zakura types.
+The `upstream` and `zakura` features are mutually exclusive. Disabling default
+features without selecting `zakura` also fails to compile, so a build cannot
+silently omit or combine backends.
 
 Protocol domain-separation tags are registered in [`src/domain_tags.rs`](src/domain_tags.rs). Hash-owning modules document their own preimage layout, but new tags should be added to the registry first so the encoding rule and distinctness test stay centralized.
 
@@ -132,7 +132,7 @@ same snapshot height.
 ```bash
 cargo build
 # Zakura backend
-cargo build --features zakura
+cargo build --no-default-features --features zakura
 ```
 
 ## Testing
@@ -142,7 +142,7 @@ Short-running tests are the default:
 ```bash
 cargo test
 # Zakura backend
-cargo test --features zakura
+cargo test --no-default-features --features zakura
 ```
 
 Long-running tests are explicitly ignored and can be run when circuit-level coverage is needed. Skip the row-budget and cost-breakdown diagnostics for a normal regression pass:

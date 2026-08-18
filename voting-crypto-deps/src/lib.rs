@@ -1,8 +1,9 @@
-//! Provides one stable cryptography import surface for shielded voting.
+//! Selects one coherent cryptography dependency family for shielded voting.
 //!
-//! Without the `zakura` feature, this crate reexports the crates.io Zcash
-//! packages. Enabling `zakura` switches those reexports to the corresponding
-//! `zakura-*` packages under their familiar Rust crate names.
+//! The default `upstream` feature reexports the crates.io Zcash packages.
+//! Zakura consumers must disable default features and enable `zakura`, which
+//! reexports the corresponding `zakura-*` packages under their familiar Rust
+//! crate names. Enabling both backends, or neither backend, is an error.
 //!
 //! The facade itself supports Rust 1.86 in upstream mode. The Zakura packages
 //! currently require Rust 1.88.
@@ -10,17 +11,23 @@
 #![deny(missing_debug_implementations)]
 #![deny(unsafe_code)]
 
-#[cfg(not(feature = "zakura"))]
+#[cfg(all(feature = "upstream", feature = "zakura"))]
+compile_error!("features `upstream` and `zakura` cannot be enabled together");
+
+#[cfg(not(any(feature = "upstream", feature = "zakura")))]
+compile_error!("enable exactly one of the `upstream` or `zakura` features");
+
+#[cfg(feature = "upstream")]
 pub use upstream_halo2_gadgets as halo2_gadgets;
-#[cfg(not(feature = "zakura"))]
+#[cfg(feature = "upstream")]
 pub use upstream_halo2_poseidon as halo2_poseidon;
-#[cfg(not(feature = "zakura"))]
+#[cfg(feature = "upstream")]
 pub use upstream_halo2_proofs as halo2_proofs;
-#[cfg(not(feature = "zakura"))]
+#[cfg(feature = "upstream")]
 pub use upstream_orchard as orchard;
-#[cfg(not(feature = "zakura"))]
+#[cfg(feature = "upstream")]
 pub use upstream_pasta_curves as pasta_curves;
-#[cfg(not(feature = "zakura"))]
+#[cfg(feature = "upstream")]
 pub use upstream_sinsemilla as sinsemilla;
 
 #[cfg(feature = "zakura")]
