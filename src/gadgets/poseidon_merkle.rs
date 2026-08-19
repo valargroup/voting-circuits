@@ -19,17 +19,17 @@
 //! convention must be revisited and the level should become an explicit hash
 //! input, which would require regenerating verifying keys.
 
-use halo2_gadgets::{
+use voting_crypto_deps::halo2_gadgets::{
     poseidon::{Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig},
     utilities::bool_check,
 };
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
     plonk::{self, Advice, Column, Constraints, Selector},
     poly::Rotation,
 };
-use orchard::circuit::gadget::assign_free_advice;
-use pasta_curves::pallas;
+use voting_crypto_deps::orchard::circuit::gadget::assign_free_advice;
+use voting_crypto_deps::pasta_curves::pallas;
 
 use crate::protocol_hash::poseidon_hash_in_circuit;
 
@@ -95,7 +95,7 @@ impl MerkleSwapGate {
     /// Assigns a single swap row. Returns `(left, right)`.
     pub(crate) fn assign(
         &self,
-        region: &mut halo2_proofs::circuit::Region<'_, pallas::Base>,
+        region: &mut voting_crypto_deps::halo2_proofs::circuit::Region<'_, pallas::Base>,
         offset: usize,
         pos_bit: &AssignedCell<pallas::Base, pallas::Base>,
         current: &AssignedCell<pallas::Base, pallas::Base>,
@@ -298,13 +298,13 @@ fn synthesize_poseidon_merkle_path_with_config_selector<const DEPTH: usize>(
 mod tests {
     use super::*;
     use crate::protocol_hash::poseidon_hash_2;
-    use halo2_gadgets::poseidon::primitives as poseidon;
-    use halo2_proofs::{
+    use std::vec::Vec;
+    use voting_crypto_deps::halo2_gadgets::poseidon::primitives as poseidon;
+    use voting_crypto_deps::halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::MockProver,
         plonk::{Circuit, ConstraintSystem, Fixed, Instance},
     };
-    use std::vec::Vec;
 
     /// Computes a Merkle root out-of-circuit for test oracle comparison.
     fn merkle_root(leaf: pallas::Base, position: u32, path: &[pallas::Base]) -> pallas::Base {
@@ -427,7 +427,7 @@ mod tests {
         position: u32,
         path: [pallas::Base; TEST_DEPTH],
         expected_root: pallas::Base,
-    ) -> Result<(), Vec<halo2_proofs::dev::VerifyFailure>> {
+    ) -> Result<(), Vec<voting_crypto_deps::halo2_proofs::dev::VerifyFailure>> {
         let circuit = TestCircuit {
             leaf: Value::known(leaf),
             position: Value::known(position),

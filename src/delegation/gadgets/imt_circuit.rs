@@ -16,18 +16,20 @@
 //! [`crate::gadgets::poseidon_merkle`].
 
 use ff::Field;
-use halo2_gadgets::{
+use voting_crypto_deps::halo2_gadgets::{
     ecc::chip::EccConfig,
     poseidon::{Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig},
     utilities::lookup_range_check::LookupRangeCheck,
 };
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
     plonk::{self, Advice, Column, Constraints, Expression, Selector},
     poly::Rotation,
 };
-use orchard::{circuit::gadget::assign_free_advice, constants::OrchardFixedBases};
-use pasta_curves::pallas;
+use voting_crypto_deps::orchard::{
+    circuit::gadget::assign_free_advice, constants::OrchardFixedBases,
+};
+use voting_crypto_deps::pasta_curves::pallas;
 
 use crate::{
     delegation::imt::IMT_DEPTH,
@@ -143,7 +145,7 @@ impl PuncturedIntervalGate {
     /// Returns `(x_lo, x_hi)` for external range checking.
     fn assign(
         &self,
-        region: &mut halo2_proofs::circuit::Region<'_, pallas::Base>,
+        region: &mut voting_crypto_deps::halo2_proofs::circuit::Region<'_, pallas::Base>,
         offset: usize,
         nf_lo: &AssignedCell<pallas::Base, pallas::Base>,
         nf_mid: &AssignedCell<pallas::Base, pallas::Base>,

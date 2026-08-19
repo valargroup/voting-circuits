@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Added an upstream-default, Zakura-opt-in cryptography dependency facade so
+  downstream applications can select one coherent package family without
+  maintaining separate voting-circuits releases. Validator-only extensions
+  also select coherent RedPallas and transaction-primitives packages without
+  adding them to lighter consumers. The validator extensions and Zakura backend
+  require Rust 1.88; the default upstream backend retains Rust 1.86 support.
+
 ## v0.10.0
 
 ### Changed

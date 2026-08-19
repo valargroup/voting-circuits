@@ -17,15 +17,17 @@
 
 #[cfg(test)]
 use ff::Field;
-use halo2_gadgets::ecc::{chip::EccChip, FixedPointBaseField, NonIdentityPoint, ScalarVar};
-use halo2_proofs::{
+use voting_crypto_deps::halo2_gadgets::ecc::{
+    chip::EccChip, FixedPointBaseField, NonIdentityPoint, ScalarVar,
+};
+use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk::{Column, Error, Instance as InstanceColumn},
 };
-use orchard::constants::{OrchardBaseFieldBases, OrchardFixedBases};
+use voting_crypto_deps::orchard::constants::{OrchardBaseFieldBases, OrchardFixedBases};
 #[cfg(test)]
-use pasta_curves::arithmetic::CurveAffine;
-use pasta_curves::pallas;
+use voting_crypto_deps::pasta_curves::arithmetic::CurveAffine;
+use voting_crypto_deps::pasta_curves::pallas;
 
 use super::nonzero::NonZeroConfig;
 
@@ -63,7 +65,7 @@ pub(crate) struct EaPkInstanceLoc {
 /// introducing a second generator point; the custom 30-bit table shares the
 /// same generator as the full-scalar SpendAuthG.
 pub fn spend_auth_g_affine() -> pallas::Affine {
-    orchard::constants::fixed_bases::spend_auth_g::generator()
+    voting_crypto_deps::orchard::constants::fixed_bases::spend_auth_g::generator()
 }
 
 /// Converts a `pallas::Base` field element to a `pallas::Scalar`.
@@ -196,7 +198,7 @@ pub(crate) fn prove_elgamal_encryptions(
     mut layouter: impl Layouter<pallas::Base>,
     namespace: &str,
     indices: core::ops::Range<usize>,
-    ea_pk: halo2_proofs::circuit::Value<pallas::Affine>,
+    ea_pk: voting_crypto_deps::halo2_proofs::circuit::Value<pallas::Affine>,
     ea_pk_loc: EaPkInstanceLoc,
     share_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
     r_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],

@@ -1,12 +1,12 @@
-use halo2_proofs::{
+use rand::rngs::OsRng;
+use std::vec::Vec;
+use voting_crypto_deps::halo2_proofs::{
     pasta::EqAffine,
     plonk::{self, create_proof, verify_proof, SingleVerifier},
     poly::commitment::Params,
     transcript::{Blake2bRead, Blake2bWrite, Challenge255},
 };
-use pasta_curves::vesta;
-use rand::rngs::OsRng;
-use std::vec::Vec;
+use voting_crypto_deps::pasta_curves::vesta;
 
 pub(crate) fn create_proof_bytes<ConcreteCircuit>(
     params: &Params<EqAffine>,
@@ -102,7 +102,7 @@ impl std::error::Error for ProveError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use halo2_proofs::{
+    use voting_crypto_deps::halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner, Value},
         plonk::{Advice, Column, ConstraintSystem, Error as PlonkError, Instance},
     };

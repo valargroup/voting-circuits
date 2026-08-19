@@ -52,7 +52,7 @@
 
 use std::vec::Vec;
 
-use halo2_gadgets::{
+use voting_crypto_deps::halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
         CircuitVersion, NonIdentityPoint, ScalarFixed,
@@ -64,11 +64,11 @@ use halo2_gadgets::{
     sinsemilla::chip::{SinsemillaChip, SinsemillaConfig},
     utilities::lookup_range_check::{LookupRangeCheck, LookupRangeCheckConfig},
 };
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{floor_planner, AssignedCell, Layouter, Value},
     plonk::{self, Advice, Column, ConstraintSystem, Fixed, Instance as InstanceColumn},
 };
-use orchard::{
+use voting_crypto_deps::orchard::{
     circuit::{
         commit_ivk::{CommitIvkChip, CommitIvkConfig},
         gadget::{
@@ -78,7 +78,7 @@ use orchard::{
     },
     constants::{OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains},
 };
-use pasta_curves::{pallas, vesta};
+use voting_crypto_deps::pasta_curves::{pallas, vesta};
 
 use super::gadgets::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
 use crate::{
@@ -102,7 +102,7 @@ use crate::{
 ///
 /// K=11 (2,048 rows). Condition 11 is divided between two sets of ten advice
 /// columns, and condition 10 uses a separate four-column Poseidon track.
-/// [`halo2_proofs::dev::CircuitCost`] reports a 2,021-row high-water mark,
+/// [`voting_crypto_deps::halo2_proofs::dev::CircuitCost`] reports a 2,021-row high-water mark,
 /// leaving 27 rows of headroom.
 ///
 /// Key contributors (rough per-region heights, not per-column sums):
@@ -1593,13 +1593,15 @@ mod tests {
     use ff::{Field, PrimeField};
     use group::ff::PrimeFieldBits;
     use group::{Curve, Group};
-    use halo2_gadgets::sinsemilla::primitives::CommitDomain;
-    use halo2_proofs::dev::MockProver;
-    use pasta_curves::arithmetic::CurveAffine;
-    use pasta_curves::pallas;
     use rand::rngs::OsRng;
+    use voting_crypto_deps::halo2_gadgets::sinsemilla::primitives::CommitDomain;
+    use voting_crypto_deps::halo2_proofs::dev::MockProver;
+    use voting_crypto_deps::pasta_curves::arithmetic::CurveAffine;
+    use voting_crypto_deps::pasta_curves::pallas;
 
-    use orchard::constants::{fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
+    use voting_crypto_deps::orchard::constants::{
+        fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE,
+    };
 
     /// Generates an El Gamal keypair for testing.
     fn generate_ea_keypair() -> (pallas::Scalar, pallas::Affine) {
@@ -3765,9 +3767,9 @@ mod tests {
     #[test]
     #[ignore = "long-running row-budget diagnostic; run with `cargo test vote_proof::circuit::tests::row_budget -- --ignored --nocapture --test-threads=1`"]
     fn row_budget() {
-        use halo2_proofs::dev::CircuitCost;
-        use pasta_curves::vesta;
         use std::println;
+        use voting_crypto_deps::halo2_proofs::dev::CircuitCost;
+        use voting_crypto_deps::pasta_curves::vesta;
 
         let (circuit, _) = make_test_data();
 

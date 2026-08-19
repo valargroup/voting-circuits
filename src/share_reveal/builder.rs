@@ -5,8 +5,8 @@
 //! all derived values (shares_hash, vote_commitment, share_nullifier,
 //! tree root) so the caller only provides raw witness data.
 
-use halo2_proofs::circuit::Value;
-use pasta_curves::pallas;
+use voting_crypto_deps::halo2_proofs::circuit::Value;
+use voting_crypto_deps::pasta_curves::pallas;
 
 use super::circuit::{share_nullifier_hash, Circuit, Instance};
 use crate::{
@@ -125,8 +125,8 @@ pub fn build_share_reveal(
 mod tests {
     use super::*;
     use group::Curve;
-    use halo2_proofs::dev::MockProver;
-    use pasta_curves::pallas;
+    use voting_crypto_deps::halo2_proofs::dev::MockProver;
+    use voting_crypto_deps::pasta_curves::pallas;
 
     use crate::gadgets::elgamal::{elgamal_encrypt, spend_auth_g_affine};
     use crate::shares_hash::share_commitment;

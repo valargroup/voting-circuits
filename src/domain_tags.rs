@@ -17,7 +17,7 @@
 //!   BLAKE2b construction produces several independent vote-proof streams.
 
 use ff::PrimeField;
-use pasta_curves::pallas;
+use voting_crypto_deps::pasta_curves::pallas;
 
 /// Domain tag for Vote Authority Note commitments in the shared vote tree.
 pub const DOMAIN_VAN: u64 = 0;

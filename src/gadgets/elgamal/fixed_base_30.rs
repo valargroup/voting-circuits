@@ -8,18 +8,18 @@
 
 use ff::{Field, PrimeField};
 use group::Curve;
-use halo2_gadgets::{
+use lazy_static::lazy_static;
+use voting_crypto_deps::halo2_gadgets::{
     ecc::chip::{compute_lagrange_coeffs, H},
     utilities::decompose_running_sum::RunningSumConfig,
 };
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter, Region, Value},
     plonk::{Advice, Column, ConstraintSystem, Constraints, Error, Expression, Fixed, Selector},
     poly::Rotation,
 };
-use lazy_static::lazy_static;
-use orchard::constants::fixed_bases::spend_auth_g;
-use pasta_curves::{arithmetic::CurveAffine, pallas};
+use voting_crypto_deps::orchard::constants::fixed_bases::spend_auth_g;
+use voting_crypto_deps::pasta_curves::{arithmetic::CurveAffine, pallas};
 
 use crate::params::{RANGE_CHECK_WORD_BITS, SHARE_VALUE_BITS};
 
@@ -316,7 +316,7 @@ impl SpendAuthGFixedBase30Config {
                 .zip(running_sum[window + 1].value())
                 .map(|(current, next)| {
                     let word = *current - *next * pallas::Base::from(1 << WINDOW_BITS);
-                    word.to_repr().as_ref()[0] as usize
+                    word.to_repr()[0] as usize
                 });
             let selected = self.assign_selected_point(region, window, digit)?;
 
@@ -575,7 +575,7 @@ mod tests {
     use super::*;
     use crate::params::SHARE_VALUE_LIMIT;
     use group::Group;
-    use halo2_proofs::{
+    use voting_crypto_deps::halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::MockProver,
         plonk::{Circuit, ConstraintSystem, Error, Instance},

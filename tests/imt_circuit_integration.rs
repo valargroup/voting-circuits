@@ -7,25 +7,25 @@
 //!   sentinel injection path using `imt-tree` functions directly
 
 use ff::{Field, PrimeField};
-use halo2_proofs::dev::MockProver;
 use imt_tree::tree::{
     build_levels, build_punctured_ranges, commit_punctured_ranges, find_punctured_range_for_value,
     precompute_empty_hashes, verify_punctured_range_spans, PuncturedRange, TREE_DEPTH,
 };
 use incrementalmerkletree::{Hashable, Level};
-use orchard::{
+use rand::rngs::OsRng;
+use voting_circuits::delegation::{
+    build_delegation_bundle, build_nullifier_list, build_sentinel_list, ImtError, ImtProofData,
+    ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
+};
+use voting_crypto_deps::halo2_proofs::dev::MockProver;
+use voting_crypto_deps::orchard::{
     keys::{FullViewingKey, Scope, SpendingKey},
     note::{ExtractedNoteCommitment, Note, NoteVersion, Rho},
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
     NOTE_COMMITMENT_TREE_DEPTH,
 };
-use pasta_curves::pallas;
-use rand::rngs::OsRng;
-use voting_circuits::delegation::{
-    build_delegation_bundle, build_nullifier_list, build_sentinel_list, ImtError, ImtProofData,
-    ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
-};
+use voting_crypto_deps::pasta_curves::pallas;
 
 /// Build a note commitment tree with up to 4 notes, returning
 /// `(inputs, nc_root)` suitable for `build_delegation_bundle`.

@@ -5,7 +5,7 @@
 
 use std::{string::String, vec::Vec};
 
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     pasta::EqAffine,
     plonk::{self, keygen_pk, keygen_vk},
     poly::commitment::Params,
@@ -173,9 +173,9 @@ pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String
 mod tests {
     use super::*;
     use crate::ProveError;
-    use halo2_proofs::plonk;
-    use pasta_curves::group::ff::PrimeField;
-    use pasta_curves::pallas;
+    use voting_crypto_deps::halo2_proofs::plonk;
+    use voting_crypto_deps::pasta_curves::group::ff::PrimeField;
+    use voting_crypto_deps::pasta_curves::pallas;
 
     fn serialize_instance(instance: &Instance) -> Vec<u8> {
         instance
@@ -263,7 +263,7 @@ mod tests {
         use crate::gadgets::elgamal::spend_auth_g_affine;
         use crate::vote_proof::build_vote_proof_from_delegation;
         use group::Curve;
-        use orchard::keys::SpendingKey;
+        use voting_crypto_deps::orchard::keys::SpendingKey;
 
         let sk = SpendingKey::from_bytes([0x42; 32]).expect("valid test spending key");
         let ea_pk = (spend_auth_g_affine() * pallas::Scalar::from(42u64)).to_affine();

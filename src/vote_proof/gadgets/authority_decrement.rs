@@ -132,7 +132,7 @@
 use std::vec::Vec;
 
 use ff::{Field, PrimeField};
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
     plonk::{
         self, Advice, Column, ConstraintSystem, Constraints, Expression, Selector, TableColumn,
@@ -140,9 +140,9 @@ use halo2_proofs::{
     },
     poly::Rotation,
 };
-use pasta_curves::pallas;
+use voting_crypto_deps::pasta_curves::pallas;
 
-use halo2_gadgets::utilities::bool_check;
+use voting_crypto_deps::halo2_gadgets::utilities::bool_check;
 
 use crate::vote_proof::circuit::MAX_PROPOSAL_ID;
 
@@ -574,14 +574,14 @@ impl AuthorityDecrementChip {
                         let proposal_id_base = proposal_id_cell.value().copied();
                         let b_i_val = proposal_authority_old_val.map(|b| {
                             let r = b.to_repr();
-                            let arr = r.as_ref();
+                            let arr: &[u8] = r.as_ref();
                             let low = u64::from_le_bytes(arr[0..8].try_into().unwrap()) & 0xFFFF;
                             let bit = (low >> i) & 1;
                             pallas::Base::from(bit)
                         });
                         let sel_i_val = proposal_id_base.map(|pid| {
                             let r = pid.to_repr();
-                            let arr = r.as_ref();
+                            let arr: &[u8] = r.as_ref();
                             let pid_u64 = u64::from_le_bytes(arr[0..8].try_into().unwrap());
                             pallas::Base::from(if pid_u64 == i as u64 { 1u64 } else { 0 })
                         });
@@ -732,12 +732,12 @@ impl AuthorityDecrementChip {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use halo2_proofs::{
+    use voting_crypto_deps::halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::{MockProver, VerifyFailure},
         plonk::{Circuit, Column, ConstraintSystem, Instance},
     };
-    use pasta_curves::pallas;
+    use voting_crypto_deps::pasta_curves::pallas;
 
     // ----------------------------------------------------------------
     // Minimal test circuit wrapping only AuthorityDecrementChip.
@@ -841,7 +841,7 @@ mod tests {
         authority_old: u64,
         proposal_id: u64,
         authority_new_override: Option<pallas::Base>,
-    ) -> Result<(), Vec<halo2_proofs::dev::VerifyFailure>> {
+    ) -> Result<(), Vec<voting_crypto_deps::halo2_proofs::dev::VerifyFailure>> {
         run_chip_with_one_shifted(
             authority_old,
             proposal_id,

@@ -12,13 +12,13 @@
 //! client misuse driving the honest circuit from substituting VAN
 //! commitments for vote commitments in the shared tree.
 
-use pasta_curves::pallas;
+use voting_crypto_deps::pasta_curves::pallas;
 
-use halo2_gadgets::poseidon::{
+use voting_crypto_deps::halo2_gadgets::poseidon::{
     primitives::{self as poseidon, ConstantLength},
     Hash as PoseidonHash, Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig,
 };
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk,
 };

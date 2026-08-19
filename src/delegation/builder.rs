@@ -10,8 +10,9 @@ use std::{iter, vec::Vec};
 
 use ff::{Field, PrimeField, PrimeFieldBits};
 use group::{Curve, GroupEncoding};
-use halo2_proofs::circuit::Value;
-use orchard::{
+use rand::{CryptoRng, RngCore};
+use voting_crypto_deps::halo2_proofs::circuit::Value;
+use voting_crypto_deps::orchard::{
     constants::{
         fixed_bases::{COMMIT_IVK_PERSONALIZATION, NOTE_COMMITMENT_PERSONALIZATION},
         L_ORCHARD_BASE, L_VALUE,
@@ -25,11 +26,10 @@ use orchard::{
     tree::MerklePath,
     value::NoteValue,
 };
-use pasta_curves::{
+use voting_crypto_deps::pasta_curves::{
     arithmetic::{CurveAffine, CurveExt},
     pallas,
 };
-use rand::{CryptoRng, RngCore};
 
 use super::{
     circuit::{
@@ -158,7 +158,7 @@ fn external_ivk_scalar(fvk: &FullViewingKey, ak: &SpendValidatingKey) -> pallas:
     let ak_point: pallas::Point = ak.into();
     let ak_x = point_x(&ak_point);
     let rivk = fvk.rivk(Scope::External).inner();
-    let domain = sinsemilla::CommitDomain::new(COMMIT_IVK_PERSONALIZATION);
+    let domain = voting_crypto_deps::sinsemilla::CommitDomain::new(COMMIT_IVK_PERSONALIZATION);
     let ivk = domain
         .short_commit(
             iter::empty()
@@ -208,7 +208,7 @@ fn validate_padding_slot_index(slot_index: usize) -> Result<(), DelegationBuildE
 
 // Derives the synthetic `(g_d_pad, pk_d_pad)` pair for padding slot `slot_index`.
 // `g_d_pad` is domain-separated from Orchard's `DiversifyHash`, so the pair is
-// intentionally not a valid `orchard::Address`. `pk_d_pad = [ivk] * g_d_pad`
+// intentionally not a valid `voting_crypto_deps::orchard::Address`. `pk_d_pad = [ivk] * g_d_pad`
 // satisfies condition 11 by construction (callers must pass the external ivk,
 // since padding pins `is_internal = false`). Both points are wrapped as
 // `NonIdentityPallasPoint` via `non_identity_padding_point` so the invariant fails at
@@ -259,7 +259,7 @@ fn note_commitment_point(
     psi: pallas::Base,
     rcm: pallas::Scalar,
 ) -> Option<pallas::Point> {
-    let domain = sinsemilla::CommitDomain::new(NOTE_COMMITMENT_PERSONALIZATION);
+    let domain = voting_crypto_deps::sinsemilla::CommitDomain::new(NOTE_COMMITMENT_PERSONALIZATION);
     // Mirrors Orchard NoteCommit while allowing synthetic padding points.
     domain
         .commit(
@@ -717,7 +717,7 @@ pub fn build_delegation_bundle(
     real_notes: Vec<RealNoteInput>,
     fvk: &FullViewingKey,
     alpha: pallas::Scalar,
-    output_recipient: orchard::Address,
+    output_recipient: voting_crypto_deps::orchard::Address,
     vote_round_id: pallas::Base,
     nc_root: pallas::Base,
     van_comm_rand: pallas::Base,
@@ -967,18 +967,18 @@ mod tests {
     use super::*;
     use crate::delegation::imt::{ImtError, SpacedLeafImtProvider};
     use ff::Field;
-    use halo2_proofs::dev::MockProver;
     use incrementalmerkletree::{Hashable, Level};
-    use orchard::{
+    use rand::rngs::OsRng;
+    use std::cell::{Cell, RefCell};
+    use voting_crypto_deps::halo2_proofs::dev::MockProver;
+    use voting_crypto_deps::orchard::{
         constants::MERKLE_DEPTH_ORCHARD,
         keys::{FullViewingKey, Scope, SpendingKey},
         note::{commitment::ExtractedNoteCommitment, Note, Rho},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
-    use pasta_curves::pallas;
-    use rand::rngs::OsRng;
-    use std::cell::{Cell, RefCell};
+    use voting_crypto_deps::pasta_curves::pallas;
 
     /// Merged circuit K value.
     const K: u32 = circuit::K;
@@ -1462,7 +1462,7 @@ mod tests {
     /// personalization) rather than claiming a formal no-collision invariant.
     #[test]
     fn test_padding_personalization_is_domain_separated_from_orchard() {
-        use orchard::constants::KEY_DIVERSIFICATION_PERSONALIZATION;
+        use voting_crypto_deps::orchard::constants::KEY_DIVERSIFICATION_PERSONALIZATION;
 
         assert_ne!(
             PADDING_PERSONALIZATION, KEY_DIVERSIFICATION_PERSONALIZATION,

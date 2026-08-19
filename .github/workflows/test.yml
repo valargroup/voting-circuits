@@ -46,11 +46,63 @@ jobs:
       - name: Run short tests
         run: cargo test --locked
 
+      - name: Check upstream dependency graph
+        run: |
+          if cargo tree --locked -e normal --prefix none | grep -Eq '^zakura-'; then
+            echo "Zakura package found in the upstream dependency graph"
+            exit 1
+          fi
+
       - name: Run IMT integration tests
         run: cargo test --locked --features unstable-internal-api --test imt_circuit_integration
 
       - name: Check delegation benchmark
         run: cargo bench --locked --bench delegation -- --test
+
+  zakura-tests:
+    name: Zakura backend
+    if: github.event_name != 'workflow_dispatch' || inputs.run == 'full-suite'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test upstream validator facade
+        run: cargo test --locked -p voting-crypto-deps --no-default-features --features upstream-validator
+
+      - name: Run short tests
+        run: cargo test --locked --no-default-features --features zakura
+
+      - name: Check verifying-key fingerprints
+        run: cargo test --locked --no-default-features --features zakura vk_fingerprint_unchanged -- --ignored --test-threads=1
+
+      - name: Check Zakura dependency graph
+        run: |
+          if cargo tree --locked --no-default-features --features zakura -e normal --prefix none \
+            | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla) v'; then
+            echo "Upstream cryptography package found in the Zakura dependency graph"
+            exit 1
+          fi
+
+      - name: Test Zakura validator facade
+        run: |
+          cargo test --locked -p voting-crypto-deps --no-default-features --features zakura-validator
+          if cargo tree --locked -p voting-crypto-deps --no-default-features \
+            --features zakura-validator -e normal --prefix none \
+            | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla|zcash_primitives) v'; then
+            echo "Upstream cryptography package found in the Zakura validator graph"
+            exit 1
+          fi
+
+      - name: Check delegation benchmark
+        run: cargo bench --locked --no-default-features --features zakura --bench delegation -- --test
 
   full-suite:
     name: Full suite
@@ -74,6 +126,13 @@ jobs:
 
       - name: Run short tests
         run: cargo test --locked
+
+      - name: Check upstream dependency graph
+        run: |
+          if cargo tree --locked -e normal --prefix none | grep -Eq '^zakura-'; then
+            echo "Zakura package found in the upstream dependency graph"
+            exit 1
+          fi
 
       - name: Run long tests
         run: cargo test --locked -- --ignored --skip row_budget --skip cost_breakdown

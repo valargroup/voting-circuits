@@ -11,21 +11,21 @@
 //! The same CommitIvk + pk_d derivation pattern is used in the main Orchard action
 //! circuit for spend authority and diversified address integrity.
 
-use halo2_gadgets::{
+use voting_crypto_deps::halo2_gadgets::{
     ecc::{chip::EccChip, NonIdentityPoint, Point, ScalarFixed, ScalarVar},
     sinsemilla::chip::SinsemillaChip,
 };
-use halo2_proofs::{
+use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk::Error,
 };
-use orchard::{
+use voting_crypto_deps::orchard::{
     circuit::commit_ivk::CommitIvkChip,
     constants::{
         OrchardCommitDomains, OrchardFixedBases, OrchardFixedBasesFull, OrchardHashDomains,
     },
 };
-use pasta_curves::pallas;
+use voting_crypto_deps::pasta_curves::pallas;
 
 // ================================================================
 // SpendAuthG fixed-base multiplication
@@ -49,7 +49,7 @@ pub(crate) fn spend_auth_g_mul(
     // For call sites that only need the [scalar]*SpendAuthG multiplication
     // (e.g. vote proof's [vsk]*SpendAuthG to derive ak), we use the same
     // underlying gadget via a dedicated mul helper.
-    use halo2_gadgets::ecc::FixedPoint;
+    use voting_crypto_deps::halo2_gadgets::ecc::FixedPoint;
     let spend_auth_g = OrchardFixedBasesFull::SpendAuthG;
     let spend_auth_g = FixedPoint::from_inner(ecc_chip, spend_auth_g);
     let (point, _) = spend_auth_g.mul(layouter, scalar)?;
@@ -94,7 +94,7 @@ pub(crate) fn prove_address_ownership(
     g_d: &NonIdentityPoint<pallas::Affine, EccChip<OrchardFixedBases>>,
     pk_d_claimed: &NonIdentityPoint<pallas::Affine, EccChip<OrchardFixedBases>>,
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, Error> {
-    use orchard::circuit::commit_ivk::gadgets::commit_ivk;
+    use voting_crypto_deps::orchard::circuit::commit_ivk::gadgets::commit_ivk;
 
     let ivk = commit_ivk(
         sinsemilla_chip,

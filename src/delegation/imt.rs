@@ -9,8 +9,8 @@
 //! `(nf_lo, nf_hi)` and is not equal to `nf_mid`.
 //! Used by the delegation circuit and builder.
 
-use pasta_curves::pallas;
 use std::string::String;
+use voting_crypto_deps::pasta_curves::pallas;
 
 use crate::protocol_hash::{poseidon_hash_2, poseidon_hash_3};
 
