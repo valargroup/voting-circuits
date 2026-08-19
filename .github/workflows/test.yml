@@ -46,6 +46,16 @@ jobs:
       - name: Run short tests
         run: cargo test --locked
 
+      - name: Check minimal upstream VCT facade
+        run: |
+          cargo check --locked -p voting-crypto-deps --no-default-features --features upstream-vct
+          if cargo tree --locked -p voting-crypto-deps --no-default-features \
+            --features upstream-vct -e normal --prefix none \
+            | grep -Eq '^(orchard|reddsa|zcash_primitives) v'; then
+            echo "Non-VCT package found in the upstream VCT dependency graph"
+            exit 1
+          fi
+
       - name: Check upstream dependency graph
         run: |
           if cargo tree --locked -e normal --prefix none | grep -Eq '^zakura-'; then
@@ -88,6 +98,16 @@ jobs:
           if cargo tree --locked --no-default-features --features zakura -e normal --prefix none \
             | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla) v'; then
             echo "Upstream cryptography package found in the Zakura dependency graph"
+            exit 1
+          fi
+
+      - name: Check minimal Zakura VCT facade
+        run: |
+          cargo check --locked -p voting-crypto-deps --no-default-features --features zakura-vct
+          if cargo tree --locked -p voting-crypto-deps --no-default-features \
+            --features zakura-vct -e normal --prefix none \
+            | grep -Eq '^(zakura-orchard|zakura-reddsa|zakura-primitives) v'; then
+            echo "Non-VCT package found in the Zakura VCT dependency graph"
             exit 1
           fi
 
