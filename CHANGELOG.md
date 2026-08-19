@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.10.1
+
 ### Added
 
 - Added an upstream-default, Zakura-opt-in cryptography dependency facade so
