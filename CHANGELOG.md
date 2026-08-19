@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.10.2
+
+### Added
+
+- Added fine-grained upstream and Zakura cryptography facade features,
+  including minimal `upstream-vct` and `zakura-vct` selections that avoid
+  enabling Orchard and validator-only dependencies.
+
 ## v0.10.1
 
 ### Added

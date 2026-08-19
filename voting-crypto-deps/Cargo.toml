@@ -1,6 +1,6 @@
 [package]
 name = "voting-crypto-deps"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.86"
 description = "Selectable upstream and Zakura cryptography dependency facade for shielded voting"
@@ -10,26 +10,44 @@ readme = "README.md"
 
 [features]
 default = ["upstream"]
+upstream-pasta = ["dep:upstream-pasta-curves"]
+upstream-gadgets = ["dep:upstream-halo2-gadgets"]
+upstream-poseidon = ["dep:upstream-halo2-poseidon"]
+upstream-proofs = ["dep:upstream-halo2-proofs"]
+upstream-orchard = ["dep:upstream-orchard"]
+upstream-sinsemilla = ["dep:upstream-sinsemilla"]
+upstream-vct = [
+    "upstream-pasta",
+    "upstream-gadgets",
+]
 upstream = [
-    "dep:upstream-halo2-gadgets",
-    "dep:upstream-halo2-poseidon",
-    "dep:upstream-halo2-proofs",
-    "dep:upstream-orchard",
-    "dep:upstream-pasta-curves",
-    "dep:upstream-sinsemilla",
+    "upstream-vct",
+    "upstream-poseidon",
+    "upstream-proofs",
+    "upstream-orchard",
+    "upstream-sinsemilla",
 ]
 upstream-validator = [
     "upstream",
     "dep:upstream-reddsa",
     "dep:upstream-zcash-primitives",
 ]
+zakura-pasta = ["dep:zakura-pasta-curves"]
+zakura-gadgets = ["dep:zakura-halo2-gadgets"]
+zakura-poseidon = ["dep:zakura-halo2-poseidon"]
+zakura-proofs = ["dep:zakura-halo2-proofs"]
+zakura-orchard = ["dep:zakura-orchard"]
+zakura-sinsemilla = ["dep:zakura-sinsemilla"]
+zakura-vct = [
+    "zakura-pasta",
+    "zakura-gadgets",
+]
 zakura = [
-    "dep:zakura-halo2-gadgets",
-    "dep:zakura-halo2-poseidon",
-    "dep:zakura-halo2-proofs",
-    "dep:zakura-orchard",
-    "dep:zakura-pasta-curves",
-    "dep:zakura-sinsemilla",
+    "zakura-vct",
+    "zakura-poseidon",
+    "zakura-proofs",
+    "zakura-orchard",
+    "zakura-sinsemilla",
 ]
 zakura-validator = [
     "zakura",
