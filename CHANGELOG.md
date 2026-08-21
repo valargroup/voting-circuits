@@ -5,7 +5,7 @@
 ### Changed
 
 - Updated the Zakura cryptography family pin from `1.0.0-rc.1` to
-  `1.0.0-rc.2` and released `voting-crypto-deps` `0.1.2`. Field, curve, and RNG
+  `1.0.0-rc.3` and released `voting-crypto-deps` `0.1.2`. Field, curve, and RNG
   traits are now selected through the active backend so upstream and Zakura
   remain type-coherent across their dependency major versions.
 

@@ -70,12 +70,12 @@ upstream-rand = { package = "rand", version = "0.8", optional = true, default-fe
 upstream-sinsemilla = { package = "sinsemilla", version = "0.1", optional = true }
 upstream-zcash-primitives = { package = "zcash_primitives", version = "0.30", optional = true, default-features = false, features = ["std"] }
 
-zakura-halo2-gadgets = { package = "zakura-halo2-gadgets", version = "=1.0.0-rc.2", optional = true, default-features = false }
-zakura-halo2-poseidon = { package = "zakura-halo2-poseidon", version = "=1.0.0-rc.2", optional = true }
-zakura-halo2-proofs = { package = "zakura-halo2-proofs", version = "=1.0.0-rc.2", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
-zakura-orchard = { package = "zakura-orchard", version = "=1.0.0-rc.2", optional = true, features = ["circuit", "unstable-voting-circuits"] }
-zakura-pasta-curves = { package = "zakura-pasta-curves", version = "=1.0.0-rc.2", optional = true }
+zakura-halo2-gadgets = { package = "zakura-halo2-gadgets", version = "=1.0.0-rc.3", optional = true, default-features = false }
+zakura-halo2-poseidon = { package = "zakura-halo2-poseidon", version = "=1.0.0-rc.3", optional = true }
+zakura-halo2-proofs = { package = "zakura-halo2-proofs", version = "=1.0.0-rc.3", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
+zakura-orchard = { package = "zakura-orchard", version = "=1.0.0-rc.3", optional = true, features = ["circuit", "unstable-voting-circuits"] }
+zakura-pasta-curves = { package = "zakura-pasta-curves", version = "=1.0.0-rc.3", optional = true }
 zakura-rand = { package = "rand", version = "0.10", optional = true, default-features = false, features = ["sys_rng"] }
-zakura-reddsa = { package = "zakura-reddsa", version = "=1.0.0-rc.2", optional = true, default-features = false, features = ["std"] }
-zakura-sinsemilla = { package = "zakura-sinsemilla", version = "=1.0.0-rc.2", optional = true }
-zakura-zcash-primitives = { package = "zakura-primitives", version = "=1.0.0-rc.2", optional = true, default-features = false, features = ["std"] }
+zakura-reddsa = { package = "zakura-reddsa", version = "=1.0.0-rc.3", optional = true, default-features = false, features = ["std"] }
+zakura-sinsemilla = { package = "zakura-sinsemilla", version = "=1.0.0-rc.3", optional = true }
+zakura-zcash-primitives = { package = "zakura-primitives", version = "=1.0.0-rc.3", optional = true, default-features = false, features = ["std"] }
