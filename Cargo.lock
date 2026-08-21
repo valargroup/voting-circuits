@@ -1790,7 +1790,6 @@ dependencies = [
  "incrementalmerkletree",
  "itertools 0.14.0",
  "lazy_static",
- "rand 0.8.7",
  "voting-crypto-deps",
 ]
 

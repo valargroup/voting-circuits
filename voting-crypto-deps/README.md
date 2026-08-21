@@ -19,9 +19,11 @@ voting-crypto-deps = { version = "0.1", default-features = false, features = ["u
 
 The equivalent `zakura-vct` feature selects the Zakura packages. Individual
 packages can also be selected with the `upstream-pasta`, `upstream-gadgets`,
-`upstream-poseidon`, `upstream-proofs`, `upstream-orchard`, and
-`upstream-sinsemilla` features or their `zakura-*` counterparts. Features from
-the two package families cannot be mixed.
+`upstream-poseidon`, `upstream-proofs`, `upstream-orchard`, `upstream-sinsemilla`,
+and `upstream-rand` features or their `zakura-*` counterparts. The `upstream`
+and `zakura` aggregates include the matching RNG crate (`rand` 0.8 upstream,
+`rand` 0.10 Zakura) so consumers share one coherent RNG trait family with the
+selected backend. Features from the two package families cannot be mixed.
 
 The Zakura package family currently requires Rust 1.88; the upstream family
 supports Rust 1.86.
