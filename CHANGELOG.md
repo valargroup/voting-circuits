@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.10.3
+
 ### Changed
 
 - Updated the Zakura cryptography family pin from `1.0.0-rc.1` to

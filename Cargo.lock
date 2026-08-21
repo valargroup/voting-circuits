@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "voting-circuits"
-version = "0.10.2"
+version = "0.10.3"
 dependencies = [
  "blake2b_simd",
  "criterion",
