@@ -1,4 +1,4 @@
-use rand::rngs::OsRng;
+use crate::rand::rngs::OsRng;
 use std::vec::Vec;
 use voting_crypto_deps::halo2_proofs::{
     pasta::EqAffine,

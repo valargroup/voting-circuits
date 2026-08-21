@@ -1,4 +1,4 @@
-use ff::Field;
+use crate::ff::Field;
 use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Chip, Layouter},
     plonk::{self, Advice, Column, ConstraintSystem, Constraints, Selector},

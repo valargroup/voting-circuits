@@ -172,9 +172,9 @@ pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::PrimeField;
     use crate::ProveError;
     use voting_crypto_deps::halo2_proofs::plonk;
-    use voting_crypto_deps::pasta_curves::group::ff::PrimeField;
     use voting_crypto_deps::pasta_curves::pallas;
 
     fn serialize_instance(instance: &Instance) -> Vec<u8> {
@@ -261,8 +261,8 @@ mod tests {
     #[ignore = "expensive end-to-end proof generation; run with --ignored when touching verification"]
     fn typed_verify_accepts_proof_created_by_typed_builder() {
         use crate::gadgets::elgamal::spend_auth_g_affine;
+        use crate::group::Curve;
         use crate::vote_proof::build_vote_proof_from_delegation;
-        use group::Curve;
         use voting_crypto_deps::orchard::keys::SpendingKey;
 
         let sk = SpendingKey::from_bytes([0x42; 32]).expect("valid test spending key");

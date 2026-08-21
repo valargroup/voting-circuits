@@ -1022,8 +1022,8 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ff::PrimeField;
-    use group::Curve;
+    use crate::ff::PrimeField;
+    use crate::group::Curve;
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
     use voting_crypto_deps::pasta_curves::pallas;
 

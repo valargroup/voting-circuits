@@ -16,7 +16,7 @@
 //! consumers and internal scalar/encryption helpers for the builder and tests.
 
 #[cfg(test)]
-use ff::Field;
+use crate::ff::Field;
 use voting_crypto_deps::halo2_gadgets::ecc::{
     chip::EccChip, FixedPointBaseField, NonIdentityPoint, ScalarVar,
 };
@@ -74,7 +74,7 @@ pub fn spend_auth_g_affine() -> pallas::Affine {
 /// every canonical `pallas::Base` element is representable as a scalar. The
 /// `Option` return keeps that invariant explicit at the call sites.
 pub(crate) fn base_to_scalar(b: pallas::Base) -> Option<pallas::Scalar> {
-    use ff::PrimeField;
+    use crate::ff::PrimeField;
     pallas::Scalar::from_repr(b.to_repr()).into()
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn elgamal_encrypt(
     randomness: pallas::Base,
     ea_pk: pallas::Affine,
 ) -> Result<(pallas::Base, pallas::Base, pallas::Base, pallas::Base), ElGamalEncryptError> {
-    use group::Curve;
+    use crate::group::Curve;
 
     let g = spend_auth_g_affine();
     if bool::from(randomness.is_zero()) {
@@ -306,7 +306,7 @@ pub(crate) fn prove_elgamal_encryptions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use group::{prime::PrimeCurveAffine, Curve};
+    use crate::group::Curve;
 
     #[test]
     fn elgamal_encrypt_rejects_zero_randomness() {
@@ -351,7 +351,7 @@ mod tests {
         let err = elgamal_encrypt(
             pallas::Base::zero(),
             pallas::Base::from(1),
-            pallas::Affine::identity(),
+            pallas::Affine::default(),
         )
         .expect_err("zero share under identity key should produce identity C2");
 

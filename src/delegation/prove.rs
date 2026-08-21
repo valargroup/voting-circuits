@@ -170,10 +170,10 @@ mod prove_tests {
     use super::*;
     use crate::delegation::builder::{build_delegation_bundle, RealNoteInput};
     use crate::delegation::imt::{ImtProvider, SpacedLeafImtProvider};
+    use crate::ff::Field;
+    use crate::rand::rngs::OsRng;
     use crate::ProveError;
-    use ff::Field;
     use incrementalmerkletree::{Hashable, Level};
-    use rand::rngs::OsRng;
     use voting_crypto_deps::halo2_proofs::plonk;
     use voting_crypto_deps::orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},

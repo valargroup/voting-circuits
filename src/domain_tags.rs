@@ -16,7 +16,7 @@
 //! - Single-byte PRF domain tags are used as byte preimage fields when one
 //!   BLAKE2b construction produces several independent vote-proof streams.
 
-use ff::PrimeField;
+use crate::ff::PrimeField;
 use voting_crypto_deps::pasta_curves::pallas;
 
 /// Domain tag for Vote Authority Note commitments in the shared vote tree.
@@ -75,7 +75,7 @@ pub fn share_spend() -> pallas::Base {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ff::PrimeField;
+    use crate::ff::PrimeField;
 
     fn assert_string_tag(name: &str, actual: pallas::Base, expected_prefix: &[u8]) {
         let mut expected = [0u8; 32];

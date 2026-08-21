@@ -8,9 +8,9 @@
 
 use std::{iter, vec::Vec};
 
-use ff::{Field, PrimeField, PrimeFieldBits};
-use group::{Curve, GroupEncoding};
-use rand::{CryptoRng, RngCore};
+use crate::ff::{Field, PrimeField, PrimeFieldBits};
+use crate::group::{Curve, GroupEncoding};
+use crate::rand::{CryptoRng, Rng};
 use voting_crypto_deps::halo2_proofs::circuit::Value;
 use voting_crypto_deps::orchard::{
     constants::{
@@ -233,7 +233,7 @@ fn padding_points(
 // The random seed is used to derive the psi and rcm for the note.
 // Note: Orchard's RandomSeed::random is not exposed. If it was exposed,
 // we could use it here instead of sampling a random seed.
-fn random_seed_for_rho(rho: &Rho, rng: &mut impl RngCore) -> RandomSeed {
+fn random_seed_for_rho(rho: &Rho, rng: &mut impl Rng) -> RandomSeed {
     loop {
         let mut rseed = [0u8; 32];
         rng.fill_bytes(&mut rseed);
@@ -432,7 +432,7 @@ fn build_padding_slot(
     dom: pallas::Base,
     ivk: pallas::Scalar,
     imt_provider: &impl ImtProvider,
-    rng: &mut impl RngCore,
+    rng: &mut impl Rng,
     precomputed: Option<&PrecomputedRandomness>,
 ) -> Result<PaddingSlot, DelegationBuildError> {
     let location = PrecomputedRandomnessLocation::PaddedNote(pad_idx);
@@ -508,7 +508,7 @@ pub(super) fn build_padding_slot_for_testing(
     ak: &SpendValidatingKey,
     dom: pallas::Base,
     imt_provider: &impl ImtProvider,
-    rng: &mut impl RngCore,
+    rng: &mut impl Rng,
 ) -> Result<PaddingSlotForTesting, DelegationBuildError> {
     let padding = build_padding_slot(
         slot_index,
@@ -722,7 +722,7 @@ pub fn build_delegation_bundle(
     nc_root: pallas::Base,
     van_comm_rand: pallas::Base,
     imt_provider: &impl ImtProvider,
-    rng: &mut (impl RngCore + CryptoRng),
+    rng: &mut (impl Rng + CryptoRng),
     precomputed: Option<&PrecomputedRandomness>,
 ) -> Result<DelegationBundle, DelegationBuildError> {
     // The circuit exposes a fixed MAX_REAL_NOTES shape; callers split larger
@@ -966,9 +966,9 @@ pub fn build_delegation_bundle(
 mod tests {
     use super::*;
     use crate::delegation::imt::{ImtError, SpacedLeafImtProvider};
-    use ff::Field;
+    use crate::ff::Field;
+    use crate::rand::rngs::OsRng;
     use incrementalmerkletree::{Hashable, Level};
-    use rand::rngs::OsRng;
     use std::cell::{Cell, RefCell};
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
     use voting_crypto_deps::orchard::{
@@ -1035,7 +1035,7 @@ mod tests {
         }
     }
 
-    fn precomputed_padding_note(rng: &mut impl RngCore) -> (PaddedNoteData, Rho, RandomSeed) {
+    fn precomputed_padding_note(rng: &mut impl Rng) -> (PaddedNoteData, Rho, RandomSeed) {
         let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
         let rseed = random_seed_for_rho(&rho, &mut *rng);
         (
@@ -1129,7 +1129,7 @@ mod tests {
         scopes: &[Scope],
         note_version: NoteVersion,
         imt_provider: &impl ImtProvider,
-        rng: &mut impl RngCore,
+        rng: &mut impl Rng,
     ) -> (Vec<RealNoteInput>, pallas::Base) {
         let n = values.len();
         assert!((1..=circuit::MAX_REAL_NOTES).contains(&n));
@@ -1210,7 +1210,7 @@ mod tests {
         values: &[u64],
         scopes: &[Scope],
         imt_provider: &impl ImtProvider,
-        rng: &mut impl RngCore,
+        rng: &mut impl Rng,
     ) -> (Vec<RealNoteInput>, pallas::Base) {
         make_real_note_inputs_with_version(
             fvk,
@@ -1267,7 +1267,7 @@ mod tests {
     fn build_single_note_bundle_with_fvk_and_precomputed(
         fvk: &FullViewingKey,
         precomputed: &PrecomputedRandomness,
-        rng: &mut (impl RngCore + CryptoRng),
+        rng: &mut (impl Rng + CryptoRng),
     ) -> Result<DelegationBundle, DelegationBuildError> {
         let output_recipient = fvk.address_at(1u32, Scope::External);
         let vote_round_id = pallas::Base::random(&mut *rng);
@@ -1292,7 +1292,7 @@ mod tests {
         )
     }
 
-    fn make_valid_padded_note_data(rng: &mut impl RngCore) -> PaddedNoteData {
+    fn make_valid_padded_note_data(rng: &mut impl Rng) -> PaddedNoteData {
         let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
         let rseed = random_seed_for_rho(&rho, rng);
 
@@ -1487,7 +1487,7 @@ mod tests {
     /// Builds a real Orchard `Note` for use as ground truth in drift tests.
     fn fixture_real_note(
         scope: Scope,
-        rng: &mut impl RngCore,
+        rng: &mut impl Rng,
     ) -> (FullViewingKey, SpendValidatingKey, Note) {
         let sk = SpendingKey::random(rng);
         let fvk: FullViewingKey = (&sk).into();

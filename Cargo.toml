@@ -1,6 +1,6 @@
 [package]
 name = "voting-circuits"
-version = "0.10.2"
+version = "0.10.3"
 edition = "2021"
 rust-version = "1.86.0"
 description = "Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol."
@@ -10,11 +10,7 @@ readme = "README.md"
 
 [dependencies]
 # Keep this exact so a published release cannot resolve a different circuit dependency graph.
-voting-crypto-deps = { path = "voting-crypto-deps", version = "=0.1.1", default-features = false }
-# ff/group are the shared field and curve traits used by both dependency backends.
-ff = { version = "0.13", default-features = false }
-group = "0.13"
-rand = { version = "0.8", default-features = false }
+voting-crypto-deps = { path = "voting-crypto-deps", version = "=0.1.2", default-features = false }
 blake2b_simd = "1"
 # incrementalmerkletree is the Orchard Merkle API line mirrored by delegation witness construction.
 incrementalmerkletree = "0.8.1"
@@ -29,7 +25,6 @@ imt-tree = { version = "=0.2.0", optional = true }
 
 [dev-dependencies]
 criterion = "0.8"
-rand = "0.8"
 incrementalmerkletree = "0.8.1"
 
 [lints.clippy]
