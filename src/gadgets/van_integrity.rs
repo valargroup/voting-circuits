@@ -140,7 +140,7 @@ pub(crate) fn van_integrity_poseidon(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ff::PrimeField;
+    use crate::ff::PrimeField;
 
     fn base_from_repr(bytes: [u8; 32]) -> pallas::Base {
         pallas::Base::from_repr(bytes).expect("frozen vector must be canonical")

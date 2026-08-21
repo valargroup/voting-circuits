@@ -6,8 +6,8 @@
 //! addition operates on non-identity, non-exceptional points. The final two
 //! complete additions recover `[share] SpendAuthG` and add `[r] ea_pk`.
 
-use ff::{Field, PrimeField};
-use group::Curve;
+use crate::ff::{Field, PrimeField};
+use crate::group::Curve;
 use lazy_static::lazy_static;
 use voting_crypto_deps::halo2_gadgets::{
     ecc::chip::{compute_lagrange_coeffs, H},
@@ -573,8 +573,8 @@ fn window_scalar(window: usize, digit: usize) -> pallas::Scalar {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::group::Group;
     use crate::params::SHARE_VALUE_LIMIT;
-    use group::Group;
     use voting_crypto_deps::halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::MockProver,

@@ -1585,15 +1585,15 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::PrimeFieldBits;
+    use crate::ff::{Field, PrimeField};
     use crate::gadgets::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
+    use crate::group::{Curve, Group};
     use crate::params::SHARE_VALUE_LIMIT;
     use crate::protocol_hash::poseidon_hash_2;
+    use crate::rand::rngs::OsRng;
     use crate::shares_hash::{hash_share_commitment_in_circuit, share_commitment, shares_hash};
     use core::iter;
-    use ff::{Field, PrimeField};
-    use group::ff::PrimeFieldBits;
-    use group::{Curve, Group};
-    use rand::rngs::OsRng;
     use voting_crypto_deps::halo2_gadgets::sinsemilla::primitives::CommitDomain;
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
     use voting_crypto_deps::pasta_curves::arithmetic::CurveAffine;

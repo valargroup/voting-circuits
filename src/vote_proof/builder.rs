@@ -11,8 +11,8 @@
 
 use std::{string::String, vec::Vec};
 
-use ff::{Field, FromUniformBytes, PrimeField};
-use group::{Curve, GroupEncoding};
+use crate::ff::{Field, FromUniformBytes, PrimeField};
+use crate::group::{Curve, GroupEncoding};
 use voting_crypto_deps::halo2_proofs::circuit::Value;
 use voting_crypto_deps::orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
 use voting_crypto_deps::pasta_curves::{
@@ -589,8 +589,8 @@ pub fn build_vote_proof_from_delegation(
 
     // ---- Fast key-chain consistency checks (instant, no circuit) ----
     {
+        use crate::ff::PrimeFieldBits;
         use core::iter;
-        use group::ff::PrimeFieldBits;
         use voting_crypto_deps::halo2_gadgets::sinsemilla::primitives::CommitDomain;
         use voting_crypto_deps::orchard::constants::{
             fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE,
@@ -877,8 +877,8 @@ pub fn build_vote_proof_from_delegation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ff::Field;
-    use group::Group;
+    use crate::ff::Field;
+    use crate::group::Group;
 
     fn test_sk() -> SpendingKey {
         SpendingKey::from_bytes([0x42; 32]).expect("valid spending key")

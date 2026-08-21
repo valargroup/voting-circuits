@@ -131,7 +131,7 @@
 
 use std::vec::Vec;
 
-use ff::{Field, PrimeField};
+use crate::ff::{Field, PrimeField};
 use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
     plonk::{

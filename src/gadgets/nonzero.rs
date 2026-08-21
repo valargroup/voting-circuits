@@ -3,12 +3,13 @@
 //! These checks harden relations that are algebraically valid at zero but leak
 //! privacy when a prover chooses the degenerate value.
 
+use crate::ff::Field;
 use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk::{Advice, Column, ConstraintSystem, Constraints, Error, Expression, Selector},
     poly::Rotation,
 };
-use voting_crypto_deps::pasta_curves::{group::ff::Field, pallas};
+use voting_crypto_deps::pasta_curves::pallas;
 
 /// Configuration for field non-zero checks.
 #[derive(Clone, Copy, Debug)]

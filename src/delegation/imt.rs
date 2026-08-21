@@ -117,7 +117,7 @@ pub trait ImtProvider {
 // SpacedLeafImtProvider (available for proof generation and tests)
 // ================================================================
 
-use ff::Field;
+use crate::ff::Field;
 use std::vec::Vec;
 
 /// Precomputed empty subtree hashes for the IMT (Poseidon-based).
@@ -368,7 +368,7 @@ impl ImtProvider for SpacedLeafImtProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ff::PrimeField;
+    use crate::ff::PrimeField;
 
     fn base_from_repr(bytes: [u8; 32]) -> pallas::Base {
         pallas::Base::from_repr(bytes).expect("frozen vector must be canonical")

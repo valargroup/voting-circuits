@@ -1,6 +1,6 @@
 [package]
 name = "voting-crypto-deps"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.86"
 description = "Selectable upstream and Zakura cryptography dependency facade for shielded voting"
@@ -16,6 +16,7 @@ upstream-poseidon = ["dep:upstream-halo2-poseidon"]
 upstream-proofs = ["dep:upstream-halo2-proofs"]
 upstream-orchard = ["dep:upstream-orchard"]
 upstream-sinsemilla = ["dep:upstream-sinsemilla"]
+upstream-rand = ["dep:upstream-rand"]
 upstream-vct = [
     "upstream-pasta",
     "upstream-gadgets",
@@ -26,6 +27,7 @@ upstream = [
     "upstream-proofs",
     "upstream-orchard",
     "upstream-sinsemilla",
+    "upstream-rand",
 ]
 upstream-validator = [
     "upstream",
@@ -38,6 +40,7 @@ zakura-poseidon = ["dep:zakura-halo2-poseidon"]
 zakura-proofs = ["dep:zakura-halo2-proofs"]
 zakura-orchard = ["dep:zakura-orchard"]
 zakura-sinsemilla = ["dep:zakura-sinsemilla"]
+zakura-rand = ["dep:zakura-rand"]
 zakura-vct = [
     "zakura-pasta",
     "zakura-gadgets",
@@ -48,6 +51,7 @@ zakura = [
     "zakura-proofs",
     "zakura-orchard",
     "zakura-sinsemilla",
+    "zakura-rand",
 ]
 zakura-validator = [
     "zakura",
@@ -62,14 +66,16 @@ upstream-halo2-proofs = { package = "halo2_proofs", version = "0.3", optional = 
 upstream-orchard = { package = "orchard", version = "0.15", optional = true, features = ["circuit", "unstable-voting-circuits"] }
 upstream-pasta-curves = { package = "pasta_curves", version = "0.5", optional = true }
 upstream-reddsa = { package = "reddsa", version = "0.5", optional = true, default-features = false, features = ["std"] }
+upstream-rand = { package = "rand", version = "0.8", optional = true, default-features = false, features = ["getrandom"] }
 upstream-sinsemilla = { package = "sinsemilla", version = "0.1", optional = true }
 upstream-zcash-primitives = { package = "zcash_primitives", version = "0.30", optional = true, default-features = false, features = ["std"] }
 
-zakura-halo2-gadgets = { package = "zakura-halo2-gadgets", version = "=1.0.0-rc.1", optional = true, default-features = false }
-zakura-halo2-poseidon = { package = "zakura-halo2-poseidon", version = "=1.0.0-rc.1", optional = true }
-zakura-halo2-proofs = { package = "zakura-halo2-proofs", version = "=1.0.0-rc.1", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
-zakura-orchard = { package = "zakura-orchard", version = "=1.0.0-rc.1", optional = true, features = ["circuit", "unstable-voting-circuits"] }
-zakura-pasta-curves = { package = "zakura-pasta-curves", version = "=1.0.0-rc.1", optional = true }
-zakura-reddsa = { package = "zakura-reddsa", version = "=1.0.0-rc.1", optional = true, default-features = false, features = ["std"] }
-zakura-sinsemilla = { package = "zakura-sinsemilla", version = "=1.0.0-rc.1", optional = true }
-zakura-zcash-primitives = { package = "zakura-primitives", version = "=1.0.0-rc.1", optional = true, default-features = false, features = ["std"] }
+zakura-halo2-gadgets = { package = "zakura-halo2-gadgets", version = "=1.0.0-rc.2", optional = true, default-features = false }
+zakura-halo2-poseidon = { package = "zakura-halo2-poseidon", version = "=1.0.0-rc.2", optional = true }
+zakura-halo2-proofs = { package = "zakura-halo2-proofs", version = "=1.0.0-rc.2", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
+zakura-orchard = { package = "zakura-orchard", version = "=1.0.0-rc.2", optional = true, features = ["circuit", "unstable-voting-circuits"] }
+zakura-pasta-curves = { package = "zakura-pasta-curves", version = "=1.0.0-rc.2", optional = true }
+zakura-rand = { package = "rand", version = "0.10", optional = true, default-features = false, features = ["sys_rng"] }
+zakura-reddsa = { package = "zakura-reddsa", version = "=1.0.0-rc.2", optional = true, default-features = false, features = ["std"] }
+zakura-sinsemilla = { package = "zakura-sinsemilla", version = "=1.0.0-rc.2", optional = true }
+zakura-zcash-primitives = { package = "zakura-primitives", version = "=1.0.0-rc.2", optional = true, default-features = false, features = ["std"] }

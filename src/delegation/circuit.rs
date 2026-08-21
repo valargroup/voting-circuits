@@ -30,7 +30,7 @@
 
 use std::vec::Vec;
 
-use group::{Curve, GroupEncoding};
+use crate::group::{Curve, GroupEncoding};
 use voting_crypto_deps::halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
@@ -2015,9 +2015,9 @@ mod tests {
     use crate::delegation::imt::{
         derive_nullifier_domain, gov_null_hash, ImtProofData, ImtProvider, SpacedLeafImtProvider,
     };
-    use ff::Field;
+    use crate::ff::Field;
+    use crate::rand::rngs::OsRng;
     use incrementalmerkletree::{Hashable, Level};
-    use rand::rngs::OsRng;
     use std::string::{String, ToString};
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
     use voting_crypto_deps::orchard::{

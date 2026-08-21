@@ -10,10 +10,7 @@ readme = "README.md"
 
 [dependencies]
 # Keep this exact so a published release cannot resolve a different circuit dependency graph.
-voting-crypto-deps = { path = "voting-crypto-deps", version = "=0.1.1", default-features = false }
-# ff/group are the shared field and curve traits used by both dependency backends.
-ff = { version = "0.13", default-features = false }
-group = "0.13"
+voting-crypto-deps = { path = "voting-crypto-deps", version = "=0.1.2", default-features = false }
 rand = { version = "0.8", default-features = false }
 blake2b_simd = "1"
 # incrementalmerkletree is the Orchard Merkle API line mirrored by delegation witness construction.

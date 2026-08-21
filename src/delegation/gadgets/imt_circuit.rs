@@ -15,7 +15,7 @@
 //! The Merkle conditional swap gate and path synthesis are provided by
 //! [`crate::gadgets::poseidon_merkle`].
 
-use ff::Field;
+use crate::ff::Field;
 use voting_crypto_deps::halo2_gadgets::{
     ecc::chip::EccConfig,
     poseidon::{Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig},

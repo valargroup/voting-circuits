@@ -8,6 +8,11 @@
 #![deny(missing_debug_implementations)]
 #![deny(unsafe_code)]
 
+pub use voting_crypto_deps::{
+    pasta_curves::group::{self, ff},
+    rand,
+};
+
 mod domain_tags;
 mod gadgets;
 mod params;

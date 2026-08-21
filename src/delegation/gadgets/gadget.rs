@@ -3,7 +3,7 @@
 //! These are framework-level utilities that aren't tied to anything orchard-
 //! specific, so they live here rather than in `voting_crypto_deps::orchard::circuit::gadget`.
 
-use ff::Field;
+use crate::ff::Field;
 use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk::{self, Advice, Column},

@@ -235,8 +235,8 @@ pub fn shares_hash_from_comms(share_comms: [pallas::Base; 16]) -> pallas::Base {
 mod tests {
     use super::*;
 
-    use ff::{Field, PrimeField};
-    use rand::rngs::OsRng;
+    use crate::ff::{Field, PrimeField};
+    use crate::rand::rngs::OsRng;
     use voting_crypto_deps::halo2_gadgets::poseidon::Pow5Config as PoseidonConfig;
     use voting_crypto_deps::halo2_proofs::{
         circuit::{floor_planner, Value},

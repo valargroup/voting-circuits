@@ -19,6 +19,7 @@
         feature = "upstream-poseidon",
         feature = "upstream-proofs",
         feature = "upstream-orchard",
+        feature = "upstream-rand",
         feature = "upstream-sinsemilla",
         feature = "upstream-validator",
     ),
@@ -28,6 +29,7 @@
         feature = "zakura-poseidon",
         feature = "zakura-proofs",
         feature = "zakura-orchard",
+        feature = "zakura-rand",
         feature = "zakura-sinsemilla",
         feature = "zakura-validator",
     )
@@ -40,6 +42,7 @@ compile_error!("upstream and Zakura dependency features cannot be enabled togeth
     feature = "upstream-poseidon",
     feature = "upstream-proofs",
     feature = "upstream-orchard",
+    feature = "upstream-rand",
     feature = "upstream-sinsemilla",
     feature = "upstream-validator",
     feature = "zakura-pasta",
@@ -47,6 +50,7 @@ compile_error!("upstream and Zakura dependency features cannot be enabled togeth
     feature = "zakura-poseidon",
     feature = "zakura-proofs",
     feature = "zakura-orchard",
+    feature = "zakura-rand",
     feature = "zakura-sinsemilla",
     feature = "zakura-validator",
 )))]
@@ -62,6 +66,8 @@ pub use upstream_halo2_proofs as halo2_proofs;
 pub use upstream_orchard as orchard;
 #[cfg(feature = "upstream-pasta")]
 pub use upstream_pasta_curves as pasta_curves;
+#[cfg(feature = "upstream-rand")]
+pub use upstream_rand as rand;
 #[cfg(feature = "upstream-validator")]
 pub use upstream_reddsa as reddsa;
 #[cfg(feature = "upstream-sinsemilla")]
@@ -79,6 +85,39 @@ pub use zakura_halo2_proofs as halo2_proofs;
 pub use zakura_orchard as orchard;
 #[cfg(feature = "zakura-pasta")]
 pub use zakura_pasta_curves as pasta_curves;
+#[cfg(feature = "zakura-rand")]
+pub mod rand {
+    pub use zakura_rand::{CryptoRng, Rng};
+
+    pub mod rngs {
+        use core::convert::Infallible;
+        use zakura_rand::{
+            rand_core::{TryCryptoRng, TryRng, UnwrapErr},
+            rngs::SysRng,
+        };
+
+        #[derive(Clone, Copy, Debug, Default)]
+        pub struct OsRng;
+
+        impl TryRng for OsRng {
+            type Error = Infallible;
+
+            fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+                UnwrapErr(SysRng).try_next_u32()
+            }
+
+            fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+                UnwrapErr(SysRng).try_next_u64()
+            }
+
+            fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+                UnwrapErr(SysRng).try_fill_bytes(dst)
+            }
+        }
+
+        impl TryCryptoRng for OsRng {}
+    }
+}
 #[cfg(feature = "zakura-validator")]
 pub use zakura_reddsa as reddsa;
 #[cfg(feature = "zakura-sinsemilla")]

@@ -4,12 +4,12 @@ use std::{
 };
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use ff::{Field, PrimeField};
 use incrementalmerkletree::{Hashable, Level};
-use rand::{rngs::OsRng, RngCore};
 use voting_circuits::delegation::{
     build_delegation_bundle, DelegationBundle, ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
 };
+use voting_circuits::ff::{Field, PrimeField};
+use voting_circuits::rand::{rngs::OsRng, Rng};
 use voting_crypto_deps::halo2_proofs::{
     plonk::{self, SingleVerifier},
     transcript::{Blake2bRead, Blake2bWrite},
@@ -77,7 +77,7 @@ fn format_bytes(bytes: usize) -> String {
 fn make_note(
     recipient: voting_crypto_deps::orchard::Address,
     value: NoteValue,
-    rng: &mut impl RngCore,
+    rng: &mut impl Rng,
 ) -> Note {
     // Generate a random nullifier for rho.
     loop {
@@ -111,7 +111,7 @@ fn make_real_note_inputs(
     fvk: &FullViewingKey,
     values: &[u64],
     imt_provider: &impl ImtProvider,
-    rng: &mut impl RngCore,
+    rng: &mut impl Rng,
 ) -> (Vec<RealNoteInput>, pallas::Base) {
     let n = values.len();
     assert!((1..=4).contains(&n));
