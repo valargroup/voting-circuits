@@ -251,6 +251,24 @@ pub struct VoteProofBundle {
     pub share_comms: [pallas::Base; 16],
 }
 
+/// Native VAN values for one proposal-authority transition.
+///
+/// This helper output lets clients derive a complete ordered authority chain
+/// before starting expensive proof generation. It uses the same address,
+/// ballot scaling, and VAN hash implementation as [`build_vote_proof_from_delegation`]
+/// and does not change the vote circuit or its public inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VoteAuthorityTransition {
+    /// VAN consumed by the vote proof.
+    pub vote_authority_note_old: pallas::Base,
+    /// VAN produced by the vote proof.
+    pub vote_authority_note_new: pallas::Base,
+    /// Proposal-authority bitmask witnessed by the consumed VAN.
+    pub proposal_authority_old: u64,
+    /// Proposal-authority bitmask after consuming `proposal_id`.
+    pub proposal_authority_new: u64,
+}
+
 /// Errors that can occur during vote proof construction.
 #[derive(Debug)]
 pub enum VoteProofBuildError {
@@ -266,6 +284,15 @@ pub enum VoteProofBuildError {
     InvalidEncryptedShare(String),
     /// The proposal identifier is outside the supported 1-indexed range.
     InvalidProposalId(u64),
+    /// The proposal-authority bitmask is outside the circuit's 16-bit range.
+    InvalidProposalAuthority(u64),
+    /// The selected proposal's authority bit has already been consumed.
+    ProposalAuthorityConsumed {
+        /// Selected proposal identifier.
+        proposal_id: u64,
+        /// Current proposal-authority bitmask.
+        proposal_authority: u64,
+    },
     /// Halo2 proof creation failed.
     Prove(ProveError),
 }
@@ -300,6 +327,23 @@ impl core::fmt::Display for VoteProofBuildError {
                     "proposal_id must be in [1, {}], got {}",
                     MAX_PROPOSAL_ID - 1,
                     proposal_id
+                )
+            }
+            VoteProofBuildError::InvalidProposalAuthority(proposal_authority) => {
+                write!(
+                    f,
+                    "proposal_authority must fit in 16 bits, got {}",
+                    proposal_authority
+                )
+            }
+            VoteProofBuildError::ProposalAuthorityConsumed {
+                proposal_id,
+                proposal_authority,
+            } => {
+                write!(
+                    f,
+                    "proposal {} is not authorized by proposal_authority {}",
+                    proposal_id, proposal_authority
                 )
             }
             VoteProofBuildError::Prove(error) => {
@@ -350,6 +394,103 @@ fn extract_vsk(sk: &SpendingKey) -> pallas::Scalar {
     } else {
         ask_raw
     }
+}
+
+fn next_proposal_authority(
+    proposal_authority_old: u64,
+    proposal_id: u64,
+) -> Result<u64, VoteProofBuildError> {
+    if proposal_id == 0 || proposal_id >= MAX_PROPOSAL_ID as u64 {
+        return Err(VoteProofBuildError::InvalidProposalId(proposal_id));
+    }
+    if proposal_authority_old > u64::from(u16::MAX) {
+        return Err(VoteProofBuildError::InvalidProposalAuthority(
+            proposal_authority_old,
+        ));
+    }
+
+    let proposal_bit = 1u64 << proposal_id;
+    if proposal_authority_old & proposal_bit == 0 {
+        return Err(VoteProofBuildError::ProposalAuthorityConsumed {
+            proposal_id,
+            proposal_authority: proposal_authority_old,
+        });
+    }
+
+    Ok(proposal_authority_old - proposal_bit)
+}
+
+fn derive_vote_authority_transition_from_address(
+    vpk_g_d_x: pallas::Base,
+    vpk_pk_d_x: pallas::Base,
+    total_note_value: u64,
+    van_comm_rand: pallas::Base,
+    voting_round_id: pallas::Base,
+    proposal_id: u64,
+    proposal_authority_old: u64,
+) -> Result<VoteAuthorityTransition, VoteProofBuildError> {
+    let proposal_authority_new = next_proposal_authority(proposal_authority_old, proposal_id)?;
+    let num_ballots = pallas::Base::from(total_note_value / BALLOT_DIVISOR);
+    let old = van_integrity_hash(
+        vpk_g_d_x,
+        vpk_pk_d_x,
+        num_ballots,
+        voting_round_id,
+        pallas::Base::from(proposal_authority_old),
+        van_comm_rand,
+    );
+    let new = van_integrity_hash(
+        vpk_g_d_x,
+        vpk_pk_d_x,
+        num_ballots,
+        voting_round_id,
+        pallas::Base::from(proposal_authority_new),
+        van_comm_rand,
+    );
+
+    Ok(VoteAuthorityTransition {
+        vote_authority_note_old: old,
+        vote_authority_note_new: new,
+        proposal_authority_old,
+        proposal_authority_new,
+    })
+}
+
+/// Derives one VAN authority transition without constructing a proof.
+///
+/// Clients can call this repeatedly, feeding each returned
+/// `proposal_authority_new` into the next call, to plan an ordered sequence of
+/// vote proofs. The returned VANs are exactly those derived by
+/// [`build_vote_proof_from_delegation`] for the same inputs.
+pub fn derive_vote_authority_transition(
+    sk: &SpendingKey,
+    address_index: u32,
+    total_note_value: u64,
+    van_comm_rand: pallas::Base,
+    voting_round_id: pallas::Base,
+    proposal_id: u64,
+    proposal_authority_old: u64,
+) -> Result<VoteAuthorityTransition, VoteProofBuildError> {
+    let fvk: FullViewingKey = sk.into();
+    let address = fvk.address_at(address_index, Scope::External);
+    let g_d = address.g_d().to_affine();
+    let pk_d = address.pk_d().inner().to_affine();
+    let g_d_x = *pallas_coordinates(g_d)
+        .expect("Orchard address g_d is non-identity by construction")
+        .x();
+    let pk_d_x = *pallas_coordinates(pk_d)
+        .expect("Orchard address pk_d is non-identity by construction")
+        .x();
+
+    derive_vote_authority_transition_from_address(
+        g_d_x,
+        pk_d_x,
+        total_note_value,
+        van_comm_rand,
+        voting_round_id,
+        proposal_id,
+        proposal_authority_old,
+    )
 }
 
 /// Core PRF: BLAKE2b-512 bound to the spending key with voting-specific
@@ -558,9 +699,8 @@ pub fn build_vote_proof_from_delegation(
     proposal_authority_old_u64: u64,
     single_share: bool,
 ) -> Result<VoteProofBundle, VoteProofBuildError> {
-    if proposal_id == 0 || proposal_id >= MAX_PROPOSAL_ID as u64 {
-        return Err(VoteProofBuildError::InvalidProposalId(proposal_id));
-    }
+    let proposal_authority_new_u64 =
+        next_proposal_authority(proposal_authority_old_u64, proposal_id)?;
 
     let ea_pk_coords =
         pallas_coordinates(ea_pk).ok_or(VoteProofBuildError::InvalidElectionPublicKey)?;
@@ -634,7 +774,6 @@ pub fn build_vote_proof_from_delegation(
 
     let proposal_authority_old = pallas::Base::from(proposal_authority_old_u64);
     let one_shifted = pallas::Base::from(1u64 << proposal_id);
-    let proposal_authority_new = proposal_authority_old - one_shifted;
 
     // ---- Ballot scaling (must match ZKP #1's BALLOT_DIVISOR) ----
 
@@ -645,25 +784,24 @@ pub fn build_vote_proof_from_delegation(
     // The VAN commitment hashes num_ballots (not raw zatoshi), matching
     // the delegation circuit (ZKP #1 condition 7).
 
-    let vote_authority_note_old = van_integrity_hash(
+    let transition = derive_vote_authority_transition_from_address(
         vpk_g_d_x,
         vpk_pk_d_x,
-        num_ballots_base,
-        voting_round_id,
-        proposal_authority_old,
+        total_note_value,
         van_comm_rand,
+        voting_round_id,
+        proposal_id,
+        proposal_authority_old_u64,
+    )?;
+    debug_assert_eq!(
+        transition.proposal_authority_new,
+        proposal_authority_new_u64
     );
+    let vote_authority_note_old = transition.vote_authority_note_old;
 
     let van_nullifier = van_nullifier_hash(vsk_nk, voting_round_id, vote_authority_note_old);
 
-    let vote_authority_note_new = van_integrity_hash(
-        vpk_g_d_x,
-        vpk_pk_d_x,
-        num_ballots_base,
-        voting_round_id,
-        proposal_authority_new,
-        van_comm_rand,
-    );
+    let vote_authority_note_new = transition.vote_authority_note_new;
 
     // ---- Shares (denomination-based split of num_ballots into 16 parts) ----
     // Each share must be in [0, 2^30) for the range check.
@@ -943,6 +1081,76 @@ mod tests {
                 VoteProofBuildError::InvalidProposalId(rejected) if rejected == proposal_id
             ));
         }
+    }
+
+    #[test]
+    fn authority_transition_derives_an_ordered_van_chain() {
+        let sk = test_sk();
+        let first = derive_vote_authority_transition(
+            &sk,
+            1,
+            BALLOT_DIVISOR,
+            test_van(),
+            test_round_id(),
+            1,
+            65535,
+        )
+        .expect("first transition should be valid");
+        let second = derive_vote_authority_transition(
+            &sk,
+            1,
+            BALLOT_DIVISOR,
+            test_van(),
+            test_round_id(),
+            2,
+            first.proposal_authority_new,
+        )
+        .expect("second transition should be valid");
+
+        assert_eq!(first.proposal_authority_new, 65533);
+        assert_eq!(second.proposal_authority_old, first.proposal_authority_new);
+        assert_eq!(second.proposal_authority_new, 65529);
+        assert_eq!(
+            second.vote_authority_note_old,
+            first.vote_authority_note_new
+        );
+    }
+
+    #[test]
+    fn authority_transition_rejects_invalid_or_consumed_authority() {
+        let sk = test_sk();
+        let out_of_range = derive_vote_authority_transition(
+            &sk,
+            1,
+            BALLOT_DIVISOR,
+            test_van(),
+            test_round_id(),
+            1,
+            65536,
+        )
+        .expect_err("authority must be 16-bit");
+        assert!(matches!(
+            out_of_range,
+            VoteProofBuildError::InvalidProposalAuthority(65536)
+        ));
+
+        let consumed = derive_vote_authority_transition(
+            &sk,
+            1,
+            BALLOT_DIVISOR,
+            test_van(),
+            test_round_id(),
+            2,
+            65531,
+        )
+        .expect_err("proposal 2 bit is clear");
+        assert!(matches!(
+            consumed,
+            VoteProofBuildError::ProposalAuthorityConsumed {
+                proposal_id: 2,
+                proposal_authority: 65531
+            }
+        ));
     }
 
     #[test]
