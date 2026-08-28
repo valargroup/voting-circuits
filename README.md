@@ -2,9 +2,9 @@
 
 Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol.
 
-Built with [halo2](https://github.com/zcash/halo2) on top of the upstream
-[`orchard`](https://github.com/zcash/orchard) implementation shared by Orchard
-and Ironwood. The crate requires `std`.
+Built with [Halo2](https://github.com/zcash/halo2) and
+[`orchard`](https://github.com/zcash/orchard) through the Zakura package
+family. The crate requires `std`.
 
 ## Proof flow
 
@@ -33,23 +33,22 @@ use voting_circuits::vote_proof::Circuit as VoteProofCircuit;
 // ... assemble public/private inputs and run halo2_proofs
 ```
 
-The default upstream backend supports Rust 1.86. The Zakura backend currently
-requires Rust 1.88.
+The default Zakura backend requires Rust 1.88. The alternate LRZ backend
+supports Rust 1.86.
 
 ### Cryptography backend
 
-The default `upstream` feature uses the crates.io Orchard, Halo2, Pasta, and
-Sinsemilla packages, so existing consumers do not need to change their
-dependency declaration.
+The default features use Zakura's Orchard, Halo2, Pasta, and Sinsemilla
+packages, so Zakura consumers use a plain dependency declaration.
 
-Zakura consumers select the renamed package family explicitly:
+LRZ consumers select the crates.io package family explicitly:
 
 ```toml
-voting-circuits = { version = "0.10", default-features = false, features = ["zakura"] }
+voting-circuits = { version = "0.11", default-features = false, features = ["lrz"] }
 ```
 
-The `upstream` and `zakura` features are mutually exclusive. Disabling default
-features without selecting `zakura` also fails to compile, so a build cannot
+The default Zakura features and `lrz` are mutually exclusive. Disabling default
+features without selecting `lrz` also fails to compile, so a build cannot
 silently omit or combine backends.
 
 Protocol domain-separation tags are registered in [`src/domain_tags.rs`](src/domain_tags.rs). Hash-owning modules document their own preimage layout, but new tags should be added to the registry first so the encoding rule and distinctness test stay centralized.
@@ -115,9 +114,9 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 ## Dependency on Orchard
 
-The default backend uses the upstream `orchard 0.15` release. The opt-in Zakura
-backend uses its API-compatible renamed package. Both enable the `circuit` and
-`unstable-voting-circuits` features required by the governance proofs. The
+The default backend uses the Zakura Orchard package. The opt-in LRZ backend
+uses the API-compatible crates.io `orchard 0.15` release. Both enable the
+`circuit` and `unstable-voting-circuits` features required by the governance proofs. The
 delegation bundle builder requires Ironwood V3 notes and constructs its
 synthetic signed and output notes as V3.
 
@@ -131,8 +130,8 @@ same snapshot height.
 
 ```bash
 cargo build
-# Zakura backend
-cargo build --no-default-features --features zakura
+# LRZ backend
+cargo build --no-default-features --features lrz
 ```
 
 ## Testing
@@ -141,8 +140,8 @@ Short-running tests are the default:
 
 ```bash
 cargo test
-# Zakura backend
-cargo test --no-default-features --features zakura
+# LRZ backend
+cargo test --no-default-features --features lrz
 ```
 
 Long-running tests are explicitly ignored and can be run when circuit-level coverage is needed. Skip the row-budget and cost-breakdown diagnostics for a normal regression pass:

@@ -1,100 +1,81 @@
 //! Selects one coherent cryptography dependency family for shielded voting.
 //!
-//! The default `upstream` feature reexports the complete crates.io Zcash
-//! package family. Consumers that need a smaller graph can disable default
-//! features and select fine-grained features such as `upstream-vct`. Zakura
-//! consumers use the corresponding `zakura-*` features. Mixing the two
-//! package families, or selecting neither family, is an error.
+//! The default features reexport the complete Zakura package family. Consumers
+//! that need a smaller graph can disable default features and select
+//! fine-grained features such as `vct`. LRZ consumers use the corresponding
+//! `lrz-*` features. Mixing the two package families, or selecting neither
+//! family, is an error.
 //!
-//! The facade itself supports Rust 1.86 in upstream mode. The Zakura packages
-//! currently require Rust 1.88.
+//! The facade itself supports Rust 1.86 in LRZ mode. The default Zakura
+//! packages currently require Rust 1.88.
 
 #![deny(missing_debug_implementations)]
 #![deny(unsafe_code)]
 
 #[cfg(all(
     any(
-        feature = "upstream-pasta",
-        feature = "upstream-gadgets",
-        feature = "upstream-poseidon",
-        feature = "upstream-proofs",
-        feature = "upstream-orchard",
-        feature = "upstream-rand",
-        feature = "upstream-sinsemilla",
-        feature = "upstream-validator",
+        feature = "pasta",
+        feature = "gadgets",
+        feature = "poseidon",
+        feature = "proofs",
+        feature = "orchard",
+        feature = "rand",
+        feature = "sinsemilla",
+        feature = "validator",
     ),
     any(
-        feature = "zakura-pasta",
-        feature = "zakura-gadgets",
-        feature = "zakura-poseidon",
-        feature = "zakura-proofs",
-        feature = "zakura-orchard",
-        feature = "zakura-rand",
-        feature = "zakura-sinsemilla",
-        feature = "zakura-validator",
+        feature = "lrz-pasta",
+        feature = "lrz-gadgets",
+        feature = "lrz-poseidon",
+        feature = "lrz-proofs",
+        feature = "lrz-orchard",
+        feature = "lrz-rand",
+        feature = "lrz-sinsemilla",
+        feature = "lrz-validator",
     )
 ))]
-compile_error!("upstream and Zakura dependency features cannot be enabled together");
+compile_error!("Zakura and LRZ dependency features cannot be enabled together");
 
 #[cfg(not(any(
-    feature = "upstream-pasta",
-    feature = "upstream-gadgets",
-    feature = "upstream-poseidon",
-    feature = "upstream-proofs",
-    feature = "upstream-orchard",
-    feature = "upstream-rand",
-    feature = "upstream-sinsemilla",
-    feature = "upstream-validator",
-    feature = "zakura-pasta",
-    feature = "zakura-gadgets",
-    feature = "zakura-poseidon",
-    feature = "zakura-proofs",
-    feature = "zakura-orchard",
-    feature = "zakura-rand",
-    feature = "zakura-sinsemilla",
-    feature = "zakura-validator",
+    feature = "pasta",
+    feature = "gadgets",
+    feature = "poseidon",
+    feature = "proofs",
+    feature = "orchard",
+    feature = "rand",
+    feature = "sinsemilla",
+    feature = "validator",
+    feature = "lrz-pasta",
+    feature = "lrz-gadgets",
+    feature = "lrz-poseidon",
+    feature = "lrz-proofs",
+    feature = "lrz-orchard",
+    feature = "lrz-rand",
+    feature = "lrz-sinsemilla",
+    feature = "lrz-validator",
 )))]
-compile_error!("enable at least one upstream or Zakura dependency feature");
+compile_error!("enable at least one Zakura or LRZ dependency feature");
 
-#[cfg(feature = "upstream-gadgets")]
-pub use upstream_halo2_gadgets as halo2_gadgets;
-#[cfg(feature = "upstream-poseidon")]
-pub use upstream_halo2_poseidon as halo2_poseidon;
-#[cfg(feature = "upstream-proofs")]
-pub use upstream_halo2_proofs as halo2_proofs;
-#[cfg(feature = "upstream-orchard")]
-pub use upstream_orchard as orchard;
-#[cfg(feature = "upstream-pasta")]
-pub use upstream_pasta_curves as pasta_curves;
-#[cfg(feature = "upstream-rand")]
-pub use upstream_rand as rand;
-#[cfg(feature = "upstream-validator")]
-pub use upstream_reddsa as reddsa;
-#[cfg(feature = "upstream-sinsemilla")]
-pub use upstream_sinsemilla as sinsemilla;
-#[cfg(feature = "upstream-validator")]
-pub use upstream_zcash_primitives as zcash_primitives;
-
-#[cfg(feature = "zakura-gadgets")]
-pub use zakura_halo2_gadgets as halo2_gadgets;
-#[cfg(feature = "zakura-poseidon")]
-pub use zakura_halo2_poseidon as halo2_poseidon;
-#[cfg(feature = "zakura-proofs")]
-pub use zakura_halo2_proofs as halo2_proofs;
-#[cfg(feature = "zakura-orchard")]
-pub use zakura_orchard as orchard;
-#[cfg(feature = "zakura-pasta")]
-pub use zakura_pasta_curves as pasta_curves;
-#[cfg(feature = "zakura-rand")]
+#[cfg(feature = "gadgets")]
+pub use ::halo2_gadgets;
+#[cfg(feature = "poseidon")]
+pub use ::halo2_poseidon;
+#[cfg(feature = "proofs")]
+pub use ::halo2_proofs;
+#[cfg(feature = "orchard")]
+pub use ::orchard;
+#[cfg(feature = "pasta")]
+pub use ::pasta_curves;
+#[cfg(feature = "rand")]
 pub mod rand {
-    pub use zakura_rand::{CryptoRng, Rng};
+    pub use ::rand::{CryptoRng, Rng};
 
     pub mod rngs {
-        use core::convert::Infallible;
-        use zakura_rand::{
+        use ::rand::{
             rand_core::{TryCryptoRng, TryRng, UnwrapErr},
             rngs::SysRng,
         };
+        use core::convert::Infallible;
 
         #[derive(Clone, Copy, Debug, Default)]
         pub struct OsRng;
@@ -118,17 +99,33 @@ pub mod rand {
         impl TryCryptoRng for OsRng {}
     }
 }
-#[cfg(feature = "zakura-validator")]
-pub use zakura_reddsa as reddsa;
-#[cfg(feature = "zakura-sinsemilla")]
-pub use zakura_sinsemilla as sinsemilla;
-#[cfg(feature = "zakura-validator")]
-pub use zakura_zcash_primitives as zcash_primitives;
+#[cfg(feature = "validator")]
+pub use ::reddsa;
+#[cfg(feature = "sinsemilla")]
+pub use ::sinsemilla;
+#[cfg(feature = "validator")]
+pub use ::zcash_primitives;
 
-#[cfg(all(
-    test,
-    any(feature = "upstream-validator", feature = "zakura-validator")
-))]
+#[cfg(feature = "lrz-gadgets")]
+pub use lrz_halo2_gadgets as halo2_gadgets;
+#[cfg(feature = "lrz-poseidon")]
+pub use lrz_halo2_poseidon as halo2_poseidon;
+#[cfg(feature = "lrz-proofs")]
+pub use lrz_halo2_proofs as halo2_proofs;
+#[cfg(feature = "lrz-orchard")]
+pub use lrz_orchard as orchard;
+#[cfg(feature = "lrz-pasta")]
+pub use lrz_pasta_curves as pasta_curves;
+#[cfg(feature = "lrz-rand")]
+pub use lrz_rand as rand;
+#[cfg(feature = "lrz-validator")]
+pub use lrz_reddsa as reddsa;
+#[cfg(feature = "lrz-sinsemilla")]
+pub use lrz_sinsemilla as sinsemilla;
+#[cfg(feature = "lrz-validator")]
+pub use lrz_zcash_primitives as zcash_primitives;
+
+#[cfg(all(test, any(feature = "validator", feature = "lrz-validator")))]
 mod tests {
     use super::{orchard, zcash_primitives};
 
