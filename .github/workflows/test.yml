@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.86.0
+        uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: rustfmt
 
@@ -46,31 +46,63 @@ jobs:
       - name: Run short tests
         run: cargo test --locked
 
-      - name: Check minimal upstream VCT facade
+      - name: Check minimal default VCT facade
         run: |
-          cargo check --locked -p voting-crypto-deps --no-default-features --features upstream-vct
+          cargo check --locked -p voting-crypto-deps --no-default-features --features vct
           if cargo tree --locked -p voting-crypto-deps --no-default-features \
-            --features upstream-vct -e normal --prefix none \
-            | grep -Eq '^(orchard|reddsa|zcash_primitives) v'; then
-            echo "Non-VCT package found in the upstream VCT dependency graph"
+            --features vct -e normal --prefix none \
+            | grep -Eq '^(zakura-orchard|zakura-reddsa|zakura-primitives) v'; then
+            echo "Non-VCT package found in the default VCT dependency graph"
             exit 1
           fi
 
-      - name: Check upstream dependency graph
+      - name: Check default Zakura dependency graph
         run: |
-          if cargo tree --locked -e normal --prefix none | grep -Eq '^zakura-'; then
-            echo "Zakura package found in the upstream dependency graph"
+          if cargo tree --locked -e normal --prefix none \
+            | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla|zcash_primitives) v'; then
+            echo "LRZ cryptography package found in the default Zakura dependency graph"
             exit 1
           fi
 
-      - name: Run IMT integration tests
-        run: cargo test --locked --features unstable-internal-api --test imt_circuit_integration
+      - name: Test default validator facade
+        run: |
+          cargo test --locked -p voting-crypto-deps --no-default-features --features validator
+          if cargo tree --locked -p voting-crypto-deps --no-default-features \
+            --features validator -e normal --prefix none \
+            | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla|zcash_primitives) v'; then
+            echo "LRZ cryptography package found in the default validator graph"
+            exit 1
+          fi
+
+      - name: Test LRZ validator facade
+        run: |
+          cargo test --locked -p voting-crypto-deps --no-default-features --features lrz-validator
+          if cargo tree --locked -p voting-crypto-deps --no-default-features \
+            --features lrz-validator -e normal --prefix none \
+            | grep -Eq '^zakura-'; then
+            echo "Zakura package found in the LRZ validator graph"
+            exit 1
+          fi
+
+      - name: Check verifying-key fingerprints
+        run: cargo test --locked vk_fingerprint_unchanged -- --ignored --test-threads=1
+
+      - name: Reject missing or mixed backend selections
+        run: |
+          if cargo check --locked -p voting-crypto-deps --no-default-features; then
+            echo "A cryptography backend must be selected"
+            exit 1
+          fi
+          if cargo check --locked -p voting-crypto-deps --features lrz; then
+            echo "The default Zakura and LRZ backends must remain mutually exclusive"
+            exit 1
+          fi
 
       - name: Check delegation benchmark
         run: cargo bench --locked --bench delegation -- --test
 
-  zakura-tests:
-    name: Zakura backend
+  lrz-tests:
+    name: LRZ backend
     if: github.event_name != 'workflow_dispatch' || inputs.run == 'full-suite'
     runs-on: ubuntu-latest
 
@@ -79,50 +111,37 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.86.0
 
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Test upstream validator facade
-        run: cargo test --locked -p voting-crypto-deps --no-default-features --features upstream-validator
-
       - name: Run short tests
-        run: cargo test --locked --no-default-features --features zakura
+        run: cargo test --locked --no-default-features --features lrz
 
-      - name: Check verifying-key fingerprints
-        run: cargo test --locked --no-default-features --features zakura vk_fingerprint_unchanged -- --ignored --test-threads=1
-
-      - name: Check Zakura dependency graph
+      - name: Check LRZ dependency graph
         run: |
-          if cargo tree --locked --no-default-features --features zakura -e normal --prefix none \
-            | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla) v'; then
-            echo "Upstream cryptography package found in the Zakura dependency graph"
+          if cargo tree --locked --no-default-features --features lrz -e normal --prefix none \
+            | grep -Eq '^zakura-'; then
+            echo "Zakura package found in the LRZ dependency graph"
             exit 1
           fi
 
-      - name: Check minimal Zakura VCT facade
+      - name: Check minimal LRZ VCT facade
         run: |
-          cargo check --locked -p voting-crypto-deps --no-default-features --features zakura-vct
+          cargo check --locked -p voting-crypto-deps --no-default-features --features lrz-vct
           if cargo tree --locked -p voting-crypto-deps --no-default-features \
-            --features zakura-vct -e normal --prefix none \
-            | grep -Eq '^(zakura-orchard|zakura-reddsa|zakura-primitives) v'; then
-            echo "Non-VCT package found in the Zakura VCT dependency graph"
+            --features lrz-vct -e normal --prefix none \
+            | grep -Eq '^(orchard|reddsa|zcash_primitives) v'; then
+            echo "Non-VCT package found in the LRZ VCT dependency graph"
             exit 1
           fi
 
-      - name: Test Zakura validator facade
-        run: |
-          cargo test --locked -p voting-crypto-deps --no-default-features --features zakura-validator
-          if cargo tree --locked -p voting-crypto-deps --no-default-features \
-            --features zakura-validator -e normal --prefix none \
-            | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla|zcash_primitives) v'; then
-            echo "Upstream cryptography package found in the Zakura validator graph"
-            exit 1
-          fi
+      - name: Run IMT integration tests
+        run: cargo test --locked --no-default-features --features lrz,unstable-internal-api --test imt_circuit_integration
 
       - name: Check delegation benchmark
-        run: cargo bench --locked --no-default-features --features zakura --bench delegation -- --test
+        run: cargo bench --locked --no-default-features --features lrz --bench delegation -- --test
 
   full-suite:
     name: Full suite
@@ -147,21 +166,16 @@ jobs:
       - name: Run short tests
         run: cargo test --locked
 
-      - name: Check upstream dependency graph
+      - name: Check default Zakura dependency graph
         run: |
-          if cargo tree --locked -e normal --prefix none | grep -Eq '^zakura-'; then
-            echo "Zakura package found in the upstream dependency graph"
+          if cargo tree --locked -e normal --prefix none \
+            | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla|zcash_primitives) v'; then
+            echo "LRZ cryptography package found in the default Zakura dependency graph"
             exit 1
           fi
 
       - name: Run long tests
         run: cargo test --locked -- --ignored --skip row_budget --skip cost_breakdown
-
-      - name: Run IMT integration tests
-        run: cargo test --locked --features unstable-internal-api --test imt_circuit_integration
-
-      - name: Run long IMT integration tests
-        run: cargo test --locked --features unstable-internal-api --test imt_circuit_integration -- --ignored --test-threads=1
 
       - name: Check delegation benchmark
         run: cargo bench --locked --bench delegation -- --test

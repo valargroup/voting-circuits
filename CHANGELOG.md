@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## v0.11.0
+
+### Changed
+
+- **Breaking:** Made the Zakura cryptography family the default and renamed the
+  crates.io backend from `upstream` to `lrz`. The old `upstream*` and
+  `zakura*` feature names have been removed. Default fine-grained facade
+  features now use clean names such as `vct` and `validator`; LRZ alternatives
+  use `lrz-vct` and `lrz-validator`.
+- Updated the coordinated Zakura cryptography package family from
+  `1.0.0-rc.3` to `1.0.0-rc.4`.
+- Prepared `voting-crypto-deps 0.2.0` and `voting-circuits 0.11.0`. The default
+  Zakura graph requires Rust 1.88, while the LRZ graph retains Rust 1.86
+  support.
+
 ## v0.10.3
 
 ### Changed

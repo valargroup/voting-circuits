@@ -3,33 +3,38 @@
 This crate provides one stable import surface for the cryptography packages
 used by Valar's shielded-voting crates.
 
-The default `upstream` feature selects the crates.io Zcash packages. Zakura
-consumers select the renamed Zakura packages with:
+The default features select the Zakura packages:
 
 ```toml
-voting-crypto-deps = { version = "0.1", default-features = false, features = ["zakura"] }
+voting-crypto-deps = "0.2"
+```
+
+LRZ consumers select the crates.io Zcash packages explicitly:
+
+```toml
+voting-crypto-deps = { version = "0.2", default-features = false, features = ["lrz"] }
 ```
 
 Consumers that only need the Vote Commitment Tree (VCT) dependency graph can
-select just Pasta and the Halo2 gadgets facade:
+select just Pasta and the Halo2 gadgets facade from the default Zakura family:
 
 ```toml
-voting-crypto-deps = { version = "0.1", default-features = false, features = ["upstream-vct"] }
+voting-crypto-deps = { version = "0.2", default-features = false, features = ["vct"] }
 ```
 
-The equivalent `zakura-vct` feature selects the Zakura packages. Individual
-packages can also be selected with the `upstream-pasta`, `upstream-gadgets`,
-`upstream-poseidon`, `upstream-proofs`, `upstream-orchard`, `upstream-sinsemilla`,
-and `upstream-rand` features or their `zakura-*` counterparts. The `upstream`
-and `zakura` aggregates include the matching RNG crate (`rand` 0.8 upstream,
-`rand` 0.10 Zakura) so consumers share one coherent RNG trait family with the
-selected backend. Features from the two package families cannot be mixed.
+The equivalent `lrz-vct` feature selects the LRZ packages. Individual default
+packages can also be selected with the clean `pasta`, `gadgets`, `poseidon`,
+`proofs`, `orchard`, `sinsemilla`, and `rand` features or their `lrz-*`
+counterparts. The default feature set and `lrz` aggregate include the matching
+RNG crate (`rand` 0.10 Zakura, `rand` 0.8 LRZ) so consumers share one coherent
+RNG trait family with the selected backend. Features from the two package
+families cannot be mixed.
 
-The Zakura package family currently requires Rust 1.88; the upstream family
+The default Zakura package family currently requires Rust 1.88; the LRZ family
 supports Rust 1.86.
 
 Validator crates that also parse transactions and verify RedPallas signatures
-select `upstream-validator` or `zakura-validator`. These extensions include the
-corresponding base backend and additionally reexport `reddsa` and
+select `validator` or `lrz-validator`. These extensions include the
+corresponding full backend and additionally reexport `reddsa` and
 `zcash_primitives` without adding them to lighter circuit, tree, or VCT graphs.
 Both validator extensions require Rust 1.88.

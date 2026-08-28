@@ -1,6 +1,6 @@
 [package]
 name = "voting-circuits"
-version = "0.10.3"
+version = "0.11.0"
 edition = "2021"
 rust-version = "1.86.0"
 description = "Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol."
@@ -10,7 +10,7 @@ readme = "README.md"
 
 [dependencies]
 # Keep this exact so a published release cannot resolve a different circuit dependency graph.
-voting-crypto-deps = { path = "voting-crypto-deps", version = "=0.1.2", default-features = false }
+voting-crypto-deps = { path = "voting-crypto-deps", version = "=0.2.0", default-features = false }
 blake2b_simd = "1"
 # incrementalmerkletree is the Orchard Merkle API line mirrored by delegation witness construction.
 incrementalmerkletree = "0.8.1"
@@ -37,11 +37,10 @@ type_complexity = "allow"
 needless_range_loop = "allow"
 
 [features]
-default = ["upstream"]
-# Use the crates.io Zcash cryptography family. This is the compatibility default.
-upstream = ["voting-crypto-deps/upstream"]
-# Use Zakura's renamed cryptography family. Consumers must disable default features.
-zakura = ["voting-crypto-deps/zakura"]
+# Use Zakura's cryptography family by default.
+default = ["voting-crypto-deps/default"]
+# Use the crates.io librustzcash cryptography family.
+lrz = ["voting-crypto-deps/lrz"]
 # Re-exports `delegation::build_nullifier_list`, used by the in-tree IMT
 # integration test. Not part of the stable public API; downstream consumers
 # should not enable this.

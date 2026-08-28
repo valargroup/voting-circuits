@@ -1,81 +1,80 @@
 [package]
 name = "voting-crypto-deps"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.86"
-description = "Selectable upstream and Zakura cryptography dependency facade for shielded voting"
+description = "Selectable Zakura and LRZ cryptography dependency facade for shielded voting"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/valargroup/voting-circuits"
 readme = "README.md"
 
 [features]
-default = ["upstream"]
-upstream-pasta = ["dep:upstream-pasta-curves"]
-upstream-gadgets = ["dep:upstream-halo2-gadgets"]
-upstream-poseidon = ["dep:upstream-halo2-poseidon"]
-upstream-proofs = ["dep:upstream-halo2-proofs"]
-upstream-orchard = ["dep:upstream-orchard"]
-upstream-sinsemilla = ["dep:upstream-sinsemilla"]
-upstream-rand = ["dep:upstream-rand"]
-upstream-vct = [
-    "upstream-pasta",
-    "upstream-gadgets",
+default = [
+    "vct",
+    "poseidon",
+    "proofs",
+    "orchard",
+    "sinsemilla",
+    "rand",
 ]
-upstream = [
-    "upstream-vct",
-    "upstream-poseidon",
-    "upstream-proofs",
-    "upstream-orchard",
-    "upstream-sinsemilla",
-    "upstream-rand",
+pasta = ["dep:pasta-curves"]
+gadgets = ["dep:halo2-gadgets"]
+poseidon = ["dep:halo2-poseidon"]
+proofs = ["dep:halo2-proofs"]
+orchard = ["dep:orchard"]
+sinsemilla = ["dep:sinsemilla"]
+rand = ["dep:rand"]
+vct = [
+    "pasta",
+    "gadgets",
 ]
-upstream-validator = [
-    "upstream",
-    "dep:upstream-reddsa",
-    "dep:upstream-zcash-primitives",
+validator = [
+    "default",
+    "dep:reddsa",
+    "dep:zcash-primitives",
 ]
-zakura-pasta = ["dep:zakura-pasta-curves"]
-zakura-gadgets = ["dep:zakura-halo2-gadgets"]
-zakura-poseidon = ["dep:zakura-halo2-poseidon"]
-zakura-proofs = ["dep:zakura-halo2-proofs"]
-zakura-orchard = ["dep:zakura-orchard"]
-zakura-sinsemilla = ["dep:zakura-sinsemilla"]
-zakura-rand = ["dep:zakura-rand"]
-zakura-vct = [
-    "zakura-pasta",
-    "zakura-gadgets",
+lrz-pasta = ["dep:lrz-pasta-curves"]
+lrz-gadgets = ["dep:lrz-halo2-gadgets"]
+lrz-poseidon = ["dep:lrz-halo2-poseidon"]
+lrz-proofs = ["dep:lrz-halo2-proofs"]
+lrz-orchard = ["dep:lrz-orchard"]
+lrz-sinsemilla = ["dep:lrz-sinsemilla"]
+lrz-rand = ["dep:lrz-rand"]
+lrz-vct = [
+    "lrz-pasta",
+    "lrz-gadgets",
 ]
-zakura = [
-    "zakura-vct",
-    "zakura-poseidon",
-    "zakura-proofs",
-    "zakura-orchard",
-    "zakura-sinsemilla",
-    "zakura-rand",
+lrz = [
+    "lrz-vct",
+    "lrz-poseidon",
+    "lrz-proofs",
+    "lrz-orchard",
+    "lrz-sinsemilla",
+    "lrz-rand",
 ]
-zakura-validator = [
-    "zakura",
-    "dep:zakura-reddsa",
-    "dep:zakura-zcash-primitives",
+lrz-validator = [
+    "lrz",
+    "dep:lrz-reddsa",
+    "dep:lrz-zcash-primitives",
 ]
 
 [dependencies]
-upstream-halo2-gadgets = { package = "halo2_gadgets", version = "0.5", optional = true, default-features = false }
-upstream-halo2-poseidon = { package = "halo2_poseidon", version = "0.1", optional = true }
-upstream-halo2-proofs = { package = "halo2_proofs", version = "0.3", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
-upstream-orchard = { package = "orchard", version = "0.15", optional = true, features = ["circuit", "unstable-voting-circuits"] }
-upstream-pasta-curves = { package = "pasta_curves", version = "0.5", optional = true }
-upstream-reddsa = { package = "reddsa", version = "0.5", optional = true, default-features = false, features = ["std"] }
-upstream-rand = { package = "rand", version = "0.8", optional = true, default-features = false, features = ["getrandom"] }
-upstream-sinsemilla = { package = "sinsemilla", version = "0.1", optional = true }
-upstream-zcash-primitives = { package = "zcash_primitives", version = "0.30", optional = true, default-features = false, features = ["std"] }
+lrz-halo2-gadgets = { package = "halo2_gadgets", version = "0.5", optional = true, default-features = false }
+lrz-halo2-poseidon = { package = "halo2_poseidon", version = "0.1", optional = true }
+lrz-halo2-proofs = { package = "halo2_proofs", version = "0.3", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
+lrz-orchard = { package = "orchard", version = "0.15", optional = true, features = ["circuit", "unstable-voting-circuits"] }
+lrz-pasta-curves = { package = "pasta_curves", version = "0.5", optional = true }
+lrz-reddsa = { package = "reddsa", version = "0.5", optional = true, default-features = false, features = ["std"] }
+lrz-rand = { package = "rand", version = "0.8", optional = true, default-features = false, features = ["getrandom"] }
+lrz-sinsemilla = { package = "sinsemilla", version = "0.1", optional = true }
+lrz-zcash-primitives = { package = "zcash_primitives", version = "0.30", optional = true, default-features = false, features = ["std"] }
 
-zakura-halo2-gadgets = { package = "zakura-halo2-gadgets", version = "=1.0.0-rc.3", optional = true, default-features = false }
-zakura-halo2-poseidon = { package = "zakura-halo2-poseidon", version = "=1.0.0-rc.3", optional = true }
-zakura-halo2-proofs = { package = "zakura-halo2-proofs", version = "=1.0.0-rc.3", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
-zakura-orchard = { package = "zakura-orchard", version = "=1.0.0-rc.3", optional = true, features = ["circuit", "unstable-voting-circuits"] }
-zakura-pasta-curves = { package = "zakura-pasta-curves", version = "=1.0.0-rc.3", optional = true }
-zakura-rand = { package = "rand", version = "0.10", optional = true, default-features = false, features = ["sys_rng"] }
-zakura-reddsa = { package = "zakura-reddsa", version = "=1.0.0-rc.3", optional = true, default-features = false, features = ["std"] }
-zakura-sinsemilla = { package = "zakura-sinsemilla", version = "=1.0.0-rc.3", optional = true }
-zakura-zcash-primitives = { package = "zakura-primitives", version = "=1.0.0-rc.3", optional = true, default-features = false, features = ["std"] }
+halo2-gadgets = { package = "zakura-halo2-gadgets", version = "=1.0.0-rc.4", optional = true, default-features = false }
+halo2-poseidon = { package = "zakura-halo2-poseidon", version = "=1.0.0-rc.4", optional = true }
+halo2-proofs = { package = "zakura-halo2-proofs", version = "=1.0.0-rc.4", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
+orchard = { package = "zakura-orchard", version = "=1.0.0-rc.4", optional = true, features = ["circuit", "unstable-voting-circuits"] }
+pasta-curves = { package = "zakura-pasta-curves", version = "=1.0.0-rc.4", optional = true }
+rand = { package = "rand", version = "0.10", optional = true, default-features = false, features = ["sys_rng"] }
+reddsa = { package = "zakura-reddsa", version = "=1.0.0-rc.4", optional = true, default-features = false, features = ["std"] }
+sinsemilla = { package = "zakura-sinsemilla", version = "=1.0.0-rc.4", optional = true }
+zcash-primitives = { package = "zakura-primitives", version = "=1.0.0-rc.4", optional = true, default-features = false, features = ["std"] }
