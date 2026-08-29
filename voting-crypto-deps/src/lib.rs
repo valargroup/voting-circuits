@@ -7,7 +7,7 @@
 //! family, is an error.
 //!
 //! The facade itself supports Rust 1.86 in LRZ mode. The default Zakura
-//! packages currently require Rust 1.88.
+//! packages currently require Rust 1.91.
 
 #![deny(missing_debug_implementations)]
 #![deny(unsafe_code)]

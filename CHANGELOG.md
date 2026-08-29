@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.11.1
+
+### Changed
+
+- Updated the coordinated Zakura cryptography package family from
+  `1.0.0-rc.4` to `1.0.0-rc.5`. The default Zakura graph now requires Rust
+  1.91; the LRZ graph retains Rust 1.86 support.
+- Prepared `voting-crypto-deps 0.2.1` and `voting-circuits 0.11.1`.
+
 ## v0.11.0
 
 ### Changed
