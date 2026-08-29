@@ -264,6 +264,11 @@ Where:
 
 **Out-of-circuit helper:** Reuses `van_integrity::van_integrity_hash(vpk_g_d, vpk_pk_d, total_note_value, voting_round_id, proposal_authority_new, van_comm_rand)` with `proposal_authority_new = proposal_authority_old - (1 << proposal_id)`. (Note: the shared module's parameter names are `g_d_x`/`pk_d_x`.)
 
+Clients that need to plan several ordered votes before proving can call
+`vote_proof::derive_vote_authority_transition`. It derives the old and new VAN
+with the same native implementation used by the proof builder, while leaving
+the circuit and its proving and verifying keys unchanged.
+
 **Constructions:** `van_integrity::van_integrity_poseidon` (shared gadget from `circuit::van_integrity`).
 
 ## Share Decomposition (builder)

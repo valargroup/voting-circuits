@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Added a native vote-authority transition helper so clients can derive an
+  ordered VAN chain before generating proofs. This does not change the vote
+  circuit, its public inputs, or its proving and verifying keys.
+
 ## v0.11.1
 
 ### Changed
