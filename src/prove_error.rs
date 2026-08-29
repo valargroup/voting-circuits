@@ -15,7 +15,8 @@ pub(crate) fn create_proof_bytes<ConcreteCircuit>(
     public_inputs: &[vesta::Scalar],
 ) -> Result<Vec<u8>, ProveError>
 where
-    ConcreteCircuit: plonk::Circuit<vesta::Scalar>,
+    ConcreteCircuit: plonk::Circuit<vesta::Scalar> + Sync,
+    ConcreteCircuit::Config: Send,
 {
     let mut transcript = Blake2bWrite::<_, EqAffine, Challenge255<_>>::init(vec![]);
     create_proof(
