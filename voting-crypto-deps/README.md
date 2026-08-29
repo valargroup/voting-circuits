@@ -30,11 +30,12 @@ RNG crate (`rand` 0.10 Zakura, `rand` 0.8 LRZ) so consumers share one coherent
 RNG trait family with the selected backend. Features from the two package
 families cannot be mixed.
 
-The default Zakura package family currently requires Rust 1.88; the LRZ family
+The default Zakura package family currently requires Rust 1.91; the LRZ family
 supports Rust 1.86.
 
 Validator crates that also parse transactions and verify RedPallas signatures
 select `validator` or `lrz-validator`. These extensions include the
 corresponding full backend and additionally reexport `reddsa` and
 `zcash_primitives` without adding them to lighter circuit, tree, or VCT graphs.
-Both validator extensions require Rust 1.88.
+The Zakura validator extension requires Rust 1.91; the LRZ validator extension
+requires Rust 1.88.
