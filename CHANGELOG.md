@@ -5,8 +5,9 @@
 ### Changed
 
 - **Breaking:** Expanded proposal authority to support 50 usable proposal IDs.
-  This changes the delegation and vote-proof verification keys and raises the
-  vote-proof circuit domain from K=11 to K=12.
+  This changes the delegation and vote-proof verification keys. The vote-proof
+  circuit remains at K=11 by placing authority decrement on an existing El
+  Gamal advice lane.
 
 ## v0.11.0
 

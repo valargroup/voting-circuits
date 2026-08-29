@@ -3,11 +3,12 @@
 Proves that a registered voter is casting a valid vote, without revealing which VAN they hold. The structure follows the delegation circuit's pattern (ZKP 1). Numbering matches Gov Steps V1 (ZKP #2): 12 conditions total; all conditions 1–12 are fully constrained in-circuit (condition 4 enforces spend authority `r_vpk = vsk.ak + [alpha_v]*G` in-circuit; the vote signature is verified out-of-circuit under `r_vpk`).
 
 **Public inputs:** 11 field elements.
-**Current K:** 12 (4,096 rows) — condition 11 is split evenly across two
+**Current K:** 11 (2,048 rows) — condition 11 is split evenly across two
 dedicated 10-column El Gamal tracks. Condition 10 is divided between the
-primary track and a dedicated four-column Poseidon track. Widening proposal
-authority to 51 bits raises the high-water mark to 2,056 rows, just beyond the
-K=11 domain. K=12 leaves 2,040 rows of headroom at 50.2% utilization.
+primary track and a dedicated four-column Poseidon track. Proposal-authority
+decrement shares the second El Gamal advice lane, keeping the 51-bit circuit's
+high-water mark at 2,015 rows. This leaves 27 usable rows before Halo2's six
+reserved blinding rows, with no increase to the 34 advice columns.
 
 **Authoritative hash sources:** this README is explanatory. Reusable hash
 preimages are owned by `crate::circuit::van_integrity` (VAN integrity),
@@ -462,7 +463,7 @@ vote_decision ──────────────────────
 | `advices[8]` | Poseidon state + AddChip input (b) |
 | `advices[9]` | Range check running sum |
 | `elgamal_advices[0..10]` | Condition 11 El Gamal encryptions for shares 0 through 7 |
-| `elgamal_advices_b[0..10]` | Condition 11 El Gamal encryptions for shares 8 through 15 |
+| `elgamal_advices_b[0..10]` | Condition 6 authority decrement (columns 0–7), then condition 11 El Gamal encryptions for shares 8 through 15 |
 | `hash_advices[0..4]` | Condition 10 share commitments 2 through 15 and the outer shares hash |
 | `constants` | Constant assignments (DOMAIN_VAN, DOMAIN_VC, ONE) |
 | `lagrange_coeffs[0..2]` | Primary ECC Lagrange coefficients |

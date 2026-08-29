@@ -103,9 +103,10 @@ use crate::{
 
 /// Circuit size (2^K rows).
 ///
-/// K=12 (4,096 rows). Condition 11 is divided between two sets of ten advice
-/// columns, and condition 10 uses a separate four-column Poseidon track.
-/// [`voting_crypto_deps::halo2_proofs::dev::CircuitCost`] reports a 2,056-row high-water mark.
+/// K=11 (2,048 rows). Condition 11 is divided between two sets of ten advice
+/// columns, condition 10 uses a separate four-column Poseidon track, and
+/// condition 6 shares the second El Gamal advice lane.
+/// [`voting_crypto_deps::halo2_proofs::dev::CircuitCost`] reports a 2,015-row high-water mark.
 ///
 /// Key contributors (rough per-region heights, not per-column sums):
 /// - 24-level Merkle path: 24 Poseidon regions stacked sequentially — the
@@ -116,7 +117,7 @@ use crate::{
 ///
 /// Run the `row_budget` diagnostic to re-measure after circuit changes:
 ///   `cargo test vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
-pub const K: u32 = 12;
+pub const K: u32 = 11;
 
 /// First share index assigned to the second El Gamal track.
 const ELGAMAL_TRACK_SPLIT: usize = 8;
@@ -568,8 +569,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Two additional sets of 10 columns split condition 11 across parallel
         // ECC tracks. Each ECC chip requires all 10 columns for its
         // internal scalar-multiplication gates. Four more columns hold the
-        // condition-10 Poseidon track. The remaining chips tile within the
-        // primary 10-column window:
+        // condition-10 Poseidon track. Condition 6 shares the second El Gamal
+        // track so its 52-row authority region does not extend the saturated
+        // primary track. The remaining chips tile within the primary
+        // 10-column window:
         //
         //   advices[0..5]  — general witness assignment, Sinsemilla pair 1
         //                    message columns, and the Merkle swap gate
@@ -714,8 +717,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             [advices[0], advices[1], advices[2], advices[3], advices[4]],
         );
 
-        // Condition 6: Proposal Authority Decrement.
-        let authority_decrement = AuthorityDecrementChip::configure(meta, advices);
+        // Condition 6: Proposal Authority Decrement. Reusing the second El
+        // Gamal advice lane lets the floor planner place this region alongside
+        // the saturated primary track without adding columns.
+        let authority_decrement = AuthorityDecrementChip::configure(meta, elgamal_advices_b);
         let nonzero = NonZeroConfig::configure(meta, [elgamal_advices[0], elgamal_advices[1]]);
         let nonzero_b =
             NonZeroConfig::configure(meta, [elgamal_advices_b[0], elgamal_advices_b[1]]);
