@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** Expanded proposal authority to support 50 usable proposal IDs.
+  This changes the delegation and vote-proof verification keys and raises the
+  vote-proof circuit domain from K=11 to K=12.
+
 ## v0.11.0
 
 ### Changed

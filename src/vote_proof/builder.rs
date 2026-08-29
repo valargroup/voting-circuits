@@ -510,7 +510,7 @@ fn deterministic_shuffle(
 /// * `anchor_height` - Caller-authenticated chain height used by the verifier
 ///   or chain to source the vote commitment tree root. The circuit carries this
 ///   as a public input but does not derive or constrain the height itself.
-/// * `proposal_id` - Which proposal to vote on (1-indexed, must be in [1, 15]).
+/// * `proposal_id` - Which proposal to vote on (1-indexed, must be in [1, 50]).
 ///   The builder checks only this circuit-supported range; the caller must
 ///   ensure the proposal is active for `voting_round_id`.
 /// * `vote_decision` - The voter's choice.
@@ -541,7 +541,7 @@ fn deterministic_shuffle(
 /// This allows the client to re-derive the same secrets after a crash without
 /// persisting them.
 ///
-/// **Expensive**: K=11 proof generation should run in release mode.
+/// **Expensive**: K=12 proof generation should run in release mode.
 pub fn build_vote_proof_from_delegation(
     sk: &SpendingKey,
     address_index: u32,

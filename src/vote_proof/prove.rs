@@ -1,7 +1,7 @@
 //! Real Halo2 prove/verify for the vote proof circuit (ZKP #2).
 //!
 //! Follows the same pattern as `delegation/prove.rs` but for the
-//! 12-condition vote proof circuit at K=11.
+//! 12-condition vote proof circuit at K=12.
 
 use std::{string::String, vec::Vec};
 
@@ -90,7 +90,7 @@ pub fn vote_proof_proving_key(
 /// provides a circuit without all witnesses populated or an instance
 /// that Halo2 cannot prove against.
 ///
-/// **Expensive**: K=11 proof generation should run in release mode. Params and
+/// **Expensive**: K=12 proof generation should run in release mode. Params and
 /// keys are cached so only the first call pays keygen.
 pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8>, ProveError> {
     let (params, pk, _vk) = vote_proof_cached_keys()?;
@@ -131,7 +131,7 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8
 ///
 /// - `instance.proposal_id` — must be in the active proposal set for
 ///   `voting_round_id`. The circuit only constrains this to the authority
-///   bit-index range `[1, 15]`; it does not know whether the proposal exists
+///   bit-index range `[1, 50]`; it does not know whether the proposal exists
 ///   or is open.
 /// - `instance.voting_round_id` — must come from the same governance
 ///   announcement as `proposal_id`, and must identify the active voting round
@@ -207,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "long-running K=11 proof keygen; run when touching vote proof creation"]
+    #[ignore = "long-running K=12 proof keygen; run when touching vote proof creation"]
     fn create_vote_proof_returns_err_for_missing_witnesses() {
         let instance = minimal_instance();
         let err = create_vote_proof(Circuit::default(), &instance).unwrap_err();
@@ -234,7 +234,7 @@ mod tests {
     // either the circuit shape changed (and the VK must be regenerated and
     // redistributed) or an unintended drift has been introduced.
     #[test]
-    #[ignore = "TODO(sean): runs K=11 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
+    #[ignore = "TODO(sean): runs K=12 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
     fn vk_fingerprint_unchanged() {
         let (_, _, vk) = vote_proof_cached_keys().expect("vote proof keys");
         let pinned = format!("{:?}", vk.pinned());
@@ -244,9 +244,9 @@ mod tests {
         let actual: &[u8] = fingerprint.as_bytes();
 
         let expected: [u8; 32] = [
-            0xf0, 0x08, 0xc1, 0x1b, 0x2a, 0x25, 0x9c, 0xc1, 0x61, 0x48, 0xfe, 0x24, 0xd1, 0xd3,
-            0xd3, 0x1b, 0x69, 0x79, 0xfe, 0x14, 0x08, 0x5d, 0x54, 0x3b, 0x48, 0xca, 0xb6, 0xa5,
-            0x4d, 0x91, 0x96, 0x10,
+            0x92, 0x7a, 0xe7, 0x99, 0xe8, 0x9f, 0xcf, 0x6c, 0x12, 0xa2, 0x10, 0x35, 0x7e, 0xa0,
+            0x35, 0xb1, 0xfe, 0x19, 0x89, 0x5b, 0xb5, 0xb3, 0xe7, 0x7b, 0x6b, 0x7e, 0x4e, 0xd2,
+            0x9d, 0x44, 0x7f, 0x9f,
         ];
 
         assert_eq!(
@@ -276,11 +276,11 @@ mod tests {
             [pallas::Base::zero(); crate::params::VOTE_COMM_TREE_DEPTH],
             0,
             123,
-            1,
+            50,
             1,
             ea_pk,
             pallas::Scalar::from(7u64),
-            65535,
+            crate::params::MAX_PROPOSAL_AUTHORITY,
             true,
         )
         .expect("vote proof builder should produce a valid proof");

@@ -92,7 +92,10 @@ use super::{
 };
 use crate::{
     gadgets::{address_ownership::prove_address_ownership, van_integrity},
-    params::{BALLOT_DIVISOR, RANGE_CHECK_WORD_BITS, SHARE_VALUE_BITS, SHARE_VALUE_RANGE_WORDS},
+    params::{
+        BALLOT_DIVISOR, MAX_PROPOSAL_AUTHORITY, RANGE_CHECK_WORD_BITS, SHARE_VALUE_BITS,
+        SHARE_VALUE_RANGE_WORDS,
+    },
     protocol_hash::poseidon_hash_in_circuit,
 };
 
@@ -189,17 +192,15 @@ const DOM_PUBLIC_OFFSET: usize = 13;
 
 /// Maximum proposal authority — the default for a fresh delegation.
 ///
-/// Represented as a 16-bit bitmask where each bit authorizes voting on the
+/// Represented as a 51-bit bitmask where each bit authorizes voting on the
 /// corresponding proposal (proposal ID = bit index from LSB).  Full authority
-/// is `2^16 - 1 = 65535`. Only bits 1–15 correspond to usable proposals
+/// is `2^51 - 1`. Only bits 1–50 correspond to usable proposals
 /// (proposal IDs are 1-indexed); bit 0 is the circuit's sentinel value,
 /// permanently set and never decremented.
 ///
 /// This constant is hashed into `van_comm` (condition 7) as a constant-
 /// constrained witness, baked into the verification key so a malicious prover
 /// cannot substitute a different authority value.
-const MAX_PROPOSAL_AUTHORITY: u64 = 65535; // 2^16 - 1
-
 /// Maximum number of real Ironwood notes consumed by one delegation proof.
 ///
 /// The proof always exposes five `gov_null` slots, padding unused positions
@@ -1507,7 +1508,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // from the domain tag, the output note's voting hotkey address, the ballot
         // count (approximately floor-divided from v_total; see condition 8), the
         // vote round identifier, a blinding factor, and the proposal authority
-        // bitmask (MAX_PROPOSAL_AUTHORITY = 65535 for full authority).
+        // bitmask (MAX_PROPOSAL_AUTHORITY = 2^51 - 1 for full authority).
         //
         // Uses two Poseidon invocations over even arities (6 then 2).
         {

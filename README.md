@@ -74,7 +74,7 @@ src/
 │   ├── imt_circuit.rs            #   IMT non-membership proof gadget
 │   └── README.md                 #   Detailed specification
 │
-├── vote_proof/                   # ZKP #2 — Vote Proof circuit (K=11)
+├── vote_proof/                   # ZKP #2 — Vote Proof circuit (K=12)
 │   ├── circuit.rs                #   12-condition halo2 circuit
 │   ├── builder.rs                #   Builder producing VoteProofBundle
 │   ├── prove.rs                  #   Prove / verify helpers
@@ -109,7 +109,7 @@ Reusable halo2 gadgets that appear in more than one circuit:
 | Circuit | K | Rows | Conditions | Spec |
 |---------|---|------|------------|------|
 | Delegation | 12 | 4 096 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) |
-| Vote Proof | 11 | 2 048 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
+| Vote Proof | 12 | 4 096 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
 | Share Reveal | 10 | 1 024 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
 
 ## Dependency on Orchard
@@ -159,7 +159,7 @@ cargo test cost_breakdown -- --ignored --nocapture
 
 The long tests are slow because they synthesize Halo 2 circuits and run
 `MockProver` verification over the configured `K` domain (`delegation` uses
-K=12, `vote_proof` uses K=11, and `share_reveal` uses K=10). Some gadget
+K=12, `vote_proof` uses K=12, and `share_reveal` uses K=10). Some gadget
 stress tests are also long-running because they repeat many `MockProver`
 checks, for example one K=12 shares-hash test runs 16 separate prover checks.
 The real proof roundtrip also performs proving-key/proof generation and
