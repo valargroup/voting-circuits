@@ -262,28 +262,56 @@ mod tests {
     fn typed_verify_accepts_proof_created_by_typed_builder() {
         use crate::gadgets::elgamal::spend_auth_g_affine;
         use crate::group::Curve;
-        use crate::vote_proof::build_vote_proof_from_delegation;
+        use crate::vote_proof::{
+            build_vote_proof_from_delegation, derive_vote_authority_transition,
+        };
         use voting_crypto_deps::orchard::keys::SpendingKey;
 
         let sk = SpendingKey::from_bytes([0x42; 32]).expect("valid test spending key");
         let ea_pk = (spend_auth_g_affine() * pallas::Scalar::from(42u64)).to_affine();
+        let address_index = 1;
+        let total_note_value = 12_500_000;
+        let van_comm_rand = pallas::Base::from(0xDEAD_u64);
+        let voting_round_id = pallas::Base::from(0xCAFE_u64);
+        let proposal_id = 1;
+        let proposal_authority_old = 65535;
+        let transition = derive_vote_authority_transition(
+            &sk,
+            address_index,
+            total_note_value,
+            van_comm_rand,
+            voting_round_id,
+            proposal_id,
+            proposal_authority_old,
+        )
+        .expect("native vote authority transition should be valid");
         let bundle = build_vote_proof_from_delegation(
             &sk,
-            1,
-            12_500_000,
-            pallas::Base::from(0xDEAD_u64),
-            pallas::Base::from(0xCAFE_u64),
+            address_index,
+            total_note_value,
+            van_comm_rand,
+            voting_round_id,
             [pallas::Base::zero(); crate::params::VOTE_COMM_TREE_DEPTH],
             0,
             123,
-            1,
+            proposal_id,
             1,
             ea_pk,
             pallas::Scalar::from(7u64),
-            65535,
+            proposal_authority_old,
             true,
         )
         .expect("vote proof builder should produce a valid proof");
+
+        let expected_root = (0..crate::params::VOTE_COMM_TREE_DEPTH)
+            .fold(transition.vote_authority_note_old, |current, _| {
+                crate::protocol_hash::poseidon_hash_2(current, pallas::Base::zero())
+            });
+        assert_eq!(bundle.instance.vote_comm_tree_root, expected_root);
+        assert_eq!(
+            bundle.instance.vote_authority_note_new,
+            transition.vote_authority_note_new
+        );
 
         verify_vote_proof(&bundle.proof, &bundle.instance)
             .expect("typed verifier should accept the builder's proof and public inputs");

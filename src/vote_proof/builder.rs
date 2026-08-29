@@ -1117,6 +1117,23 @@ mod tests {
     }
 
     #[test]
+    fn authority_transition_accepts_maximum_proposal_id() {
+        let transition = derive_vote_authority_transition(
+            &test_sk(),
+            1,
+            BALLOT_DIVISOR,
+            test_van(),
+            test_round_id(),
+            15,
+            1 << 15,
+        )
+        .expect("proposal 15 should consume the highest authority bit");
+
+        assert_eq!(transition.proposal_authority_old, 1 << 15);
+        assert_eq!(transition.proposal_authority_new, 0);
+    }
+
+    #[test]
     fn authority_transition_rejects_invalid_or_consumed_authority() {
         let sk = test_sk();
         let out_of_range = derive_vote_authority_transition(
