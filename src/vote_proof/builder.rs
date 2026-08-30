@@ -462,6 +462,8 @@ fn derive_vote_authority_transition_from_address(
 /// `proposal_authority_new` into the next call, to plan an ordered sequence of
 /// vote proofs. The returned VANs are exactly those derived by
 /// [`build_vote_proof_from_delegation`] for the same inputs.
+/// Pass [`crate::MAX_PROPOSAL_AUTHORITY`] as `proposal_authority_old` for the
+/// first transition produced by a fresh delegation.
 pub fn derive_vote_authority_transition(
     sk: &SpendingKey,
     address_index: u32,

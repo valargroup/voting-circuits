@@ -42,7 +42,7 @@ pub(crate) const PROPOSAL_AUTHORITY_BITS: usize = MAX_PROPOSALS + 1;
 /// This mask includes reserved bit zero and usable bits 1 through 50.
 /// Delegation constrains it as a circuit constant, so changing it changes the
 /// delegation verification key.
-pub(crate) const MAX_PROPOSAL_AUTHORITY: u64 = (1u64 << PROPOSAL_AUTHORITY_BITS) - 1;
+pub const MAX_PROPOSAL_AUTHORITY: u64 = (1u64 << PROPOSAL_AUTHORITY_BITS) - 1;
 
 /// Depth of the Poseidon-based vote commitment tree. Shared by ZKP #2
 /// (vote_proof) Merkle membership and ZKP #3 (share_reveal) Merkle membership.
