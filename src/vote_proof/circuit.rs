@@ -33,7 +33,7 @@
 //!
 //! New VAN construction:
 //! - **Condition 6**: Proposal Authority Decrement — `proposal_authority_new =
-//!   proposal_authority_old - (1 << proposal_id)`, with bitmask range [0, 2^16). *(implemented)*
+//!   proposal_authority_old - (1 << proposal_id)`, with bitmask range [0, 2^51). *(implemented)*
 //! - **Condition 7**: New VAN Integrity — same two-layer structure as condition 2
 //!   but with decremented authority. *(implemented)*
 //!
@@ -90,7 +90,10 @@ use crate::{
         poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate},
         van_integrity, vote_commitment,
     },
-    params::{RANGE_CHECK_WORD_BITS, SHARE_VALUE_RANGE_WORDS, VOTE_COMM_TREE_DEPTH},
+    params::{
+        PROPOSAL_AUTHORITY_BITS, RANGE_CHECK_WORD_BITS, SHARE_VALUE_RANGE_WORDS,
+        VOTE_COMM_TREE_DEPTH,
+    },
     shares_hash::compute_shares_hash_in_circuit,
 };
 
@@ -101,9 +104,9 @@ use crate::{
 /// Circuit size (2^K rows).
 ///
 /// K=11 (2,048 rows). Condition 11 is divided between two sets of ten advice
-/// columns, and condition 10 uses a separate four-column Poseidon track.
-/// [`voting_crypto_deps::halo2_proofs::dev::CircuitCost`] reports a 2,021-row high-water mark,
-/// leaving 27 rows of headroom.
+/// columns, condition 10 uses a separate four-column Poseidon track, and
+/// condition 6 shares the second El Gamal advice lane.
+/// [`voting_crypto_deps::halo2_proofs::dev::CircuitCost`] reports a 2,015-row high-water mark.
 ///
 /// Key contributors (rough per-region heights, not per-column sums):
 /// - 24-level Merkle path: 24 Poseidon regions stacked sequentially — the
@@ -125,11 +128,10 @@ const PRIMARY_SHARES_HASH_COUNT: usize = 2;
 pub(super) use van_integrity::DOMAIN_VAN;
 pub(super) use vote_commitment::DOMAIN_VC;
 
-/// Maximum proposal_id bit index (exclusive upper bound). `proposal_id` is in `[1, MAX_PROPOSAL_ID)`,
-/// i.e. valid values are 1–15. Bit 0 is permanently reserved as the sentinel/unset value and is
-/// rejected by the non-zero gate in `AuthorityDecrementChip` (`q_cond_6`). This means a voting
-/// round supports at most 15 proposals, not 16.
-/// Spec: "The number of proposals for a polling session must be <= 16."
+/// Maximum proposal_id bit index (exclusive upper bound). `proposal_id` is in
+/// `[1, MAX_PROPOSAL_ID)`, i.e. valid values are 1–50. Bit 0 is permanently
+/// reserved as the sentinel/unset value and is rejected by the non-zero gate
+/// in `AuthorityDecrementChip` (`q_cond_6`).
 ///
 /// # Indexing Convention
 ///
@@ -138,14 +140,14 @@ pub(super) use vote_commitment::DOMAIN_VC;
 /// - **On-chain (`MsgCreateVotingSession`)**: proposals carry `Id = 1, 2, …, N`.
 /// - **On-chain (`ValidateProposalId`)**: rejects `proposal_id < 1`.
 /// - **Circuit (this file)**: `proposal_id` serves as the bit-position in the
-///   16-bit `proposal_authority` bitmask. The `proposal_id != 0` gate ensures
-///   bit 0 is never selected, so the effective bit range is `[1, 15]`.
-/// - **Client (`zcash_voting::zkp2`)**: validates `proposal_id` in `[1, 15]`
+///   51-bit `proposal_authority` bitmask. The `proposal_id != 0` gate ensures
+///   bit 0 is never selected, so the effective bit range is `[1, 50]`.
+/// - **Client (`zcash_voting::zkp2`)**: must validate `proposal_id` in `[1, 50]`
 ///   before building the proof.
 ///
-/// Bit 0 of `proposal_authority` is always set (initial value `0xFFFF`) and
-/// never decremented, acting as a structural invariant rather than a usable slot.
-pub(super) const MAX_PROPOSAL_ID: usize = 16;
+/// Bit 0 of `proposal_authority` is always set and never decremented, acting as
+/// a structural invariant rather than a usable slot.
+pub(super) const MAX_PROPOSAL_ID: usize = PROPOSAL_AUTHORITY_BITS;
 
 // ================================================================
 // Public input offsets (11 field elements).
@@ -299,8 +301,7 @@ pub struct Config {
     ///
     /// Uses advices[9] as the running-sum column. Each word is 10 bits,
     /// so `num_words` × 10 gives the total bit-width checked.
-    /// Used in condition 6 to ensure authority values and diff are in [0, 2^16)
-    /// (16-bit bitmask), and condition 9 to ensure each share is in `[0, 2^30)`.
+    /// Used in condition 9 to ensure each share is in `[0, 2^30)`.
     range_check: LookupRangeCheckConfig<pallas::Base, RANGE_CHECK_WORD_BITS>,
     /// Merkle conditional swap gate (condition 1).
     ///
@@ -453,7 +454,7 @@ pub struct Circuit {
     ///
     /// Field arithmetic cannot express variable-exponent exponentiation as a
     /// polynomial gate, so the prover witnesses `one_shifted` directly. The lookup
-    /// table `(0,1), (1,2), ..., (15,32768)` then proves `one_shifted == 2^proposal_id`.
+    /// table `(0,1), (1,2), ..., (50,2^50)` then proves `one_shifted == 2^proposal_id`.
     /// The bit-decomposition region uses this value to compute
     /// `proposal_authority_new = proposal_authority_old - one_shifted`.
     pub(super) one_shifted: Value<pallas::Base>,
@@ -566,10 +567,12 @@ impl plonk::Circuit<pallas::Base> for Circuit {
     fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
         // The primary 10 advice columns match the delegation circuit layout.
         // Two additional sets of 10 columns split condition 11 across parallel
-        // ECC tracks at K=11. Each ECC chip requires all 10 columns for its
+        // ECC tracks. Each ECC chip requires all 10 columns for its
         // internal scalar-multiplication gates. Four more columns hold the
-        // condition-10 Poseidon track. The remaining chips tile within the
-        // primary 10-column window:
+        // condition-10 Poseidon track. Condition 6 shares the second El Gamal
+        // track so its 52-row authority region does not extend the saturated
+        // primary track. The remaining chips tile within the primary
+        // 10-column window:
         //
         //   advices[0..5]  — general witness assignment, Sinsemilla pair 1
         //                    message columns, and the Merkle swap gate
@@ -714,8 +717,10 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             [advices[0], advices[1], advices[2], advices[3], advices[4]],
         );
 
-        // Condition 6: Proposal Authority Decrement.
-        let authority_decrement = AuthorityDecrementChip::configure(meta, advices);
+        // Condition 6: Proposal Authority Decrement. Reusing the second El
+        // Gamal advice lane lets the floor planner place this region alongside
+        // the saturated primary track without adding columns.
+        let authority_decrement = AuthorityDecrementChip::configure(meta, elgamal_advices_b);
         let nonzero = NonZeroConfig::configure(meta, [elgamal_advices[0], elgamal_advices[1]]);
         let nonzero_b =
             NonZeroConfig::configure(meta, [elgamal_advices_b[0], elgamal_advices_b[1]]);
@@ -1067,11 +1072,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // ---------------------------------------------------------------
         // Condition 6: Proposal Authority Decrement (bit decomposition).
         //
-        // Step 1: Decompose proposal_authority_old into 16 bits b_i (boolean).
+        // Step 1: Decompose proposal_authority_old into 51 bits b_i (boolean).
         // Step 2: Selector sel_i = 1 iff proposal_id == i; exactly one active;
         //         selected bit = sum(sel_i * b_i) = 1 (voter has authority).
         // Step 3: b_new_i = b_i*(1-sel_i); recompose to proposal_authority_new.
-        // No diff/gap range check; decomposition proves [0, 2^16).
+        // No diff/gap range check; decomposition proves [0, 2^51).
         // ---------------------------------------------------------------
 
         // Copy proposal_id from the public instance into an advice cell.
@@ -1489,7 +1494,7 @@ pub struct Instance {
     pub vote_comm_tree_anchor_height: pallas::Base,
     /// Governance session parameter: which proposal this vote is for.
     ///
-    /// The circuit constrains this to `[1, 15]` through condition 6 and binds
+    /// The circuit constrains this to `[1, 50]` through condition 6 and binds
     /// it into the new VAN and vote commitment. The verifier must separately
     /// check that it is active for `voting_round_id`.
     pub proposal_id: pallas::Base,
@@ -2743,14 +2748,13 @@ mod tests {
         assert!(prover.verify().is_err(), "proposal_id = 0 must be rejected");
     }
 
-    /// Full authority (65535), proposal_id 1 → new = 65533 (e2e scenario).
+    /// Full authority with proposal_id 50 verifies at the upper boundary.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn proposal_authority_full_authority_proposal_1_passes() {
-        const MAX_PROPOSAL_AUTHORITY: u64 = 65535;
+    fn proposal_authority_full_authority_proposal_50_passes() {
         let (circuit, instance) = make_test_data_with_authority_and_proposal(
-            pallas::Base::from(MAX_PROPOSAL_AUTHORITY),
-            1,
+            pallas::Base::from(crate::params::MAX_PROPOSAL_AUTHORITY),
+            50,
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -2761,8 +2765,10 @@ mod tests {
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn proposal_authority_wrong_new_fails() {
-        let (circuit, mut instance) =
-            make_test_data_with_authority_and_proposal(pallas::Base::from(65535u64), 1);
+        let (circuit, mut instance) = make_test_data_with_authority_and_proposal(
+            pallas::Base::from(crate::params::MAX_PROPOSAL_AUTHORITY),
+            1,
+        );
 
         instance.vote_authority_note_new = pallas::Base::random(&mut OsRng);
 
@@ -2797,19 +2803,17 @@ mod tests {
         assert_eq!(prover.verify(), Ok(()));
     }
 
-    /// proposal_authority_old = 65536 = 2^16 lies outside the valid 16-bit bitmask
-    /// range [0, 65535]. The authority_decrement gadget decomposes the value into
-    /// exactly 16 bits (positions 0–15); a value with bit 16 set cannot be represented
-    /// in that decomposition and must be rejected by the range check.
+    /// A value with bit 51 set lies outside the valid 51-bit bitmask and cannot
+    /// be represented by the authority-decrement decomposition.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn proposal_authority_exceeds_16_bits_fails() {
-        // 65536 = 2^16 is the first value not representable as a 16-bit bitmask.
-        let (circuit, instance) = make_test_data_with_authority(pallas::Base::from(65536u64));
+    fn proposal_authority_exceeds_51_bits_fails() {
+        let first_invalid = crate::params::MAX_PROPOSAL_AUTHORITY + 1;
+        let (circuit, instance) = make_test_data_with_authority(pallas::Base::from(first_invalid));
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(
             prover.verify().is_err(),
-            "authority > 65535 must be rejected by the 16-bit bit decomposition"
+            "authority values wider than 51 bits must be rejected"
         );
     }
 
@@ -2832,12 +2836,12 @@ mod tests {
         assert!(prover.verify().is_err());
     }
 
-    /// New VAN integrity with a large (but valid) 16-bit proposal authority.
-    /// Authority 0xFFF8 has bits 3..15 set; voting on proposal 3 gives new = 0xFFF0.
+    /// New VAN integrity with a large, valid 51-bit proposal authority.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn new_van_integrity_large_authority() {
-        let (circuit, instance) = make_test_data_with_authority(pallas::Base::from(0xFFF8u64));
+        let authority = crate::params::MAX_PROPOSAL_AUTHORITY & !0b111u64;
+        let (circuit, instance) = make_test_data_with_authority(pallas::Base::from(authority));
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert_eq!(prover.verify(), Ok(()));

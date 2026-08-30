@@ -5,8 +5,10 @@ Proves that a registered voter is casting a valid vote, without revealing which 
 **Public inputs:** 11 field elements.
 **Current K:** 11 (2,048 rows) — condition 11 is split evenly across two
 dedicated 10-column El Gamal tracks. Condition 10 is divided between the
-primary track and a dedicated four-column Poseidon track. The high-water mark
-is 2,021 rows (98.7% utilization), leaving 27 rows of headroom.
+primary track and a dedicated four-column Poseidon track. Proposal-authority
+decrement shares the second El Gamal advice lane, keeping the 51-bit circuit's
+high-water mark at 2,015 rows. This leaves 27 usable rows before Halo2's six
+reserved blinding rows, with no increase to the 34 advice columns.
 
 **Authoritative hash sources:** this README is explanatory. Reusable hash
 preimages are owned by `crate::circuit::van_integrity` (VAN integrity),
@@ -24,7 +26,7 @@ Domain-tag encoding is owned by `crate::domain_tags`.
    * **vote_commitment** (offset 4): the vote commitment hash `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`.
    * **vote_comm_tree_root** (offset 5): root of the Poseidon-based vote commitment tree at anchor height.
    * **vote_comm_tree_anchor_height** (offset 6): caller-authenticated chain height used to source `vote_comm_tree_root`. This slot is transcript-bound but not constrained to a circuit witness.
-   * **proposal_id** (offset 7): governance session parameter identifying which proposal this vote is for. The circuit constrains it to `[1, 15]`; the verifier must check it is active for `voting_round_id`.
+   * **proposal_id** (offset 7): governance session parameter identifying which proposal this vote is for. The circuit constrains it to `[1, 50]`; the verifier must check it is active for `voting_round_id`.
    * **voting_round_id** (offset 8): governance session parameter identifying the active voting round — prevents cross-round replay when pinned by the verifier.
    * **ea_pk_x** (offset 9): x-coordinate of the governance-announced election authority public key (El Gamal encryption key).
    * **ea_pk_y** (offset 10): y-coordinate of the governance-announced election authority public key. Both coordinates are public to prevent sign-ambiguity attacks (using −ea_pk would corrupt the tally).
@@ -72,7 +74,7 @@ metadata, not a circuit-derived witness.
 **Governance session parameters:** `voting_round_id` must come from the active
 governance session. `proposal_id` must be in that round's active proposal set.
 The circuit only proves internal consistency: `proposal_id` is an authority
-bit index in `[1, 15]`, the corresponding authority bit is decremented, and the
+bit index in `[1, 50]`, the corresponding authority bit is decremented, and the
 same value is folded into the vote commitment. It does not authenticate the
 active-proposal registry.
 
@@ -234,21 +236,21 @@ domain tag and voting round ID directly:
 
 ## Condition 6: Proposal Authority Decrement ✅
 
-Purpose: ensure the voter has authority for the voted proposal and correctly clears that bit in the authority bitmask (spec-aligned).
+Purpose: ensure the voter has authority for the voted proposal and correctly clears that bit in the authority bitmask.
 
-**Spec (Gov Steps V1 §3.5 Step 2, ZKP #2 Condition 6):** `proposal_authority` is a 16-bit bitmask; one vote consumes the bit for the chosen proposal: `proposal_authority_new = proposal_authority_old - (1 << proposal_id)`, and the `proposal_id`-th bit of `proposal_authority_old` must be 1.
+**Baseline spec (Gov Steps V1 §3.5 Step 2, ZKP #2 Condition 6):** `proposal_authority` is a 16-bit bitmask. This circuit widens it to 51 bits so IDs 1–50 are usable while ID 0 remains reserved. One vote consumes the chosen bit: `proposal_authority_new = proposal_authority_old - (1 << proposal_id)`, and the `proposal_id`-th bit of `proposal_authority_old` must be 1.
 
 **Implementation (bit decomposition):**
 
-1. **Decompose** `proposal_authority_old` into 16 bits `b_i` (each boolean), with recomposition `sum(b_i * 2^i) = proposal_authority_old`.
+1. **Decompose** `proposal_authority_old` into 51 bits `b_i` (each boolean), with recomposition `sum(b_i * 2^i) = proposal_authority_old`.
 2. **Selector** `sel_i = 1` iff `proposal_id == i` (exactly one active); constrain `run_selected = sum(sel_i * b_i) = 1` so the selected bit is set (voter has authority).
 3. **Clear and recompose**: `b_new_i = b_i*(1-sel_i)`; then `sum(b_new_i * 2^i) = proposal_authority_new`. Constrain this to equal the witnessed `proposal_authority_new` (and thus the new VAN in condition 7).
 
-No diff/gap or strict range-check chip; the 16-bit decomposition implies `proposal_authority_old` and `proposal_authority_new` are in `[0, 2^16)`. The existing `(proposal_id, one_shifted)` lookup constrains `proposal_id in [0, 15]` and `one_shifted = 2^proposal_id`; a separate non-zero gate (`q_cond_6 * (1 - proposal_id * proposal_id_inv) = 0`) additionally rejects `proposal_id = 0`, making the effective circuit range `[1, 15]`. Bit 0 is permanently reserved as the sentinel/unset value. A voting round therefore supports at most 15 proposals. The builder provides `one_shifted` and `proposal_authority_new = old - one_shifted`.
+No diff/gap or strict range-check chip; the 51-bit decomposition implies `proposal_authority_old` and `proposal_authority_new` are in `[0, 2^51)`. The `(proposal_id, one_shifted)` lookup constrains `proposal_id in [0, 50]` and `one_shifted = 2^proposal_id`; a separate non-zero gate (`q_cond_6 * (1 - proposal_id * proposal_id_inv) = 0`) rejects `proposal_id = 0`, making the effective circuit range `[1, 50]`. Bit 0 is permanently reserved as the sentinel/unset value. A voting round therefore supports at most 50 proposals. The builder provides `one_shifted` and `proposal_authority_new = old - one_shifted`.
 
-**Structure:** One region: row 0 has `proposal_id`, `one_shifted` (lookup); rows 1..17 have bits, selectors, running sums; gates for init (row 1), recurrence (rows 2..17), and `run_selected = 1` at the last bit row. Equality constraints bind recomposed `run_old` to `proposal_authority_old` and `run_new` to `proposal_authority_new`.
+**Structure:** One 52-row region: row 0 has `proposal_id`, `one_shifted` (lookup); rows 1..51 have bits, selectors, and running sums; gates cover initialization, recurrence, and `run_selected = 1` at the last bit row. Equality constraints bind recomposed `run_old` to `proposal_authority_old` and `run_new` to `proposal_authority_new`.
 
-**Constructions:** Custom `AuthorityDecrementChip` (see `src/vote_proof/authority_decrement.rs`) — a dedicated 17-row bit-decomposition chip with its own `(proposal_id, 2^proposal_id)` lookup table covering `proposal_id ∈ [0, 15]`. Range enforcement comes from the bit decomposition itself (16 boolean cells recompose into `proposal_authority_old`).
+**Constructions:** Custom `AuthorityDecrementChip` (see `src/vote_proof/authority_decrement.rs`) — a dedicated 52-row bit-decomposition chip with its own `(proposal_id, 2^proposal_id)` lookup table covering `proposal_id ∈ [0, 50]`. Range enforcement comes from the bit decomposition itself (51 boolean cells recompose into `proposal_authority_old`).
 
 ## Condition 7: New VAN Integrity ✅
 
@@ -466,7 +468,7 @@ vote_decision ──────────────────────
 | `advices[8]` | Poseidon state + AddChip input (b) |
 | `advices[9]` | Range check running sum |
 | `elgamal_advices[0..10]` | Condition 11 El Gamal encryptions for shares 0 through 7 |
-| `elgamal_advices_b[0..10]` | Condition 11 El Gamal encryptions for shares 8 through 15 |
+| `elgamal_advices_b[0..10]` | Condition 6 authority decrement (columns 0–7), then condition 11 El Gamal encryptions for shares 8 through 15 |
 | `hash_advices[0..4]` | Condition 10 share commitments 2 through 15 and the outer shares hash |
 | `constants` | Constant assignments (DOMAIN_VAN, DOMAIN_VC, ONE) |
 | `lagrange_coeffs[0..2]` | Primary ECC Lagrange coefficients |

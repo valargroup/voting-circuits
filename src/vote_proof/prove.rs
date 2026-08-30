@@ -131,7 +131,7 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8
 ///
 /// - `instance.proposal_id` — must be in the active proposal set for
 ///   `voting_round_id`. The circuit only constrains this to the authority
-///   bit-index range `[1, 15]`; it does not know whether the proposal exists
+///   bit-index range `[1, 50]`; it does not know whether the proposal exists
 ///   or is open.
 /// - `instance.voting_round_id` — must come from the same governance
 ///   announcement as `proposal_id`, and must identify the active voting round
@@ -244,9 +244,9 @@ mod tests {
         let actual: &[u8] = fingerprint.as_bytes();
 
         let expected: [u8; 32] = [
-            0xf0, 0x08, 0xc1, 0x1b, 0x2a, 0x25, 0x9c, 0xc1, 0x61, 0x48, 0xfe, 0x24, 0xd1, 0xd3,
-            0xd3, 0x1b, 0x69, 0x79, 0xfe, 0x14, 0x08, 0x5d, 0x54, 0x3b, 0x48, 0xca, 0xb6, 0xa5,
-            0x4d, 0x91, 0x96, 0x10,
+            0x95, 0xd9, 0xd9, 0x7b, 0x08, 0x18, 0xff, 0xe3, 0xf3, 0x55, 0xbf, 0x06, 0x56, 0xae,
+            0xd1, 0x54, 0xdb, 0xbf, 0xfd, 0x9b, 0xfd, 0xe4, 0x15, 0x87, 0x66, 0xaa, 0xc0, 0xbc,
+            0x49, 0x77, 0x59, 0x5d,
         ];
 
         assert_eq!(
@@ -273,8 +273,8 @@ mod tests {
         let total_note_value = 12_500_000;
         let van_comm_rand = pallas::Base::from(0xDEAD_u64);
         let voting_round_id = pallas::Base::from(0xCAFE_u64);
-        let proposal_id = 1;
-        let proposal_authority_old = 65535;
+        let proposal_id = 50;
+        let proposal_authority_old = crate::params::MAX_PROPOSAL_AUTHORITY;
         let transition = derive_vote_authority_transition(
             &sk,
             address_index,

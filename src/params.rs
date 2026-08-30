@@ -28,6 +28,22 @@ pub(crate) const RANGE_CHECK_WORD_BITS: usize = 10;
 /// Number of lookup words used to range-check each vote share.
 pub(crate) const SHARE_VALUE_RANGE_WORDS: usize = SHARE_VALUE_BITS / RANGE_CHECK_WORD_BITS;
 
+/// Maximum number of usable proposals in one voting round.
+///
+/// Proposal IDs are 1-indexed. Bit zero remains reserved as the unset sentinel,
+/// so the proposal-authority bitmask needs one more bit than this limit.
+pub(crate) const MAX_PROPOSALS: usize = 50;
+
+/// Number of bits in the proposal-authority bitmask, including bit zero.
+pub(crate) const PROPOSAL_AUTHORITY_BITS: usize = MAX_PROPOSALS + 1;
+
+/// Full proposal authority assigned by a fresh delegation.
+///
+/// This mask includes reserved bit zero and usable bits 1 through 50.
+/// Delegation constrains it as a circuit constant, so changing it changes the
+/// delegation verification key.
+pub const MAX_PROPOSAL_AUTHORITY: u64 = (1u64 << PROPOSAL_AUTHORITY_BITS) - 1;
+
 /// Depth of the Poseidon-based vote commitment tree. Shared by ZKP #2
 /// (vote_proof) Merkle membership and ZKP #3 (share_reveal) Merkle membership.
 ///

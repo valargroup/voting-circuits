@@ -30,7 +30,7 @@ use super::{
 use crate::{
     domain_tags,
     gadgets::elgamal::{base_to_scalar, spend_auth_g_affine},
-    params::{BALLOT_DIVISOR, SHARE_VALUE_LIMIT, VOTE_COMM_TREE_DEPTH},
+    params::{BALLOT_DIVISOR, MAX_PROPOSAL_AUTHORITY, SHARE_VALUE_LIMIT, VOTE_COMM_TREE_DEPTH},
     shares_hash::{share_commitment, shares_hash},
     ProveError,
 };
@@ -284,7 +284,7 @@ pub enum VoteProofBuildError {
     InvalidEncryptedShare(String),
     /// The proposal identifier is outside the supported 1-indexed range.
     InvalidProposalId(u64),
-    /// The proposal-authority bitmask is outside the circuit's 16-bit range.
+    /// The proposal-authority bitmask exceeds the circuit maximum.
     InvalidProposalAuthority(u64),
     /// The selected proposal's authority bit has already been consumed.
     ProposalAuthorityConsumed {
@@ -332,8 +332,8 @@ impl core::fmt::Display for VoteProofBuildError {
             VoteProofBuildError::InvalidProposalAuthority(proposal_authority) => {
                 write!(
                     f,
-                    "proposal_authority must fit in 16 bits, got {}",
-                    proposal_authority
+                    "proposal_authority must be at most {}, got {}",
+                    MAX_PROPOSAL_AUTHORITY, proposal_authority
                 )
             }
             VoteProofBuildError::ProposalAuthorityConsumed {
@@ -403,7 +403,7 @@ fn next_proposal_authority(
     if proposal_id == 0 || proposal_id >= MAX_PROPOSAL_ID as u64 {
         return Err(VoteProofBuildError::InvalidProposalId(proposal_id));
     }
-    if proposal_authority_old > u64::from(u16::MAX) {
+    if proposal_authority_old > MAX_PROPOSAL_AUTHORITY {
         return Err(VoteProofBuildError::InvalidProposalAuthority(
             proposal_authority_old,
         ));
@@ -462,6 +462,8 @@ fn derive_vote_authority_transition_from_address(
 /// `proposal_authority_new` into the next call, to plan an ordered sequence of
 /// vote proofs. The returned VANs are exactly those derived by
 /// [`build_vote_proof_from_delegation`] for the same inputs.
+/// Pass [`crate::MAX_PROPOSAL_AUTHORITY`] as `proposal_authority_old` for the
+/// first transition produced by a fresh delegation.
 pub fn derive_vote_authority_transition(
     sk: &SpendingKey,
     address_index: u32,
@@ -651,7 +653,7 @@ fn deterministic_shuffle(
 /// * `anchor_height` - Caller-authenticated chain height used by the verifier
 ///   or chain to source the vote commitment tree root. The circuit carries this
 ///   as a public input but does not derive or constrain the height itself.
-/// * `proposal_id` - Which proposal to vote on (1-indexed, must be in [1, 15]).
+/// * `proposal_id` - Which proposal to vote on (1-indexed, must be in [1, 50]).
 ///   The builder checks only this circuit-supported range; the caller must
 ///   ensure the proposal is active for `voting_round_id`.
 /// * `vote_decision` - The voter's choice.
@@ -1124,18 +1126,22 @@ mod tests {
             BALLOT_DIVISOR,
             test_van(),
             test_round_id(),
-            15,
-            1 << 15,
+            50,
+            MAX_PROPOSAL_AUTHORITY,
         )
-        .expect("proposal 15 should consume the highest authority bit");
+        .expect("proposal 50 should consume the highest usable authority bit");
 
-        assert_eq!(transition.proposal_authority_old, 1 << 15);
-        assert_eq!(transition.proposal_authority_new, 0);
+        assert_eq!(transition.proposal_authority_old, MAX_PROPOSAL_AUTHORITY);
+        assert_eq!(
+            transition.proposal_authority_new,
+            MAX_PROPOSAL_AUTHORITY - (1 << 50)
+        );
     }
 
     #[test]
     fn authority_transition_rejects_invalid_or_consumed_authority() {
         let sk = test_sk();
+        let first_invalid = MAX_PROPOSAL_AUTHORITY + 1;
         let out_of_range = derive_vote_authority_transition(
             &sk,
             1,
@@ -1143,12 +1149,13 @@ mod tests {
             test_van(),
             test_round_id(),
             1,
-            65536,
+            first_invalid,
         )
-        .expect_err("authority must be 16-bit");
+        .expect_err("authority must fit the circuit range");
         assert!(matches!(
             out_of_range,
-            VoteProofBuildError::InvalidProposalAuthority(65536)
+            VoteProofBuildError::InvalidProposalAuthority(rejected)
+                if rejected == first_invalid
         ));
 
         let consumed = derive_vote_authority_transition(
