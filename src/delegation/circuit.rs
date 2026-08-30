@@ -190,17 +190,6 @@ const GOV_NULL_PUBLIC_OFFSETS: [usize; 5] = [
 /// Public input offset for the nullifier domain.
 const DOM_PUBLIC_OFFSET: usize = 13;
 
-/// Maximum proposal authority — the default for a fresh delegation.
-///
-/// Represented as a 51-bit bitmask where each bit authorizes voting on the
-/// corresponding proposal (proposal ID = bit index from LSB).  Full authority
-/// is `2^51 - 1`. Only bits 1–50 correspond to usable proposals
-/// (proposal IDs are 1-indexed); bit 0 is the circuit's sentinel value,
-/// permanently set and never decremented.
-///
-/// This constant is hashed into `van_comm` (condition 7) as a constant-
-/// constrained witness, baked into the verification key so a malicious prover
-/// cannot substitute a different authority value.
 /// Maximum number of real Ironwood notes consumed by one delegation proof.
 ///
 /// The proof always exposes five `gov_null` slots, padding unused positions

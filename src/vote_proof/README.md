@@ -238,7 +238,7 @@ domain tag and voting round ID directly:
 
 Purpose: ensure the voter has authority for the voted proposal and correctly clears that bit in the authority bitmask.
 
-**Baseline spec (Gov Steps V1 §3.5 Step 2, ZKP #2 Condition 6):** `proposal_authority` is a 16-bit bitmask. This experimental circuit intentionally widens it to 51 bits so IDs 1–50 are usable while ID 0 remains reserved. One vote consumes the chosen bit: `proposal_authority_new = proposal_authority_old - (1 << proposal_id)`, and the `proposal_id`-th bit of `proposal_authority_old` must be 1.
+**Baseline spec (Gov Steps V1 §3.5 Step 2, ZKP #2 Condition 6):** `proposal_authority` is a 16-bit bitmask. This circuit widens it to 51 bits so IDs 1–50 are usable while ID 0 remains reserved. One vote consumes the chosen bit: `proposal_authority_new = proposal_authority_old - (1 << proposal_id)`, and the `proposal_id`-th bit of `proposal_authority_old` must be 1.
 
 **Implementation (bit decomposition):**
 
@@ -265,6 +265,11 @@ Where:
 **Constraint:** The circuit computes the two-layer hash and enforces `constrain_instance(derived_van_new, VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET)` — binding the result to the public input at offset 3.
 
 **Out-of-circuit helper:** Reuses `van_integrity::van_integrity_hash(vpk_g_d, vpk_pk_d, total_note_value, voting_round_id, proposal_authority_new, van_comm_rand)` with `proposal_authority_new = proposal_authority_old - (1 << proposal_id)`. (Note: the shared module's parameter names are `g_d_x`/`pk_d_x`.)
+
+Clients that need to plan several ordered votes before proving can call
+`vote_proof::derive_vote_authority_transition`. It derives the old and new VAN
+with the same native implementation used by the proof builder, while leaving
+the circuit and its proving and verifying keys unchanged.
 
 **Constructions:** `van_integrity::van_integrity_poseidon` (shared gadget from `circuit::van_integrity`).
 

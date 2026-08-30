@@ -38,6 +38,10 @@ pub(crate) const MAX_PROPOSALS: usize = 50;
 pub(crate) const PROPOSAL_AUTHORITY_BITS: usize = MAX_PROPOSALS + 1;
 
 /// Full proposal authority assigned by a fresh delegation.
+///
+/// This mask includes reserved bit zero and usable bits 1 through 50.
+/// Delegation constrains it as a circuit constant, so changing it changes the
+/// delegation verification key.
 pub(crate) const MAX_PROPOSAL_AUTHORITY: u64 = (1u64 << PROPOSAL_AUTHORITY_BITS) - 1;
 
 /// Depth of the Poseidon-based vote commitment tree. Shared by ZKP #2

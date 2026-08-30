@@ -9,6 +9,29 @@
   circuit remains at K=11 by placing authority decrement on an existing El
   Gamal advice lane.
 
+## v0.11.2
+
+### Added
+
+- Added a native vote-authority transition helper so clients can derive an
+  ordered VAN chain before generating proofs. This does not change the vote
+  circuit, its public inputs, or its proving and verifying keys.
+
+### Changed
+
+- Updated the coordinated Zakura cryptography package family from
+  `1.0.0-rc.5` to `1.0.0`.
+- Prepared `voting-crypto-deps 0.2.2` and `voting-circuits 0.11.2`.
+
+## v0.11.1
+
+### Changed
+
+- Updated the coordinated Zakura cryptography package family from
+  `1.0.0-rc.4` to `1.0.0-rc.5`. The default Zakura graph now requires Rust
+  1.91; the LRZ graph retains Rust 1.86 support.
+- Prepared `voting-crypto-deps 0.2.1` and `voting-circuits 0.11.1`.
+
 ## v0.11.0
 
 ### Changed

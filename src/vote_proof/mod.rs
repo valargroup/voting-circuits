@@ -22,7 +22,10 @@ mod circuit;
 mod gadgets;
 mod prove;
 
-pub use builder::{build_vote_proof_from_delegation, EncryptedShareOutput, VoteProofBundle};
+pub use builder::{
+    build_vote_proof_from_delegation, derive_vote_authority_transition, EncryptedShareOutput,
+    VoteAuthorityTransition, VoteProofBundle,
+};
 pub use circuit::{Circuit, Instance, K};
 pub use prove::{
     verify_vote_proof, vote_proof_cached_keys, vote_proof_params, vote_proof_proving_key,
