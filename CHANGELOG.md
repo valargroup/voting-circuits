@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.12.0-rc.1
+
 ### Changed
 
 - **Breaking:** Expanded proposal authority to support 50 usable proposal IDs.
