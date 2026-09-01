@@ -364,7 +364,7 @@ Where:
   (range) — cell reuse guarantees the weights ZKP 1.5 encrypted are exactly
   the shares this VAN authorizes.
 - **selected_comm_i**: witnessed from the encrypt-choice bundle. Each is a
-  66-input Poseidon commitment over the share's blind and all 16 bucket
+  34-input Poseidon commitment over the share's blind and all 8 bucket
   ciphertext coordinates; `crate::bridge` owns the preimage layout and
   ZKP 1.5 constrains the committed points to real ElGamal encryptions.
 - **voting_round_id / proposal_id / decision_bucket_count**: copied from the

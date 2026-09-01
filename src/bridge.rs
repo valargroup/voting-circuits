@@ -452,6 +452,29 @@ mod tests {
         assert_eq!(BRIDGE_INPUTS, 36);
     }
 
+    #[test]
+    fn vote_proof_readme_tracks_selected_commitment_shape() {
+        let readme = include_str!("vote_proof/README.md");
+        let description = readme
+            .split_once("- **selected_comm_i**:")
+            .expect("README must document selected_comm_i")
+            .1
+            .split_once("- **voting_round_id")
+            .expect("README selected_comm_i description must have a section boundary")
+            .0;
+
+        let expected_arity = format!("{SELECTED_COMMITMENT_INPUTS}-input Poseidon commitment");
+        let expected_buckets = format!("all {MAX_DECISION_BUCKETS} bucket");
+        assert!(
+            description.contains(&expected_arity),
+            "README selected_comm_i description must contain `{expected_arity}`"
+        );
+        assert!(
+            description.contains(&expected_buckets),
+            "README selected_comm_i description must contain `{expected_buckets}`"
+        );
+    }
+
     // ---------------------------------------------------------------
     // In-circuit equivalence
     // ---------------------------------------------------------------
