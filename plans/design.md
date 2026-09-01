@@ -20,11 +20,14 @@ wallet can build and cache ZKP 1.5 as soon as the voter selects an option,
 then produce the smaller cast proof against a current vote-tree anchor at
 submission. Putting both relations in ZKP 2 would preserve soundness, but it
 would move the full encryption proof onto the submission critical path and
-discard that precomputation boundary. Moreover, all questions inherit
-the worst case 8-option circuit configuration, even if polled with fewer.
-In a prototype of the consolidated ZKP 2, we observed the proving time to increase
-to 1.1 on a MacBook Pro M4 Max which is expected to translate to over 2s on mobile.
-By moving the proof of encrypted choice into a separate proof that runs pre-submission, we move off the proving latency off of the critical path.
+discard that precomputation boundary. Moreover, all proposals inherit the
+worst-case eight-option circuit configuration, even when they have fewer
+options.
+
+In a prototype of the consolidated ZKP 2, proving took 1.1 seconds on a
+MacBook Pro M4 Max, which is expected to translate to more than two seconds
+on mobile. Splitting out the encrypted-choice proof lets that work happen
+before submission and removes its latency from the submission critical path.
 
 The privacy claim is relative to ordinary chain observers, reveal helpers
 without the election secret key, and fewer than the required election-key
@@ -39,23 +42,24 @@ Two fixed dimensions must be kept separate:
 
 - A vote has `N = 16` weight-share slots. This dimension comes from the
   amount-privacy design.
-- Each share has `M = 8` decision buckets. This is the protocol ceiling.
+- Each share has `M = 8` option buckets. This is the protocol ceiling.
 
-A proposal declares a public active bucket count `D`. The protocol accepts
-`2 <= D <= 8`, and valid choices are zero-based indices in `[0, D)`. Every
-share carries eight ciphertexts regardless of `D`, so one vote commits to
-`16 * 8 = 128` ciphertexts.
+A proposal assigns each option a zero-based bucket index and declares the
+public active bucket count `D`. Thus, `D` is also the number of options on
+that proposal. The protocol accepts `2 <= D <= 8`, and the voter's selected
+choice is an index `c` in `[0, D)`. Every share carries eight ciphertexts
+regardless of `D`, so one vote commits to `16 * 8 = 128` ciphertexts.
 
-For example, a voter with weight 7 choosing the middle option of a
-three-option proposal conceptually produces:
+For example, a voter with weight 7 choosing the middle option (`c = 1`) of a
+three-option proposal (`D = 3`) conceptually produces:
 
 ```text
 [Enc(0), Enc(7), Enc(0)]
 ```
 
-The actual construction does this separately for all 16 share slots. It uses
-one selector vector for the whole vote, so different shares cannot be sent to
-different options.
+The actual construction does this separately for all 16 share slots. One
+selector vector encodes the selected choice for the whole vote, so different
+shares cannot be sent to different options.
 
 The standard construction decomposes the authorized ballot weight into 16
 shares. An optional last-moment layout places the weight in one slot and zero
@@ -65,7 +69,7 @@ standard decomposition if individual shares are ever decrypted.
 
 ## Vote lifecycle
 
-1. The wallet obtains the authenticated voting round, proposal, active option
+1. The wallet obtains the authenticated voting round, proposal, active bucket
    count `D`, and election-authority public key. It also determines the Vote
    Authority Note (VAN) that this vote will consume.
 2. Once the voter selects an option, the wallet constructs and proves ZKP 1.5
@@ -110,8 +114,9 @@ private choice + VAN context
 
 ## Weighted one-hot ElGamal encryption
 
-Let `w_i` be share `i`, let `b_j` select bucket `j`, and let `PK = [x]G` be
-the election-authority public key. The selector satisfies:
+Let `w_i` be share `i`, and let selector `b` encode the selected choice `c`,
+so `b_j = 1` exactly when `j = c`. Let `PK = [x]G` be the
+election-authority public key. The selector satisfies:
 
 ```text
 b_j in {0, 1}
@@ -271,7 +276,7 @@ integrity, share-sum, and share-range conditions. It still performs
 elliptic-curve work for address ownership and spend authority. What moved to
 ZKP 1.5 is the ElGamal work for vote ciphertexts.
 
-The old plaintext decision and election-authority key are absent. Their place
+The old plaintext choice and election-authority key are absent. Their place
 is taken by three hash operations:
 
 1. Recompute the bridge from the authorized share cells and the 16 witnessed
