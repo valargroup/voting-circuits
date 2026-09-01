@@ -134,8 +134,11 @@ C2_i,j = [r_i,j]PK + [b_j * w_i]G
 
 The selected bucket encrypts the share weight; every other bucket encrypts
 zero. The randomizers are deterministic but pseudorandom to anyone who does
-not know the spending key. Distinct domains and share/bucket indices prevent
-reuse across VANs, rounds, proposals, layouts, shares, and buckets.
+not know the voting hotkey's Orchard spending key. This is the key controlling
+the voting address to which the VAN was delegated, and is not necessarily the
+spending key controlling the funds that created the delegation. Distinct
+domains and share/bucket indices prevent reuse across VANs, rounds, proposals,
+layouts, shares, and buckets.
 
 The circuit avoids recomputing `[w_i]G` for every bucket. It computes:
 
@@ -159,8 +162,9 @@ verification alone is not that check.
 
 ## Deterministic secrets and cached proofs
 
-Vote secrets are derived with a Blake2b-512 PRF keyed by the spending key and
-separated by registered domains. The common context is:
+Vote secrets are derived with a Blake2b-512 PRF keyed by the voting hotkey's
+Orchard spending key and separated by registered domains. The common context
+is:
 
 ```text
 (domain, voting_round_id, proposal_id, VAN, share_index)
@@ -429,8 +433,8 @@ construction provides:
 - **Replay confinement:** round, proposal, and `D` appear in the bridge and
   vote commitment and are checked across the proof instances.
 - **Deterministic recovery:** a wallet can reconstruct the auxiliary
-  witnesses and validate a cached proof from the spending key and vote
-  context.
+  witnesses and validate a cached proof from the voting hotkey's spending key
+  and vote context.
 - **Selective opening:** a share reveal proves membership in a registered
   vote without publishing the parent commitment or share index.
 
