@@ -1,8 +1,10 @@
-//! Vote proof ZKP circuit (ZKP #2).
+//! Vote proof ZKP circuit (ZKP #2, compact cast circuit).
 //!
 //! Proves that a vote is well-formed and authorized with respect to
-//! delegation and the vote commitment tree. The circuit verifies 12
-//! conditions; all are fully constrained.
+//! delegation and the vote commitment tree. The ElGamal encryption work lives
+//! in the encrypt-choice circuit (ZKP 1.5); the two proofs are submitted as
+//! one [`VoteBundle`], bound by a shared public bridge commitment. The
+//! circuit verifies 12 conditions; all are fully constrained.
 //!
 //! - **Condition 1**: VAN Membership (Poseidon Merkle path, `constrain_instance`).
 //! - **Condition 2**: VAN Integrity (Poseidon hash).
@@ -13,9 +15,9 @@
 //! - **Condition 7**: New VAN Integrity (Poseidon hash, `constrain_instance`).
 //! - **Condition 8**: Shares Sum Correctness (AddChip, `constrain_equal`).
 //! - **Condition 9**: Shares Range (LookupRangeCheck, `[0, 2^30)`).
-//! - **Condition 10**: Shares Hash Integrity (Poseidon `ConstantLength<16>` over 16 blinded share commitments; output flows to condition 12).
-//! - **Condition 11**: Encryption Integrity (ECC variable-base mul, `constrain_equal`).
-//! - **Condition 12**: Vote Commitment Integrity (Poseidon `ConstantLength<5>`, `constrain_instance`).
+//! - **Condition 10′**: Bridge Re-Opening (36-input Poseidon over the shares and witnessed selected commitments, `constrain_instance`; see `crate::bridge`).
+//! - **Condition 11′**: Shares Hash Integrity (Poseidon `ConstantLength<16>` over the 16 selected commitments; output flows to condition 12′).
+//! - **Condition 12′**: Vote Commitment Integrity v2 (Poseidon `ConstantLength<5>` over round, shares hash, proposal, and bucket count, `constrain_instance`).
 
 mod builder;
 mod circuit;
@@ -23,8 +25,9 @@ mod gadgets;
 mod prove;
 
 pub use builder::{
-    build_vote_proof_from_delegation, derive_vote_authority_transition, EncryptedShareOutput,
-    VoteAuthorityTransition, VoteProofBundle,
+    build_vote_proof_from_delegation, check_vote_bundle_consistency,
+    derive_vote_authority_transition, verify_vote_bundle, VoteAuthorityTransition, VoteBundle,
+    VoteBundleError, VoteProofBundle,
 };
 pub use circuit::{Circuit, Instance, K};
 pub use prove::{

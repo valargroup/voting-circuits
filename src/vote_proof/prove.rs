@@ -137,18 +137,21 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8
 ///   announcement as `proposal_id`, and must identify the active voting round
 ///   the verifier is accepting.
 ///
-/// ## Election-authority public key
+/// ## Weighted-vote parameters
 ///
-/// - `instance.ea_pk_x`, `instance.ea_pk_y` — must come from the
-///   election authority's published session key for `voting_round_id`.
-///   The circuit only proves that the shares were encrypted under the
-///   caller-supplied key. Wiring `ea_pk` from the same bundle that carries
-///   the proof lets a malicious client choose a key it controls.
+/// - `instance.decision_bucket_count` — must equal the option count `D`
+///   declared by governance for `proposal_id`, and must match the
+///   encrypt-choice proof's public bucket count. The verifier must also
+///   reject `D < 2`.
 ///
-/// Wrong-key substitution causes either liveness loss (the legitimate election
-/// authority cannot decrypt the shares) or secrecy loss (a colluding party
-/// supplies a key whose secret scalar it knows and decrypts the shares). The
-/// latter is irreversible once the proof and ciphertexts are posted.
+/// # Bundle binding
+///
+/// This proof is one half of a vote bundle. The verifier MUST also verify
+/// the accompanying encrypt-choice proof (which authenticates the
+/// election-authority key and the ElGamal ciphertexts) and check that
+/// `instance.bridge`, `voting_round_id`, `proposal_id`, and
+/// `decision_bucket_count` are identical across the two instances.
+/// [`crate::vote_proof::verify_vote_bundle`] performs all of these checks.
 ///
 /// # Proof-attested outputs
 ///
@@ -161,6 +164,7 @@ pub fn create_vote_proof(circuit: Circuit, instance: &Instance) -> Result<Vec<u8
 /// - `instance.r_vpk_x`, `instance.r_vpk_y`
 /// - `instance.vote_authority_note_new`
 /// - `instance.vote_commitment`
+/// - `instance.bridge` (subject to the bundle equality check above)
 pub fn verify_vote_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
     let (params, _pk, vk) = vote_proof_cached_keys().map_err(|error| error.to_string())?;
 
@@ -244,9 +248,9 @@ mod tests {
         let actual: &[u8] = fingerprint.as_bytes();
 
         let expected: [u8; 32] = [
-            0x95, 0xd9, 0xd9, 0x7b, 0x08, 0x18, 0xff, 0xe3, 0xf3, 0x55, 0xbf, 0x06, 0x56, 0xae,
-            0xd1, 0x54, 0xdb, 0xbf, 0xfd, 0x9b, 0xfd, 0xe4, 0x15, 0x87, 0x66, 0xaa, 0xc0, 0xbc,
-            0x49, 0x77, 0x59, 0x5d,
+            0x6f, 0xa5, 0xba, 0x18, 0x6f, 0x24, 0x55, 0x34, 0x06, 0x54, 0x1d, 0x51, 0xd3, 0x4c,
+            0x8d, 0xe7, 0xd3, 0x4c, 0xf6, 0x78, 0x25, 0x33, 0x28, 0x1f, 0x1c, 0xad, 0x14, 0x0c,
+            0xf0, 0xce, 0x94, 0x69,
         ];
 
         assert_eq!(
@@ -259,11 +263,13 @@ mod tests {
 
     #[test]
     #[ignore = "expensive end-to-end proof generation; run with --ignored when touching verification"]
-    fn typed_verify_accepts_proof_created_by_typed_builder() {
+    fn typed_verify_accepts_vote_bundle_created_by_typed_builders() {
+        use crate::encrypt_choice::build_encrypt_choice;
         use crate::gadgets::elgamal::spend_auth_g_affine;
         use crate::group::Curve;
         use crate::vote_proof::{
-            build_vote_proof_from_delegation, derive_vote_authority_transition,
+            build_vote_proof_from_delegation, derive_vote_authority_transition, verify_vote_bundle,
+            VoteBundle,
         };
         use voting_crypto_deps::orchard::keys::SpendingKey;
 
@@ -285,7 +291,21 @@ mod tests {
             proposal_authority_old,
         )
         .expect("native vote authority transition should be valid");
-        let bundle = build_vote_proof_from_delegation(
+
+        let encrypt_choice = build_encrypt_choice(
+            &sk,
+            total_note_value,
+            transition.vote_authority_note_old,
+            voting_round_id,
+            proposal_id,
+            1,
+            4,
+            ea_pk,
+            true,
+        )
+        .expect("encrypt-choice builder should produce a valid proof");
+
+        let cast = build_vote_proof_from_delegation(
             &sk,
             address_index,
             total_note_value,
@@ -295,11 +315,9 @@ mod tests {
             0,
             123,
             proposal_id,
-            1,
-            ea_pk,
             pallas::Scalar::from(7u64),
             proposal_authority_old,
-            true,
+            &encrypt_choice,
         )
         .expect("vote proof builder should produce a valid proof");
 
@@ -307,13 +325,71 @@ mod tests {
             .fold(transition.vote_authority_note_old, |current, _| {
                 crate::protocol_hash::poseidon_hash_2(current, pallas::Base::zero())
             });
-        assert_eq!(bundle.instance.vote_comm_tree_root, expected_root);
+        assert_eq!(cast.instance.vote_comm_tree_root, expected_root);
         assert_eq!(
-            bundle.instance.vote_authority_note_new,
+            cast.instance.vote_authority_note_new,
             transition.vote_authority_note_new
         );
 
-        verify_vote_proof(&bundle.proof, &bundle.instance)
-            .expect("typed verifier should accept the builder's proof and public inputs");
+        let bundle = VoteBundle {
+            encrypt_choice,
+            cast,
+        };
+        bundle
+            .check_consistency()
+            .expect("bundle instances must be consistent");
+        verify_vote_bundle(
+            &bundle.encrypt_choice.proof,
+            &bundle.encrypt_choice.instance,
+            &bundle.cast.proof,
+            &bundle.cast.instance,
+        )
+        .expect("bundle verifier should accept both proofs and their binding");
+
+        // ---- Chain the reveal proofs (ZKP #3) from the same bundle ----
+
+        use crate::share_reveal::{build_share_reveal, verify_share_reveal_proof};
+
+        let vote_commitment_position = 0u32;
+        let reveal_auth_path = {
+            // Single-leaf tree containing only this vote commitment.
+            let mut empty = [pallas::Base::zero(); crate::params::VOTE_COMM_TREE_DEPTH];
+            empty[0] =
+                crate::protocol_hash::poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
+            for i in 1..crate::params::VOTE_COMM_TREE_DEPTH {
+                empty[i] = crate::protocol_hash::poseidon_hash_2(empty[i - 1], empty[i - 1]);
+            }
+            empty
+        };
+
+        // Reveal the first and last shares; the same flow covers all sixteen.
+        for share_index in [0u32, 15] {
+            let reveal = build_share_reveal(
+                reveal_auth_path,
+                vote_commitment_position,
+                bundle.encrypt_choice.selected_commitments,
+                bundle.encrypt_choice.share_blinds[share_index as usize],
+                &bundle.encrypt_choice.encrypted_shares[share_index as usize].ciphertexts,
+                share_index,
+                bundle.cast.instance.proposal_id,
+                bundle.cast.instance.voting_round_id,
+                bundle.cast.instance.decision_bucket_count,
+            );
+            let proof =
+                crate::share_reveal::create_share_reveal_proof(reveal.circuit, &reveal.instance)
+                    .expect("share reveal proof should build");
+            verify_share_reveal_proof(&proof, &reveal.instance)
+                .expect("share reveal proof should verify");
+        }
+
+        // ---- No plaintext decision appears in any public instance ----
+        // The decision used above is 1; the bundle's instances expose only
+        // context values, commitments, and the bucket count — assert none of
+        // the slots equals a bare decision encoding by construction: the
+        // encrypt-choice instance is (ea_pk, bridge, D, round, proposal) and
+        // the cast instance carries no decision field at all. This is a
+        // structural property; the type system enforces it, and this test
+        // documents it.
+        let _ = &bundle;
     }
 }

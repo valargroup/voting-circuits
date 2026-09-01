@@ -1,11 +1,11 @@
 //! Vote Commitment integrity gadget.
 //!
 //! Authoritative in-tree definition of the 5-input Poseidon hash used by both
-//! ZKP #2 (vote proof, condition 12) and ZKP #3 (share reveal, condition 2).
+//! ZKP #2 (vote proof, condition 12′) and ZKP #3 (share reveal, condition 2).
 //!
 //! ```text
-//! vote_commitment = Poseidon(DOMAIN_VC, voting_round_id,
-//!                            shares_hash, proposal_id, vote_decision)
+//! vote_commitment = Poseidon(DOMAIN_VC_V2, voting_round_id,
+//!                            shares_hash, proposal_id, decision_bucket_count)
 //! ```
 //!
 //! The domain tag bakes into the verification key, preventing a
@@ -23,34 +23,38 @@ use voting_crypto_deps::halo2_proofs::{
     plonk,
 };
 
-pub use crate::domain_tags::DOMAIN_VC;
+pub use crate::domain_tags::DOMAIN_VC_V2;
 
 // ================================================================
 // Out-of-circuit helper
 // ================================================================
 
-/// Out-of-circuit vote commitment hash.
+/// Out-of-circuit weighted (v2) vote commitment hash.
 ///
-/// This is the authoritative native implementation of the vote commitment
-/// preimage shared by vote proof and share reveal:
+/// Authoritative native implementation of the versioned vote commitment used
+/// by the weighted encrypt-choice design:
 /// ```text
-/// Poseidon(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)
+/// Poseidon(DOMAIN_VC_V2, voting_round_id, shares_hash, proposal_id,
+///          decision_bucket_count)
 /// ```
 ///
-/// Used by builders and tests to compute the expected vote commitment.
-/// Must produce identical output to the in-circuit gadget.
-pub(crate) fn vote_commitment_hash(
+/// The plaintext `vote_decision` slot of v1 is replaced by the public
+/// `decision_bucket_count`; the decision itself is bound only through the
+/// committed one-hot ciphertext vectors inside `shares_hash`. Binding the
+/// bucket count prevents replaying a commitment under a proposal with a
+/// different option count.
+pub fn vote_commitment_hash_v2(
     voting_round_id: pallas::Base,
     shares_hash: pallas::Base,
     proposal_id: pallas::Base,
-    vote_decision: pallas::Base,
+    decision_bucket_count: pallas::Base,
 ) -> pallas::Base {
     poseidon::Hash::<_, poseidon::P128Pow5T3, ConstantLength<5>, 3, 2>::init().hash([
-        pallas::Base::from(DOMAIN_VC),
+        pallas::Base::from(DOMAIN_VC_V2),
         voting_round_id,
         shares_hash,
         proposal_id,
-        vote_decision,
+        decision_bucket_count,
     ])
 }
 
@@ -70,6 +74,11 @@ pub(crate) fn vote_commitment_hash(
 ///
 /// Used by ZKP #2 (vote proof, condition 12) and ZKP #3 (share reveal,
 /// condition 2).
+///
+/// The v2 (weighted) formula reuses this same gadget: the caller passes a
+/// `DOMAIN_VC_V2` constant cell as `domain_vc` and the public
+/// `decision_bucket_count` cell in the `vote_decision` slot, matching
+/// [`vote_commitment_hash_v2`].
 pub(crate) fn vote_commitment_poseidon(
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
     layouter: &mut impl Layouter<pallas::Base>,
@@ -103,25 +112,24 @@ mod tests {
     use super::*;
     use crate::ff::PrimeField;
 
-    fn base_from_repr(bytes: [u8; 32]) -> pallas::Base {
-        pallas::Base::from_repr(bytes).expect("frozen vector must be canonical")
-    }
-
     #[test]
-    fn vote_commitment_hash_frozen_vector() {
-        let actual = vote_commitment_hash(
+    fn vote_commitment_hash_v2_frozen_vector() {
+        let actual = vote_commitment_hash_v2(
             pallas::Base::from(42u64),
             pallas::Base::from(100u64),
             pallas::Base::from(7u64),
-            pallas::Base::from(1u64),
+            pallas::Base::from(5u64),
         );
 
-        assert_eq!(
-            actual,
-            base_from_repr([
-                246, 84, 48, 178, 227, 178, 234, 71, 2, 178, 177, 211, 238, 120, 238, 157, 174, 5,
-                29, 244, 76, 128, 250, 245, 139, 137, 84, 246, 108, 197, 47, 31,
-            ])
-        );
+        let expected: [u8; 32] = [
+            146, 133, 76, 184, 20, 171, 210, 83, 163, 222, 84, 105, 115, 4, 147, 89, 243, 26, 124,
+            138, 88, 94, 238, 149, 247, 235, 37, 179, 209, 162, 130, 21,
+        ];
+        if actual.to_repr() != expected {
+            panic!(
+                "vote_commitment_hash_v2 frozen vector mismatch; if intentional, update to:\n{:?}",
+                actual.to_repr()
+            );
+        }
     }
 }

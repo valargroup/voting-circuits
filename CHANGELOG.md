@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+### Added
+
+- **Encrypt-Choice circuit (ZKP 1.5)**: a new decision-bound auxiliary proof
+  (`encrypt_choice` module) carrying all ElGamal work of a weighted vote. It
+  uses the fully parallel layout (16 ECC / 17 Poseidon tracks) so it runs at
+  K=11 like every other vote circuit, trading a wide proving key for uniform
+  SRS parameters. Each of the 16 weight shares is encrypted into all 8 decision
+  buckets under the election-authority key; the voter's private one-hot
+  decision selects which bucket encrypts the weight, and boolean prefix flags
+  confine it to the proposal's public `decision_bucket_count` (2–8, the
+  vote-sdk proposal-option limit). The wallet starts this proof in the background as soon as the voter selects a
+  choice.
+- New shared formula module `bridge`: the 34-input weighted selected-share
+  commitment and the 36-input compact bridge commitment binding the
+  encrypt-choice and cast proofs, with named `CiphertextCoordinates` /
+  `WeightedShareCiphertexts` types and one native + in-circuit implementation
+  consumed by all three vote circuits, the builders, and the tests.
+- New domain tags `weighted share commitment`, `encrypt choice bridge`,
+  `DOMAIN_VC_V2 = 2`, and bucket-indexed vote PRF domains `0x05`/`0x06`.
+- `VoteBundle`, `check_vote_bundle_consistency`, and `verify_vote_bundle`:
+  the two-proof vote submission model and its verifier-side binding checks.
+- Exported `verify_share_reveal_proof` and `verify_encrypt_choice_proof`.
+
+### Changed
+
+- **Breaking:** Rebuilt the vote-proof circuit (ZKP #2) as the compact cast
+  circuit of the weighted one-hot ElGamal design. The 16 in-circuit ElGamal
+  encryptions, `ea_pk`, and the plaintext `vote_decision` are gone; the
+  circuit instead re-opens the encrypt-choice bridge over the same share
+  cells and 16 witnessed selected commitments, and computes the v2 vote
+  commitment over `(DOMAIN_VC_V2, round, shares_hash, proposal,
+  decision_bucket_count)`. Instance offsets 0–8 are unchanged; offsets 9–10
+  are now `bridge` and `decision_bucket_count`. K stays 11 with the
+  high-water mark down from 2,015 to 1,662 rows.
+  `build_vote_proof_from_delegation` now consumes an `EncryptChoiceBundle`
+  and cross-checks it against its own PRF-derived shares and bridge.
+- **Breaking:** Rebuilt the share-reveal circuit (ZKP #3) to reveal all 8
+  bucket ciphertexts of the selected share (37 public inputs: nullifier, 32
+  coordinates, proposal, root, round, bucket count). Condition 4 recomputes
+  the weighted selected commitment on a dedicated Poseidon track; the
+  plaintext `vote_decision` is removed. K stays 10; the real proof stays
+  within the 15 KiB downstream limit. The `Instance` struct
+  field order now matches the Halo2 instance order.
+- All three vote-circuit verification keys changed; VK fingerprints updated.
+- Extracted the vote PRF and share-decomposition pipeline into the shared
+  `vote_prf` module so the encrypt-choice and cast builders derive identical
+  shares and secrets.
+
+### Removed
+
+- The legacy single-ciphertext vote model: v1 vote commitment
+  (`DOMAIN_VC = 1`), the 5-input share commitment and two-level shares hash,
+  the in-circuit 16-ciphertext ElGamal gadget, and the legacy per-share
+  ElGamal PRF streams (domains kept registered).
+- All three `unstable-*-benchmark` features, modules, and examples
+  (`weighted-vote`, `pk-table`, `zkp15-pregen`): the POC harnesses are
+  superseded by the production `encrypt_choice` circuit, and their measured
+  results and design conclusions are consolidated in
+  `plans/encrypted-votes-alternative-designs.md`.
+
 ## v0.12.0-rc.1
 
 ### Changed
