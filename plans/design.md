@@ -179,9 +179,10 @@ verifies the cached proof against that reconstruction. A cache entry must be
 discarded when the choice, weight or share layout, VAN, round, proposal, `D`,
 or election-authority key changes.
 
-The decision, `D`, and election-authority key are not part of the randomness
-PRF. Two choice revisions for the same core context therefore reuse the same
-per-bucket randomizers. Only the final revision may leave the wallet. If
+The selected choice, active bucket count `D`, and election-authority key are
+not part of the randomness PRF. Two choice revisions for the same core
+context therefore reuse the same per-bucket randomizers. Only the final
+revision may leave the wallet. If
 ciphertext vectors from two choice revisions were published, their differences
 would reveal which buckets changed. Changes to `D` or the authority key also
 invalidate the cached proof and can leave repeated `C1` values if both versions
