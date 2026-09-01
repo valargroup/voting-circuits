@@ -14,6 +14,18 @@ auxiliary circuit, ZKP 1.5 (`encrypt-choice`). The existing cast proof, ZKP 2,
 proves that the encrypted weights are authorized, and ZKP 3 opens one
 encrypted share at a time for tallying.
 
+ZKP 1.5 is separate because encryption is the expensive, choice-dependent
+part of casting, while ZKP 2 depends on submission-time chain state. The
+wallet can build and cache ZKP 1.5 as soon as the voter selects an option,
+then produce the smaller cast proof against a current vote-tree anchor at
+submission. Putting both relations in ZKP 2 would preserve soundness, but it
+would move the full encryption proof onto the submission critical path and
+discard that precomputation boundary. Moreover, all questions inherit
+the worst case 8-option circuit configuration, even if polled with fewer.
+In a prototype of the consolidated ZKP 2, we observed the proving time to increase
+to 1.1 on a MacBook Pro M4 Max which is expected to translate to over 2s on mobile.
+By moving the proof of encrypted choice into a separate proof that runs pre-submission, we move off the proving latency off of the critical path.
+
 The privacy claim is relative to ordinary chain observers, reveal helpers
 without the election secret key, and fewer than the required election-key
 holders in a threshold deployment. These circuits do not prevent a party that
