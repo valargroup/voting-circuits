@@ -75,8 +75,7 @@ standard decomposition if individual shares are ever decrypted.
    authorized shares to the ciphertext commitments already proved by
    ZKP 1.5.
 4. The public vote message carries both proofs and their public instances.
-   ZKP 1.5 is not published earlier: doing so would disclose that someone is
-   preparing a vote for a particular round and proposal.
+   Until submission, the wallet keeps the cached ZKP 1.5 proof locally.
 5. The wallet retains, or can deterministically reconstruct, the private
    shares, commitment blinds, ciphertexts, and other data needed to build
    ZKP 3 proofs. This is private prover state and must not be included in the
