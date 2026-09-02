@@ -82,11 +82,10 @@ use voting_crypto_deps::pasta_curves::{pallas, vesta};
 
 use super::gadgets::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
 use crate::{
+    bridge::{compute_bridge_in_circuit, NUM_SHARES},
     domain_tags,
     gadgets::{
         address_ownership::{prove_address_ownership, spend_auth_g_mul},
-        elgamal::{prove_elgamal_encryptions, EaPkInstanceLoc, SpendAuthGFixedBase30Config},
-        nonzero::NonZeroConfig,
         poseidon_merkle::{synthesize_poseidon_merkle_path, MerkleSwapGate},
         van_integrity, vote_commitment,
     },
@@ -94,7 +93,7 @@ use crate::{
         PROPOSAL_AUTHORITY_BITS, RANGE_CHECK_WORD_BITS, SHARE_VALUE_RANGE_WORDS,
         VOTE_COMM_TREE_DEPTH,
     },
-    shares_hash::compute_shares_hash_in_circuit,
+    shares_hash::compute_shares_hash_from_comms_in_circuit,
 };
 
 // ================================================================
@@ -103,30 +102,25 @@ use crate::{
 
 /// Circuit size (2^K rows).
 ///
-/// K=11 (2,048 rows). Condition 11 is divided between two sets of ten advice
-/// columns, condition 10 uses a separate four-column Poseidon track, and
-/// condition 6 shares the second El Gamal advice lane.
-/// [`voting_crypto_deps::halo2_proofs::dev::CircuitCost`] reports a 2,015-row high-water mark.
+/// K=11 (2,048 rows). The ElGamal encryption work moved to the
+/// encrypt-choice circuit (ZKP 1.5); this compact cast circuit carries no
+/// ECC beyond conditions 3–4. Condition 10′'s bridge hash and conditions
+/// 11′–12′'s shares hash and vote commitment run on the dedicated
+/// four-column Poseidon track; condition 6 has its own dedicated advice
+/// lane. [`voting_crypto_deps::halo2_proofs::dev::CircuitCost`] reports a
+/// 1,662-row high-water mark (18.8% headroom) with 24 advice columns.
 ///
 /// Key contributors (rough per-region heights, not per-column sums):
 /// - 24-level Merkle path: 24 Poseidon regions stacked sequentially — the
 ///   tallest single stack in the circuit.
-/// - ECC fixed- and variable-base multiplications packed alongside the
-///   Poseidon regions in non-overlapping columns.
 /// - 10-bit Sinsemilla/range-check lookup table: 1,024 fixed rows.
 ///
 /// Run the `row_budget` diagnostic to re-measure after circuit changes:
 ///   `cargo test vote_proof::circuit::tests::row_budget -- --nocapture --ignored --test-threads=1`
 pub const K: u32 = 11;
 
-/// First share index assigned to the second El Gamal track.
-const ELGAMAL_TRACK_SPLIT: usize = 8;
-
-/// Number of condition-10 share hashes assigned to the primary track.
-const PRIMARY_SHARES_HASH_COUNT: usize = 2;
-
 pub(super) use van_integrity::DOMAIN_VAN;
-pub(super) use vote_commitment::DOMAIN_VC;
+pub(super) use vote_commitment::DOMAIN_VC_V2;
 
 /// Maximum proposal_id bit index (exclusive upper bound). `proposal_id` is in
 /// `[1, MAX_PROPOSAL_ID)`, i.e. valid values are 1–50. Bit 0 is permanently
@@ -187,17 +181,24 @@ const PROPOSAL_ID_PUBLIC_OFFSET: usize = 7;
 /// commitment, but the caller must authenticate it from the active round's
 /// governance announcement.
 const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
-/// Public input offset for the election authority public key x-coordinate.
-const EA_PK_X_PUBLIC_OFFSET: usize = 9;
-/// Public input offset for the election authority public key y-coordinate.
-const EA_PK_Y_PUBLIC_OFFSET: usize = 10;
+/// Public input offset for the compact bridge commitment.
+///
+/// The verifier must check that this equals the encrypt-choice proof's public
+/// bridge value in the same vote bundle; the bridge binds the witnessed
+/// weights and selected commitments to the ciphertexts proven by ZKP 1.5.
+const BRIDGE_PUBLIC_OFFSET: usize = 9;
+/// Public input offset for the active decision bucket count `D`.
+///
+/// Must be authenticated from the proposal's governance declaration and must
+/// match the encrypt-choice proof's public bucket count.
+const DECISION_BUCKET_COUNT_PUBLIC_OFFSET: usize = 10;
 
 // ================================================================
 // Out-of-circuit helpers
 // ================================================================
 
 pub(super) use van_integrity::van_integrity_hash;
-pub(super) use vote_commitment::vote_commitment_hash;
+pub(super) use vote_commitment::vote_commitment_hash_v2;
 
 /// Returns the domain separator for the VAN nullifier inner hash.
 ///
@@ -234,8 +235,8 @@ pub(super) fn van_nullifier_hash(
 
 /// Configuration for the Vote Proof circuit.
 ///
-/// Holds chip configs for Poseidon (conditions 1, 2, 5, 7, 10, 12), AddChip
-/// (condition 8), LookupRangeCheck (condition 9), ECC (conditions 3, 4, 11),
+/// Holds chip configs for Poseidon (conditions 1, 2, 5, 7, 10′–12′), AddChip
+/// (condition 8), LookupRangeCheck (condition 9), ECC (conditions 3, 4),
 /// the Merkle swap gate (condition 1), and the custom
 /// `AuthorityDecrementChip` (condition 6; see `gadgets/authority_decrement.rs` —
 /// uses neither AddChip nor LookupRangeCheck).
@@ -251,21 +252,17 @@ pub struct Config {
     /// - `advices[6..9]`: Poseidon state columns + AddChip output.
     /// - `advices[9]`: range check running sum.
     advices: [Column<Advice>; 10],
-    /// Dedicated advice columns for condition 11's El Gamal operations.
-    ///
-    /// Separating these from [`Self::advices`] lets the floor planner overlap
-    /// the encryption regions with the rest of the circuit.
-    elgamal_advices: [Column<Advice>; 10],
-    /// Second dedicated El Gamal track for encryptions 8 through 15.
-    elgamal_advices_b: [Column<Advice>; 10],
+    /// Dedicated advice lane for condition 6's authority-decrement region and
+    /// the condition 10′ witness cells, kept off the saturated primary track.
+    aux_advices: [Column<Advice>; 10],
     /// Poseidon hash chip configuration.
     ///
     /// P128Pow5T3 with width 3, rate 2. Used for VAN integrity (condition 2),
-    /// VAN nullifier (condition 5), new VAN integrity (condition 7),
-    /// vote commitment Merkle path (condition 1), and vote commitment
-    /// integrity (conditions 10, 12).
+    /// VAN nullifier (condition 5), new VAN integrity (condition 7), and the
+    /// vote commitment Merkle path (condition 1).
     poseidon_config: PoseidonConfig<pallas::Base, 3, 2>,
-    /// Poseidon configuration on the dedicated condition-10 track.
+    /// Poseidon configuration on the dedicated hash track (conditions
+    /// 10′–12′: bridge re-opening, shares hash, vote commitment).
     hash_poseidon_config: PoseidonConfig<pallas::Base, 3, 2>,
     /// AddChip: constrains `a + b = c` on a single row.
     ///
@@ -281,10 +278,6 @@ pub struct Config {
     /// `[vsk] * SpendAuthG → ak → CommitIvk(ExtractP(ak), nk, rivk_v) → ivk_v → [ivk_v] * vpk_g_d`.
     /// Shares advice and fixed columns with Poseidon per delegation layout.
     ecc_config: EccConfig<OrchardFixedBases>,
-    /// ECC configuration on [`Self::elgamal_advices`] for condition 11.
-    elgamal_ecc_config: EccConfig<OrchardFixedBases>,
-    /// ECC configuration on [`Self::elgamal_advices_b`].
-    elgamal_ecc_config_b: EccConfig<OrchardFixedBases>,
     /// Sinsemilla chip configuration (condition 3: CommitIvk requires Sinsemilla).
     ///
     /// Uses advices[0..5] for Sinsemilla message hashing, advices[6] for
@@ -311,14 +304,6 @@ pub struct Config {
     merkle_swap: MerkleSwapGate,
     /// Configuration for condition 6 (Proposal Authority Decrement).
     authority_decrement: AuthorityDecrementConfig,
-    /// Inverse-witness checks on the dedicated El Gamal columns.
-    nonzero: NonZeroConfig,
-    /// Inverse-witness checks on the second El Gamal track.
-    nonzero_b: NonZeroConfig,
-    /// Unsigned 30-bit fixed-base multiplication used for El Gamal C2 values.
-    spend_auth_g_fixed_base_30: SpendAuthGFixedBase30Config,
-    /// Unsigned 30-bit fixed-base multiplication on the second El Gamal track.
-    spend_auth_g_fixed_base_30_b: SpendAuthGFixedBase30Config,
 }
 
 impl Config {
@@ -343,22 +328,6 @@ impl Config {
     /// Constructs an ECC chip for curve operations in conditions 3 and 4.
     fn ecc_chip(&self) -> EccChip<OrchardFixedBases> {
         EccChip::construct(self.ecc_config.clone(), CircuitVersion::AnchoredBase)
-    }
-
-    /// Constructs the ECC chip used by condition 11.
-    fn elgamal_ecc_chip(&self) -> EccChip<OrchardFixedBases> {
-        EccChip::construct(
-            self.elgamal_ecc_config.clone(),
-            CircuitVersion::AnchoredBase,
-        )
-    }
-
-    /// Constructs the ECC chip used by the second condition-11 track.
-    fn elgamal_ecc_chip_b(&self) -> EccChip<OrchardFixedBases> {
-        EccChip::construct(
-            self.elgamal_ecc_config_b.clone(),
-            CircuitVersion::AnchoredBase,
-        )
     }
 
     /// Constructs a Sinsemilla chip (condition 3: CommitIvk).
@@ -468,38 +437,14 @@ pub struct Circuit {
     /// on-chain El Gamal ciphertexts reveal no weight fingerprint.
     pub(super) shares: [Value<pallas::Base>; 16],
 
-    // Condition 10 (Shares Hash Integrity): El Gamal ciphertext coordinates.
-    // These are the coordinates of the curve points comprising each
-    // El Gamal ciphertext. Condition 11 constrains these to be correct
-    // encryptions; condition 10 hashes them (including y-coordinates to
-    // prevent ciphertext sign-malleability).
-    /// X-coordinates of C1_i = r_i * G for each share (via ExtractP).
-    pub(super) enc_share_c1_x: [Value<pallas::Base>; 16],
-    /// X-coordinates of C2_i = shares_i * G + r_i * ea_pk for each share (via ExtractP).
-    pub(super) enc_share_c2_x: [Value<pallas::Base>; 16],
-    /// Y-coordinates of C1_i (bound to the exact curve point, preventing sign-malleability).
-    pub(super) enc_share_c1_y: [Value<pallas::Base>; 16],
-    /// Y-coordinates of C2_i (bound to the exact curve point, preventing sign-malleability).
-    pub(super) enc_share_c2_y: [Value<pallas::Base>; 16],
-
-    // Condition 10 (Shares Hash Integrity): per-share blind factors for blinded commitments.
-    /// Random blind factors: share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y).
-    pub(super) share_blinds: [Value<pallas::Base>; 16],
-
-    // Condition 11 (Encryption Integrity): El Gamal randomness and public key.
-    /// El Gamal encryption randomness for each share (base field element,
-    /// converted to scalar via ScalarVar::from_base in-circuit).
-    pub(super) share_randomness: [Value<pallas::Base>; 16],
-    /// Election authority public key (Pallas curve point).
-    /// The El Gamal encryption key — published as a round parameter.
-    /// Both coordinates are public inputs (EA_PK_X_PUBLIC_OFFSET, EA_PK_Y_PUBLIC_OFFSET).
-    /// The caller must authenticate this key against the governance
-    /// announcement; the circuit only binds encryption to the supplied key.
-    pub(super) ea_pk: Value<pallas::Affine>,
-
-    // Condition 12 (Vote Commitment Integrity): vote decision.
-    /// The voter's choice (hidden inside the vote commitment).
-    pub(super) vote_decision: Value<pallas::Base>,
+    // Condition 10′ (Bridge Re-Opening): per-share selected commitments from
+    // the encrypt-choice bundle. Each commits one share's blind and all 8
+    // bucket ciphertext coordinates (see `crate::bridge`); the encrypt-choice
+    // proof (ZKP 1.5) constrains them to real ElGamal encryptions, and this
+    // circuit re-derives the public bridge from them and the witnessed
+    // shares, binding both proofs to the same values.
+    /// Per-share selected commitments (ZKP 1.5 outputs).
+    pub(super) selected_commitments: [Value<pallas::Base>; NUM_SHARES],
 }
 
 impl Circuit {
@@ -551,11 +496,6 @@ impl Circuit {
     }
 }
 
-/// In-circuit Poseidon hash for one share commitment: `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
-///
-/// Uses the same parameters as the out-of-circuit
-/// [`crate::shares_hash::share_commitment`] (P128Pow5T3, ConstantLength<5>,
-/// width 3, rate 2) so that native and in-circuit hashes match.
 impl plonk::Circuit<pallas::Base> for Circuit {
     type Config = Config;
     type FloorPlanner = floor_planner::V1;
@@ -566,13 +506,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
     fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
         // The primary 10 advice columns match the delegation circuit layout.
-        // Two additional sets of 10 columns split condition 11 across parallel
-        // ECC tracks. Each ECC chip requires all 10 columns for its
-        // internal scalar-multiplication gates. Four more columns hold the
-        // condition-10 Poseidon track. Condition 6 shares the second El Gamal
-        // track so its 52-row authority region does not extend the saturated
-        // primary track. The remaining chips tile within the primary
-        // 10-column window:
+        // A second 10-column lane hosts condition 6's authority-decrement
+        // region and the condition 10′ witness cells so they overlap the
+        // saturated primary track. Four more columns hold the dedicated
+        // Poseidon hash track (conditions 10′–12′). The chips tile within
+        // the primary 10-column window:
         //
         //   advices[0..5]  — general witness assignment, Sinsemilla pair 1
         //                    message columns, and the Merkle swap gate
@@ -587,13 +525,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         for col in &advices {
             meta.enable_equality(*col);
         }
-        let elgamal_advices: [Column<Advice>; 10] = core::array::from_fn(|_| meta.advice_column());
-        for col in &elgamal_advices {
-            meta.enable_equality(*col);
-        }
-        let elgamal_advices_b: [Column<Advice>; 10] =
-            core::array::from_fn(|_| meta.advice_column());
-        for col in &elgamal_advices_b {
+        let aux_advices: [Column<Advice>; 10] = core::array::from_fn(|_| meta.advice_column());
+        for col in &aux_advices {
             meta.enable_equality(*col);
         }
         let hash_advices: [Column<Advice>; 4] = core::array::from_fn(|_| meta.advice_column());
@@ -638,39 +571,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 
         // Range check configuration: 10-bit lookup words in advices[9].
         let range_check = LookupRangeCheckConfig::configure(meta, advices[9], table_idx);
-        let elgamal_range_check =
-            LookupRangeCheckConfig::configure(meta, elgamal_advices[9], table_idx);
-        let elgamal_range_check_b =
-            LookupRangeCheckConfig::configure(meta, elgamal_advices_b[9], table_idx);
 
         // Primary ECC chip for conditions 3 and 4. It shares columns with
-        // Poseidon per the delegation circuit layout. Condition 11 gets a
-        // separate ECC chip and fixed columns so both tracks can overlap.
+        // Poseidon per the delegation circuit layout.
         let ecc_config =
             EccChip::<OrchardFixedBases>::configure(meta, advices, lagrange_coeffs, range_check);
-        let elgamal_lagrange_coeffs: [Column<Fixed>; 8] =
-            core::array::from_fn(|_| meta.fixed_column());
-        let elgamal_ecc_config = EccChip::<OrchardFixedBases>::configure(
-            meta,
-            elgamal_advices,
-            elgamal_lagrange_coeffs,
-            elgamal_range_check,
-        );
-        let spend_auth_g_fixed_base_30 =
-            SpendAuthGFixedBase30Config::configure(meta, elgamal_advices, elgamal_lagrange_coeffs);
-        let elgamal_lagrange_coeffs_b: [Column<Fixed>; 8] =
-            core::array::from_fn(|_| meta.fixed_column());
-        let elgamal_ecc_config_b = EccChip::<OrchardFixedBases>::configure(
-            meta,
-            elgamal_advices_b,
-            elgamal_lagrange_coeffs_b,
-            elgamal_range_check_b,
-        );
-        let spend_auth_g_fixed_base_30_b = SpendAuthGFixedBase30Config::configure(
-            meta,
-            elgamal_advices_b,
-            elgamal_lagrange_coeffs_b,
-        );
 
         // Sinsemilla chip: required by CommitIvk for condition 3.
         // Uses advices[0..5] for Sinsemilla message hashing, advices[6] for
@@ -717,34 +622,24 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             [advices[0], advices[1], advices[2], advices[3], advices[4]],
         );
 
-        // Condition 6: Proposal Authority Decrement. Reusing the second El
-        // Gamal advice lane lets the floor planner place this region alongside
-        // the saturated primary track without adding columns.
-        let authority_decrement = AuthorityDecrementChip::configure(meta, elgamal_advices_b);
-        let nonzero = NonZeroConfig::configure(meta, [elgamal_advices[0], elgamal_advices[1]]);
-        let nonzero_b =
-            NonZeroConfig::configure(meta, [elgamal_advices_b[0], elgamal_advices_b[1]]);
+        // Condition 6: Proposal Authority Decrement. The dedicated aux lane
+        // lets the floor planner place its 52-row region alongside the
+        // saturated primary track.
+        let authority_decrement = AuthorityDecrementChip::configure(meta, aux_advices);
 
         Config {
             primary,
             advices,
-            elgamal_advices,
-            elgamal_advices_b,
+            aux_advices,
             poseidon_config,
             hash_poseidon_config,
             add_config,
             ecc_config,
-            elgamal_ecc_config,
-            elgamal_ecc_config_b,
             sinsemilla_config,
             commit_ivk_config,
             range_check,
             merkle_swap,
             authority_decrement,
-            nonzero,
-            nonzero_b,
-            spend_auth_g_fixed_base_30,
-            spend_auth_g_fixed_base_30_b,
         }
     }
 
@@ -1225,221 +1120,118 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         }
 
         // ---------------------------------------------------------------
-        // Condition 10: Shares Hash Integrity (blinded commitments).
+        // Condition 10′: Bridge Re-Opening.
         //
-        // share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)
-        // shares_hash  = Poseidon(share_comm_0, ..., share_comm_15)
+        // bridge = Poseidon(ENCRYPT_CHOICE_BRIDGE_DOMAIN, voting_round_id,
+        //                   proposal_id, decision_bucket_count,
+        //                   w_0, selected_comm_0, ..., w_15, selected_comm_15)
         //
-        // The y-coordinates bind each share commitment to the exact curve
-        // point, preventing ciphertext sign-malleability attacks.
-        // The blind factors prevent on-chain observers from recomputing
-        // shares_hash. shares_hash is an internal wire; it is not bound to
-        // the instance column. Condition 11 constrains that each
-        // (c1_i_x, c2_i_x, c1_i_y, c2_i_y) is a valid El Gamal encryption
-        // of shares_i. Condition 12 computes the full vote commitment
-        // H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)
-        // and binds that value to the VOTE_COMMITMENT_PUBLIC_OFFSET public input.
+        // The 16 selected commitments are witnessed from the encrypt-choice
+        // bundle; the weights are the same condition-8/9 share cells that sum
+        // to total_note_value, so the pre-encrypted weights proven by
+        // ZKP 1.5 are exactly the shares this VAN authorizes. The derived
+        // bridge is bound to BRIDGE_PUBLIC_OFFSET, and the verifier checks
+        // it equals the encrypt-choice proof's public bridge.
         // ---------------------------------------------------------------
 
-        let blinds: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
+        let selected_commitments: [AssignedCell<pallas::Base, pallas::Base>; NUM_SHARES] = (0
+            ..NUM_SHARES)
             .map(|i| {
                 assign_free_advice(
-                    layouter.namespace(|| format!("witness share_blind[{i}]")),
-                    config.advices[0],
-                    self.share_blinds[i],
+                    layouter.namespace(|| format!("witness selected_comm[{i}]")),
+                    config.aux_advices[0],
+                    self.selected_commitments[i],
                 )
             })
             .collect::<Result<Vec<_>, _>>()?
             .try_into()
             .expect("always 16 elements");
+        let selected_commitments_cond11: [AssignedCell<pallas::Base, pallas::Base>; NUM_SHARES] =
+            core::array::from_fn(|i| selected_commitments[i].clone());
 
-        let enc_c1: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
-            .map(|i| {
-                assign_free_advice(
-                    layouter.namespace(|| format!("witness enc_c1_x[{i}]")),
-                    config.advices[0],
-                    self.enc_share_c1_x[i],
+        let decision_bucket_count = layouter.assign_region(
+            || "copy decision_bucket_count from instance",
+            |mut region| {
+                region.assign_advice_from_instance(
+                    || "decision_bucket_count",
+                    config.primary,
+                    DECISION_BUCKET_COUNT_PUBLIC_OFFSET,
+                    config.aux_advices[1],
+                    0,
                 )
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .try_into()
-            .expect("always 16 elements");
+            },
+        )?;
+        let decision_bucket_count_cond12 = decision_bucket_count.clone();
 
-        let enc_c2: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
-            .map(|i| {
-                assign_free_advice(
-                    layouter.namespace(|| format!("witness enc_c2_x[{i}]")),
-                    config.advices[0],
-                    self.enc_share_c2_x[i],
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .try_into()
-            .expect("always 16 elements");
+        let bridge = compute_bridge_in_circuit(
+            config.hash_poseidon_chip(),
+            layouter.namespace(|| "cond10: bridge"),
+            config.aux_advices[0],
+            voting_round_id_cond12.clone(),
+            proposal_id.clone(),
+            decision_bucket_count,
+            share_cells,
+            selected_commitments,
+        )?;
+        layouter.constrain_instance(bridge.cell(), config.primary, BRIDGE_PUBLIC_OFFSET)?;
 
-        let enc_c1_y: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
-            .map(|i| {
-                assign_free_advice(
-                    layouter.namespace(|| format!("witness enc_c1_y[{i}]")),
-                    config.advices[0],
-                    self.enc_share_c1_y[i],
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .try_into()
-            .expect("always 16 elements");
+        // ---------------------------------------------------------------
+        // Condition 11′: Shares Hash Integrity.
+        //
+        // shares_hash = Poseidon(selected_comm_0, ..., selected_comm_15)
+        //
+        // shares_hash is an internal wire; it is not bound to the instance
+        // column. Condition 12′ folds it into the public vote commitment.
+        // ZKP #3 recomputes the same hash from private witnesses when a
+        // share is revealed.
+        // ---------------------------------------------------------------
 
-        let enc_c2_y: [AssignedCell<pallas::Base, pallas::Base>; 16] = (0..16)
-            .map(|i| {
-                assign_free_advice(
-                    layouter.namespace(|| format!("witness enc_c2_y[{i}]")),
-                    config.advices[0],
-                    self.enc_share_c2_y[i],
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .try_into()
-            .expect("always 16 elements");
-
-        // Clone for Condition 11 before compute_shares_hash_in_circuit takes ownership.
-        let enc_c1_cond11: [AssignedCell<pallas::Base, pallas::Base>; 16] =
-            core::array::from_fn(|i| enc_c1[i].clone());
-        let enc_c2_cond11: [AssignedCell<pallas::Base, pallas::Base>; 16] =
-            core::array::from_fn(|i| enc_c2[i].clone());
-        let enc_c1_y_cond11: [AssignedCell<pallas::Base, pallas::Base>; 16] =
-            core::array::from_fn(|i| enc_c1_y[i].clone());
-        let enc_c2_y_cond11: [AssignedCell<pallas::Base, pallas::Base>; 16] =
-            core::array::from_fn(|i| enc_c2_y[i].clone());
-
-        let shares_hash = compute_shares_hash_in_circuit(
-            || config.poseidon_chip(),
-            || config.hash_poseidon_chip(),
-            PRIMARY_SHARES_HASH_COUNT,
-            layouter.namespace(|| "cond10: shares hash"),
-            blinds,
-            enc_c1,
-            enc_c2,
-            enc_c1_y,
-            enc_c2_y,
+        let shares_hash = compute_shares_hash_from_comms_in_circuit(
+            config.hash_poseidon_chip(),
+            layouter.namespace(|| "cond11: shares hash"),
+            selected_commitments_cond11,
         )?;
 
         // ---------------------------------------------------------------
-        // Condition 11: Encryption Integrity.
+        // Condition 12′: Vote Commitment Integrity (v2).
         //
-        // For each share i: C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk;
-        // Both coordinates of C1_i and C2_i are constrained to the
-        // witnessed enc_share cells. Implemented by the shared
-        // circuit::elgamal::prove_elgamal_encryptions gadget.
-        // ---------------------------------------------------------------
-        {
-            let r_cells: [_; 16] = (0..16usize)
-                .map(|i| {
-                    let column = if i < ELGAMAL_TRACK_SPLIT {
-                        config.elgamal_advices[0]
-                    } else {
-                        config.elgamal_advices_b[0]
-                    };
-                    assign_free_advice(
-                        layouter.namespace(|| format!("witness r[{i}]")),
-                        column,
-                        self.share_randomness[i],
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .try_into()
-                .expect("always 16 elements");
-
-            prove_elgamal_encryptions(
-                config.elgamal_ecc_chip(),
-                config.nonzero,
-                &config.spend_auth_g_fixed_base_30,
-                layouter.namespace(|| "cond11 El Gamal first track"),
-                "cond11a",
-                0..ELGAMAL_TRACK_SPLIT,
-                self.ea_pk,
-                EaPkInstanceLoc {
-                    instance: config.primary,
-                    x_row: EA_PK_X_PUBLIC_OFFSET,
-                    y_row: EA_PK_Y_PUBLIC_OFFSET,
-                },
-                share_cells.clone(),
-                r_cells.clone(),
-                enc_c1_cond11.clone(),
-                enc_c2_cond11.clone(),
-                enc_c1_y_cond11.clone(),
-                enc_c2_y_cond11.clone(),
-            )?;
-            prove_elgamal_encryptions(
-                config.elgamal_ecc_chip_b(),
-                config.nonzero_b,
-                &config.spend_auth_g_fixed_base_30_b,
-                layouter.namespace(|| "cond11 El Gamal second track"),
-                "cond11b",
-                ELGAMAL_TRACK_SPLIT..16,
-                self.ea_pk,
-                EaPkInstanceLoc {
-                    instance: config.primary,
-                    x_row: EA_PK_X_PUBLIC_OFFSET,
-                    y_row: EA_PK_Y_PUBLIC_OFFSET,
-                },
-                share_cells,
-                r_cells,
-                enc_c1_cond11,
-                enc_c2_cond11,
-                enc_c1_y_cond11,
-                enc_c2_y_cond11,
-            )?;
-        }
-
-        // ---------------------------------------------------------------
-        // Condition 12: Vote Commitment Integrity.
+        // vote_commitment = Poseidon(DOMAIN_VC_V2, voting_round_id,
+        //                            shares_hash, proposal_id,
+        //                            decision_bucket_count)
         //
-        // vote_commitment = Poseidon(DOMAIN_VC, voting_round_id,
-        //                            shares_hash, proposal_id, vote_decision)
-        //
-        // Binds the voting round, encrypted shares (via shares_hash from
-        // condition 10), the proposal choice, and the vote decision into a
-        // single commitment with domain separation from VANs (DOMAIN_VC = 1).
+        // The plaintext vote decision of v1 is gone: the decision is bound
+        // only through the committed one-hot ciphertext vectors inside
+        // shares_hash. Binding decision_bucket_count prevents replaying a
+        // commitment under a proposal with a different option count.
         //
         // This is the value posted on-chain and later inserted into the
-        // vote commitment tree. ZKP #3 (vote reveal) will open individual
+        // vote commitment tree. ZKP #3 (share reveal) opens individual
         // shares from this commitment.
         // ---------------------------------------------------------------
 
-        // DOMAIN_VC — constant-constrained so the value is baked into the
+        // DOMAIN_VC_V2 — constant-constrained so the value is baked into the
         // verification key and cannot be altered by a malicious prover.
         let domain_vc = layouter.assign_region(
-            || "DOMAIN_VC constant",
+            || "DOMAIN_VC_V2 constant",
             |mut region| {
                 region.assign_advice_from_constant(
-                    || "domain_vc",
+                    || "domain_vc_v2",
                     config.advices[0],
                     0,
-                    pallas::Base::from(DOMAIN_VC),
+                    pallas::Base::from(DOMAIN_VC_V2),
                 )
             },
         )?;
 
-        // proposal_id was already copied from instance in condition 6; reuse that cell.
-
-        // Private witness: vote decision.
-        let vote_decision = assign_free_advice(
-            layouter.namespace(|| "witness vote_decision"),
-            config.advices[0],
-            self.vote_decision,
-        )?;
-
-        // Compute vote_commitment = Poseidon(DOMAIN_VC, voting_round_id,
-        //                                    shares_hash, proposal_id, vote_decision).
         let vote_commitment = vote_commitment::vote_commitment_poseidon(
-            &config.poseidon_config,
+            &config.hash_poseidon_config,
             &mut layouter,
             "cond12",
             domain_vc,
             voting_round_id_cond12,
             shares_hash,
             proposal_id,
-            vote_decision,
+            decision_bucket_count_cond12,
         )?;
 
         // Bind the derived vote commitment to the VOTE_COMMITMENT_PUBLIC_OFFSET public input.
@@ -1470,7 +1262,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 /// outputs).
 ///
 /// Binding contract: `shares_hash` is deliberately absent from this public
-/// instance vector. The circuit computes it as an internal condition-10 cell
+/// instance vector. The circuit computes it as an internal condition-11′ cell
 /// and exposes it to the verifier only through `vote_commitment`.
 #[derive(Clone, Debug)]
 pub struct Instance {
@@ -1503,17 +1295,18 @@ pub struct Instance {
     /// The circuit binds this into the VAN nullifier, new VAN, and vote
     /// commitment, but cannot authenticate that it is the active round.
     pub voting_round_id: pallas::Base,
-    /// Governance-announced election authority public key x-coordinate.
+    /// Compact bridge commitment shared with the encrypt-choice proof.
     ///
-    /// The verifier must pin this from the active round's governance
-    /// announcement. The circuit proves encryption under this coordinate pair,
-    /// but cannot authenticate that it is the legitimate EA key.
-    pub ea_pk_x: pallas::Base,
-    /// Governance-announced election authority public key y-coordinate.
+    /// Proof-attested here, but its protocol meaning comes from the vote
+    /// bundle: the verifier must check it equals the encrypt-choice proof's
+    /// public bridge value.
+    pub bridge: pallas::Base,
+    /// Active decision bucket count `D` for the proposal.
     ///
-    /// Must be authenticated with `ea_pk_x`; both coordinates are public so a
-    /// prover cannot substitute a negated curve point while preserving x.
-    pub ea_pk_y: pallas::Base,
+    /// Must be authenticated from the proposal's governance declaration and
+    /// must equal the encrypt-choice proof's public bucket count. The
+    /// verifier must additionally reject `D < 2`.
+    pub decision_bucket_count: pallas::Base,
 }
 
 impl Instance {
@@ -1523,16 +1316,15 @@ impl Instance {
     /// Constructs an [`Instance`] from its constituent parts.
     ///
     /// Callers should authenticate `vote_comm_tree_root`,
-    /// `vote_comm_tree_anchor_height`, `proposal_id`, `voting_round_id`,
-    /// `ea_pk_x`, and `ea_pk_y` out-of-band before passing them here.
+    /// `vote_comm_tree_anchor_height`, `proposal_id`, `voting_round_id`, and
+    /// `decision_bucket_count` out-of-band before passing them here.
     /// `proposal_id` must be active for `voting_round_id`; the circuit only
-    /// checks the authority-bit index range. The EA key must come from the
-    /// active round's governance announcement, not from the prover bundle. See
-    /// [`crate::vote_proof::prove::verify_vote_proof`] for the trust contract
-    /// and why wiring `ea_pk_*` from the same bundle as the proof is a
-    /// custody-attack surface. The remaining fields are proof-attested outputs
-    /// derived outside the circuit but constrained in-circuit against
-    /// authenticated inputs and private witnesses.
+    /// checks the authority-bit index range. See
+    /// [`crate::vote_proof::prove::verify_vote_proof`] for the trust
+    /// contract. The remaining fields are proof-attested outputs derived
+    /// outside the circuit but constrained in-circuit against authenticated
+    /// inputs and private witnesses; `bridge` additionally requires the
+    /// bundle-level equality check against the encrypt-choice instance.
     pub fn from_parts(
         van_nullifier: pallas::Base,
         r_vpk_x: pallas::Base,
@@ -1543,8 +1335,8 @@ impl Instance {
         vote_comm_tree_anchor_height: pallas::Base,
         proposal_id: pallas::Base,
         voting_round_id: pallas::Base,
-        ea_pk_x: pallas::Base,
-        ea_pk_y: pallas::Base,
+        bridge: pallas::Base,
+        decision_bucket_count: pallas::Base,
     ) -> Self {
         Instance {
             van_nullifier,
@@ -1556,8 +1348,8 @@ impl Instance {
             vote_comm_tree_anchor_height,
             proposal_id,
             voting_round_id,
-            ea_pk_x,
-            ea_pk_y,
+            bridge,
+            decision_bucket_count,
         }
     }
 
@@ -1577,8 +1369,8 @@ impl Instance {
             self.vote_comm_tree_anchor_height,
             self.proposal_id,
             self.voting_round_id,
-            self.ea_pk_x,
-            self.ea_pk_y,
+            self.bridge,
+            self.decision_bucket_count,
         ]
     }
 }
@@ -1590,14 +1382,15 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bridge::bridge_commitment;
     use crate::ff::PrimeFieldBits;
     use crate::ff::{Field, PrimeField};
-    use crate::gadgets::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
+    use crate::gadgets::elgamal::{base_to_scalar, spend_auth_g_affine};
     use crate::group::{Curve, Group};
     use crate::params::SHARE_VALUE_LIMIT;
     use crate::protocol_hash::poseidon_hash_2;
     use crate::rand::rngs::OsRng;
-    use crate::shares_hash::{hash_share_commitment_in_circuit, share_commitment, shares_hash};
+    use crate::shares_hash::shares_hash_from_comms;
     use core::iter;
     use voting_crypto_deps::halo2_gadgets::sinsemilla::primitives::CommitDomain;
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
@@ -1607,56 +1400,6 @@ mod tests {
     use voting_crypto_deps::orchard::constants::{
         fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE,
     };
-
-    /// Generates an El Gamal keypair for testing.
-    fn generate_ea_keypair() -> (pallas::Scalar, pallas::Affine) {
-        let ea_sk = pallas::Scalar::from(42u64);
-        let ea_pk = (spend_auth_g_affine() * ea_sk).to_affine();
-        (ea_sk, ea_pk)
-    }
-
-    /// Computes real El Gamal encryptions for 16 shares.
-    ///
-    /// Returns `(c1_x, c2_x, c1_y, c2_y, randomness, share_blinds, shares_hash_value)` where:
-    /// - `c1_x[i]` and `c2_x[i]` are correct ciphertext x-coordinates
-    /// - `c1_y[i]` and `c2_y[i]` are correct ciphertext y-coordinates
-    /// - `randomness[i]` is the base field randomness used for each share
-    /// - `share_blinds[i]` is the blind factor for each share commitment
-    /// - `shares_hash_value` is the blinded Poseidon hash of all shares
-    fn encrypt_shares(
-        shares: [u64; 16],
-        ea_pk: pallas::Affine,
-    ) -> (
-        [pallas::Base; 16],
-        [pallas::Base; 16],
-        [pallas::Base; 16],
-        [pallas::Base; 16],
-        [pallas::Base; 16],
-        [pallas::Base; 16],
-        pallas::Base,
-    ) {
-        let mut c1_x = [pallas::Base::zero(); 16];
-        let mut c2_x = [pallas::Base::zero(); 16];
-        let mut c1_y = [pallas::Base::zero(); 16];
-        let mut c2_y = [pallas::Base::zero(); 16];
-        // Use small deterministic randomness (fits in both Base and Scalar).
-        let randomness: [pallas::Base; 16] =
-            core::array::from_fn(|i| pallas::Base::from((i as u64 + 1) * 101));
-        // Deterministic blind factors for tests.
-        let share_blinds: [pallas::Base; 16] =
-            core::array::from_fn(|i| pallas::Base::from(1001u64 + i as u64));
-        for i in 0..16 {
-            let (cx1, cx2, cy1, cy2) =
-                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk)
-                    .expect("test encryption inputs should be valid");
-            c1_x[i] = cx1;
-            c2_x[i] = cx2;
-            c1_y[i] = cy1;
-            c2_y[i] = cy2;
-        }
-        let hash = shares_hash(share_blinds, c1_x, c2_x, c1_y, c2_y);
-        (c1_x, c2_x, c1_y, c2_y, randomness, share_blinds, hash)
-    }
 
     /// Out-of-circuit voting key derivation for tests.
     ///
@@ -1705,32 +1448,44 @@ mod tests {
         (g_d_affine, pk_d_affine)
     }
 
-    /// Default proposal_id and vote_decision for tests.
+    /// Default proposal_id and decision bucket count for tests.
     const TEST_PROPOSAL_ID: u64 = 3;
-    const TEST_VOTE_DECISION: u64 = 1;
+    const TEST_BUCKET_COUNT: u64 = 4;
 
-    /// Sets condition 12 fields on a circuit and returns the vote_commitment.
+    /// Deterministic stand-in selected commitments for cast-circuit tests.
     ///
-    /// Computes `H(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`
-    /// and sets `circuit.vote_decision`. Returns the vote_commitment
-    /// for use in the Instance. The `proposal_id` must match the
-    /// instance's proposal_id so the circuit's condition 12 (which
-    /// copies proposal_id from the instance) agrees with the instance.
-    fn set_condition_11(
+    /// ZKP #2 does not verify the ElGamal validity of these values (that is
+    /// ZKP 1.5's job); it only re-opens the bridge and hash chain over them,
+    /// so opaque field elements are sufficient here.
+    fn test_selected_commitments() -> [pallas::Base; 16] {
+        core::array::from_fn(|i| pallas::Base::from(0x5e1e_c7ed_u64 + i as u64))
+    }
+
+    /// Sets the condition 10′–12′ witnesses on a circuit and returns the
+    /// derived `(bridge, vote_commitment)` for the instance.
+    fn set_conditions_10_to_12(
         circuit: &mut Circuit,
-        shares_hash_val: pallas::Base,
+        shares_u64: [u64; 16],
         proposal_id: u64,
         voting_round_id: pallas::Base,
-    ) -> pallas::Base {
-        let proposal_id_base = pallas::Base::from(proposal_id);
-        let vote_decision = pallas::Base::from(TEST_VOTE_DECISION);
-        circuit.vote_decision = Value::known(vote_decision);
-        vote_commitment_hash(
+    ) -> (pallas::Base, pallas::Base) {
+        let selected_commitments = test_selected_commitments();
+        circuit.selected_commitments = selected_commitments.map(Value::known);
+        let weights_and_comms: [(pallas::Base, pallas::Base); 16] =
+            core::array::from_fn(|i| (pallas::Base::from(shares_u64[i]), selected_commitments[i]));
+        let bridge = bridge_commitment(
             voting_round_id,
-            shares_hash_val,
-            proposal_id_base,
-            vote_decision,
-        )
+            pallas::Base::from(proposal_id),
+            pallas::Base::from(TEST_BUCKET_COUNT),
+            &weights_and_comms,
+        );
+        let vote_commitment = vote_commitment_hash_v2(
+            voting_round_id,
+            shares_hash_from_comms(selected_commitments),
+            pallas::Base::from(proposal_id),
+            pallas::Base::from(TEST_BUCKET_COUNT),
+        );
+        (bridge, vote_commitment)
     }
 
     /// Build valid test data for all 12 conditions.
@@ -1783,7 +1538,6 @@ mod tests {
         proposal_id: u64,
         van_comm_rand: pallas::Base,
         shares_u64: [u64; 16],
-        ea_pk: pallas::Affine,
     }
 
     impl VoteReuseFixture {
@@ -1794,7 +1548,6 @@ mod tests {
             let rivk_v = pallas::Scalar::random(&mut rng);
             let alpha_v = pallas::Scalar::random(&mut rng);
             let (vpk_g_d_affine, vpk_pk_d_affine) = derive_voting_address(vsk, vsk_nk, rivk_v);
-            let (_ea_sk, ea_pk) = generate_ea_keypair();
 
             Self {
                 vsk,
@@ -1808,7 +1561,6 @@ mod tests {
                 proposal_id: TEST_PROPOSAL_ID,
                 van_comm_rand: pallas::Base::random(&mut rng),
                 shares_u64: [625; 16],
-                ea_pk,
             }
         }
 
@@ -1863,9 +1615,6 @@ mod tests {
             let r_vpk_x = *r_vpk.coordinates().unwrap().x();
             let r_vpk_y = *r_vpk.coordinates().unwrap().y();
 
-            let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-                encrypt_shares(self.shares_u64, self.ea_pk);
-
             let mut circuit = Circuit::with_van_witnesses(
                 Value::known(auth_path),
                 Value::known(position),
@@ -1882,16 +1631,9 @@ mod tests {
             );
             circuit.one_shifted = Value::known(pallas::Base::from(1u64 << self.proposal_id));
             circuit.shares = self.shares_u64.map(|s| Value::known(pallas::Base::from(s)));
-            circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
-            circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
-            circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
-            circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
-            circuit.share_blinds = share_blinds.map(Value::known);
-            circuit.share_randomness = randomness.map(Value::known);
-            circuit.ea_pk = Value::known(self.ea_pk);
-            let vote_commitment = set_condition_11(
+            let (bridge, vote_commitment) = set_conditions_10_to_12(
                 &mut circuit,
-                shares_hash_val,
+                self.shares_u64,
                 self.proposal_id,
                 voting_round_id,
             );
@@ -1906,8 +1648,8 @@ mod tests {
                 pallas::Base::from(anchor_height),
                 pallas::Base::from(self.proposal_id),
                 voting_round_id,
-                *self.ea_pk.coordinates().unwrap().x(),
-                *self.ea_pk.coordinates().unwrap().y(),
+                bridge,
+                pallas::Base::from(TEST_BUCKET_COUNT),
             );
 
             (circuit, instance)
@@ -1977,11 +1719,6 @@ mod tests {
         let shares_u64: [u64; 16] = [625; 16]; // sum = 10000
 
         // Condition 11: El Gamal encryption of shares under ea_pk.
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-        let ea_pk_x = *ea_pk.coordinates().unwrap().x();
-        let ea_pk_y = *ea_pk.coordinates().unwrap().y();
-        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk);
 
         let mut circuit = Circuit::with_van_witnesses(
             Value::known(auth_path),
@@ -1999,17 +1736,10 @@ mod tests {
         );
         circuit.one_shifted = Value::known(one_shifted);
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
-        circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
-        circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
-        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
-        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
-        circuit.share_blinds = share_blinds.map(Value::known);
-        circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk);
 
-        // Condition 12: vote commitment from shares_hash + proposal + decision.
-        let vote_commitment =
-            set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        // Conditions 10′–12′: bridge, shares hash, and vote commitment.
+        let (bridge, vote_commitment) =
+            set_conditions_10_to_12(&mut circuit, shares_u64, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2021,8 +1751,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            ea_pk_x,
-            ea_pk_y,
+            bridge,
+            pallas::Base::from(TEST_BUCKET_COUNT),
         );
 
         (circuit, instance)
@@ -2083,9 +1813,6 @@ mod tests {
         instance.r_vpk_y = *r_vpk.coordinates().unwrap().y();
 
         let shares_u64: [u64; 16] = [625; 16];
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk);
 
         // Use authority 13 (bit 3 set) and one_shifted = 8 so condition 6 is consistent;
         // only condition 2 (VAN hash) should fail due to wrong_van.
@@ -2107,23 +1834,15 @@ mod tests {
         );
         circuit.one_shifted = Value::known(pallas::Base::from(1u64 << TEST_PROPOSAL_ID));
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
-        circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
-        circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
-        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
-        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
-        circuit.share_blinds = share_blinds.map(Value::known);
-        circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk);
-        let vc = set_condition_11(
+        let (bridge, vc) = set_conditions_10_to_12(
             &mut circuit,
-            shares_hash_val,
+            shares_u64,
             TEST_PROPOSAL_ID,
             instance.voting_round_id,
         );
+        instance.bridge = bridge;
         instance.vote_commitment = vc;
         instance.proposal_id = pallas::Base::from(TEST_PROPOSAL_ID);
-        instance.ea_pk_x = *ea_pk.coordinates().unwrap().x();
-        instance.ea_pk_y = *ea_pk.coordinates().unwrap().y();
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         // Should fail: derived hash ≠ witnessed vote_authority_note_old.
@@ -2287,9 +2006,6 @@ mod tests {
         );
 
         let shares_u64: [u64; 16] = [625; 16];
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk);
 
         let wrong_vsk = pallas::Scalar::random(&mut rng);
         assert_ne!(
@@ -2318,14 +2034,8 @@ mod tests {
         );
         circuit.one_shifted = Value::known(one_shifted);
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
-        circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
-        circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
-        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
-        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
-        circuit.share_blinds = share_blinds.map(Value::known);
-        circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let (bridge, vc) =
+            set_conditions_10_to_12(&mut circuit, shares_u64, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2337,8 +2047,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk.coordinates().unwrap().x(),
-            *ea_pk.coordinates().unwrap().y(),
+            bridge,
+            pallas::Base::from(TEST_BUCKET_COUNT),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -2395,9 +2105,6 @@ mod tests {
         );
 
         let shares_u64: [u64; 16] = [625; 16];
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk);
 
         let alpha_v = pallas::Scalar::random(&mut rng);
         let g = spend_auth_g_affine();
@@ -2421,14 +2128,8 @@ mod tests {
         );
         circuit.one_shifted = Value::known(one_shifted);
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
-        circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
-        circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
-        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
-        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
-        circuit.share_blinds = share_blinds.map(Value::known);
-        circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let (bridge, vc) =
+            set_conditions_10_to_12(&mut circuit, shares_u64, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2440,8 +2141,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk.coordinates().unwrap().x(),
-            *ea_pk.coordinates().unwrap().y(),
+            bridge,
+            pallas::Base::from(TEST_BUCKET_COUNT),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -2564,9 +2265,6 @@ mod tests {
         let shares_u64: [u64; 16] = [625; 16];
 
         // Condition 11: real El Gamal encryption.
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk);
 
         let mut circuit = Circuit::with_van_witnesses(
             Value::known(auth_path),
@@ -2584,14 +2282,8 @@ mod tests {
         );
         circuit.one_shifted = Value::known(one_shifted);
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
-        circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
-        circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
-        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
-        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
-        circuit.share_blinds = share_blinds.map(Value::known);
-        circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let (bridge, vc) =
+            set_conditions_10_to_12(&mut circuit, shares_u64, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2603,8 +2295,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk.coordinates().unwrap().x(),
-            *ea_pk.coordinates().unwrap().y(),
+            bridge,
+            pallas::Base::from(TEST_BUCKET_COUNT),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -2934,9 +2626,6 @@ mod tests {
         let shares_u64: [u64; 16] = [625; 16];
 
         // Condition 11: real El Gamal encryption.
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk);
 
         let mut circuit = Circuit::with_van_witnesses(
             Value::known(auth_path),
@@ -2954,14 +2643,8 @@ mod tests {
         );
         circuit.one_shifted = Value::known(one_shifted);
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
-        circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
-        circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
-        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
-        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
-        circuit.share_blinds = share_blinds.map(Value::known);
-        circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let (bridge, vc) =
+            set_conditions_10_to_12(&mut circuit, shares_u64, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -2973,8 +2656,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk.coordinates().unwrap().x(),
-            *ea_pk.coordinates().unwrap().y(),
+            bridge,
+            pallas::Base::from(TEST_BUCKET_COUNT),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -3064,9 +2747,6 @@ mod tests {
         // Condition 11: real El Gamal encryption with max-value shares.
         let max_share_u64 = SHARE_VALUE_LIMIT - 1;
         let shares_u64: [u64; 16] = [max_share_u64; 16];
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk);
 
         let alpha_v = pallas::Scalar::random(&mut rng);
         let g = spend_auth_g_affine();
@@ -3090,14 +2770,8 @@ mod tests {
         );
         circuit.one_shifted = Value::known(one_shifted);
         circuit.shares = [Value::known(max_share); 16];
-        circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
-        circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
-        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
-        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
-        circuit.share_blinds = share_blinds.map(Value::known);
-        circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk);
-        let vc = set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let (bridge, vc) =
+            set_conditions_10_to_12(&mut circuit, shares_u64, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -3109,8 +2783,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk.coordinates().unwrap().x(),
-            *ea_pk.coordinates().unwrap().y(),
+            bridge,
+            pallas::Base::from(TEST_BUCKET_COUNT),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -3204,9 +2878,6 @@ mod tests {
             arr[0] = SHARE_VALUE_LIMIT;
             arr
         };
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, randomness, share_blinds, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk);
 
         let g = spend_auth_g_affine();
         let r_vpk = (g * (vsk + alpha_v)).to_affine();
@@ -3227,16 +2898,9 @@ mod tests {
         );
         circuit.one_shifted = Value::known(one_shifted);
         circuit.shares = shares_u64.map(|s| Value::known(pallas::Base::from(s)));
-        circuit.enc_share_c1_x = enc_c1_x.map(Value::known);
-        circuit.enc_share_c2_x = enc_c2_x.map(Value::known);
-        circuit.enc_share_c1_y = enc_c1_y.map(Value::known);
-        circuit.enc_share_c2_y = enc_c2_y.map(Value::known);
-        circuit.share_blinds = share_blinds.map(Value::known);
-        circuit.share_randomness = randomness.map(Value::known);
-        circuit.ea_pk = Value::known(ea_pk);
 
-        let vote_commitment =
-            set_condition_11(&mut circuit, shares_hash_val, proposal_id, voting_round_id);
+        let (bridge, vote_commitment) =
+            set_conditions_10_to_12(&mut circuit, shares_u64, proposal_id, voting_round_id);
 
         let instance = Instance::from_parts(
             van_nullifier,
@@ -3248,8 +2912,8 @@ mod tests {
             pallas::Base::zero(),
             pallas::Base::from(proposal_id),
             voting_round_id,
-            *ea_pk.coordinates().unwrap().x(),
-            *ea_pk.coordinates().unwrap().y(),
+            bridge,
+            pallas::Base::from(TEST_BUCKET_COUNT),
         );
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
@@ -3262,395 +2926,104 @@ mod tests {
     }
 
     // ================================================================
-    // Condition 10 (Shares Hash Integrity) tests
+    // Condition 10′ (Bridge Re-Opening) and 11′ (Shares Hash) tests
     // ================================================================
 
-    /// Valid enc_share witnesses with matching shares_hash should pass.
+    /// Valid selected commitments with a matching bridge should pass.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn shares_hash_valid_proof() {
+    fn bridge_reopening_valid_proof() {
         let (circuit, instance) = make_test_data();
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert_eq!(prover.verify(), Ok(()));
     }
 
-    /// A corrupted enc_share_c1_x[0] should cause condition 10 failure:
-    /// the in-circuit hash won't match the VOTE_COMMITMENT_PUBLIC_OFFSET instance.
+    /// A corrupted selected commitment changes the derived bridge, which no
+    /// longer matches the public bridge input.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn shares_hash_wrong_enc_share_fails() {
+    fn bridge_reopening_altered_commitment_fails() {
         let (mut circuit, instance) = make_test_data();
 
-        // Corrupt one enc_share component — the Poseidon hash will
-        // change, so it won't match the instance's vote_commitment.
-        circuit.enc_share_c1_x[0] = Value::known(pallas::Base::random(&mut OsRng));
+        circuit.selected_commitments[0] = Value::known(pallas::Base::random(&mut OsRng));
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
     }
 
-    /// A wrong vote_commitment instance value (shares_hash mismatch)
-    /// should fail, even with correct enc_share witnesses.
+    /// Reordering the selected commitments must fail: the bridge binds each
+    /// commitment to its share position.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn shares_hash_wrong_instance_fails() {
+    fn bridge_reopening_reordered_commitments_fail() {
+        let (mut circuit, instance) = make_test_data();
+
+        let comms = test_selected_commitments();
+        circuit.selected_commitments[0] = Value::known(comms[1]);
+        circuit.selected_commitments[1] = Value::known(comms[0]);
+
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert!(prover.verify().is_err());
+    }
+
+    /// Moving weight between shares while preserving the condition-8 sum must
+    /// fail: the bridge binds each individual weight.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn bridge_reopening_altered_shares_with_preserved_sum_fail() {
+        let (mut circuit, instance) = make_test_data();
+
+        // make_test_data uses 16 × 625 shares; 626 + 624 preserves the sum.
+        circuit.shares[0] = Value::known(pallas::Base::from(626u64));
+        circuit.shares[1] = Value::known(pallas::Base::from(624u64));
+
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert!(prover.verify().is_err());
+    }
+
+    /// A wrong bridge value in the instance must fail.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn bridge_reopening_wrong_instance_bridge_fails() {
         let (circuit, mut instance) = make_test_data();
 
-        // Supply a random (wrong) vote_commitment in the instance.
-        instance.vote_commitment = pallas::Base::random(&mut OsRng);
+        instance.bridge = pallas::Base::random(&mut OsRng);
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
     }
 
-    /// Verifies the out-of-circuit shares_hash helper is deterministic.
-    #[test]
-    fn shares_hash_deterministic() {
-        let mut rng = OsRng;
-
-        let blinds: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
-        let c1_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
-        let c2_x: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
-        let c1_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
-        let c2_y: [pallas::Base; 16] = core::array::from_fn(|_| pallas::Base::random(&mut rng));
-
-        let h1 = shares_hash(blinds, c1_x, c2_x, c1_y, c2_y);
-        let h2 = shares_hash(blinds, c1_x, c2_x, c1_y, c2_y);
-        assert_eq!(h1, h2);
-
-        // Changing any component changes the hash.
-        let mut c1_x_alt = c1_x;
-        c1_x_alt[2] = pallas::Base::random(&mut rng);
-        let h3 = shares_hash(blinds, c1_x_alt, c2_x, c1_y, c2_y);
-        assert_ne!(h1, h3);
-
-        // Swapping c1 and c2 also changes the hash.
-        let h4 = shares_hash(blinds, c2_x, c1_x, c2_y, c1_y);
-        assert_ne!(h1, h4);
-
-        // Different blinds produce different hash.
-        let blinds_alt: [pallas::Base; 16] =
-            core::array::from_fn(|_| pallas::Base::random(&mut rng));
-        let h5 = shares_hash(blinds_alt, c1_x, c2_x, c1_y, c2_y);
-        assert_ne!(h1, h5);
-    }
-
-    /// Verifies the out-of-circuit share_commitment helper is deterministic
-    /// and that input order matters (Poseidon(blind, c1_x, c2_x, c1_y, c2_y) ≠
-    /// Poseidon(blind, c2_x, c1_x, c2_y, c1_y)).
-    #[test]
-    fn share_commitment_deterministic() {
-        let mut rng = OsRng;
-        let blind = pallas::Base::random(&mut rng);
-        let c1_x = pallas::Base::random(&mut rng);
-        let c2_x = pallas::Base::random(&mut rng);
-        let c1_y = pallas::Base::random(&mut rng);
-        let c2_y = pallas::Base::random(&mut rng);
-
-        let h1 = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
-        let h2 = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
-        assert_eq!(h1, h2);
-
-        // Swapping c1 and c2 changes the hash.
-        let h3 = share_commitment(blind, c2_x, c1_x, c2_y, c1_y);
-        assert_ne!(h1, h3);
-
-        // Different blind changes the hash.
-        let blind_alt = pallas::Base::random(&mut rng);
-        let h4 = share_commitment(blind_alt, c1_x, c2_x, c1_y, c2_y);
-        assert_ne!(h1, h4);
-    }
-
-    /// Minimal circuit that computes one share commitment in-circuit and constrains
-    /// the result to the instance column. Used to verify the in-circuit hash matches
-    /// the native share_commitment.
-    #[derive(Clone, Default)]
-    struct ShareCommitmentTestCircuit {
-        blind: pallas::Base,
-        c1_x: pallas::Base,
-        c2_x: pallas::Base,
-        c1_y: pallas::Base,
-        c2_y: pallas::Base,
-    }
-
-    #[derive(Clone)]
-    struct ShareCommitmentTestConfig {
-        primary: Column<InstanceColumn>,
-        advices: [Column<Advice>; 5],
-        poseidon_config: PoseidonConfig<pallas::Base, 3, 2>,
-    }
-
-    impl plonk::Circuit<pallas::Base> for ShareCommitmentTestCircuit {
-        type Config = ShareCommitmentTestConfig;
-        type FloorPlanner = floor_planner::V1;
-
-        fn without_witnesses(&self) -> Self {
-            Self::default()
-        }
-
-        fn configure(meta: &mut ConstraintSystem<pallas::Base>) -> Self::Config {
-            let primary = meta.instance_column();
-            meta.enable_equality(primary);
-            let advices: [Column<Advice>; 5] = core::array::from_fn(|_| meta.advice_column());
-            for col in &advices {
-                meta.enable_equality(*col);
-            }
-            let fixed: [Column<Fixed>; 6] = core::array::from_fn(|_| meta.fixed_column());
-            let constants = meta.fixed_column();
-            meta.enable_constant(constants);
-            let rc_a = fixed[0..3].try_into().unwrap();
-            let rc_b = fixed[3..6].try_into().unwrap();
-            let poseidon_config = PoseidonChip::configure::<poseidon::P128Pow5T3>(
-                meta,
-                advices[1..4].try_into().unwrap(),
-                advices[4],
-                rc_a,
-                rc_b,
-            );
-            ShareCommitmentTestConfig {
-                primary,
-                advices,
-                poseidon_config,
-            }
-        }
-
-        fn synthesize(
-            &self,
-            config: Self::Config,
-            mut layouter: impl Layouter<pallas::Base>,
-        ) -> Result<(), plonk::Error> {
-            let blind_cell = assign_free_advice(
-                layouter.namespace(|| "blind"),
-                config.advices[0],
-                Value::known(self.blind),
-            )?;
-            let c1_x_cell = assign_free_advice(
-                layouter.namespace(|| "c1_x"),
-                config.advices[0],
-                Value::known(self.c1_x),
-            )?;
-            let c2_x_cell = assign_free_advice(
-                layouter.namespace(|| "c2_x"),
-                config.advices[0],
-                Value::known(self.c2_x),
-            )?;
-            let c1_y_cell = assign_free_advice(
-                layouter.namespace(|| "c1_y"),
-                config.advices[0],
-                Value::known(self.c1_y),
-            )?;
-            let c2_y_cell = assign_free_advice(
-                layouter.namespace(|| "c2_y"),
-                config.advices[0],
-                Value::known(self.c2_y),
-            )?;
-            let chip = PoseidonChip::construct(config.poseidon_config.clone());
-            let result = hash_share_commitment_in_circuit(
-                chip,
-                layouter.namespace(|| "share_comm"),
-                blind_cell,
-                c1_x_cell,
-                c2_x_cell,
-                c1_y_cell,
-                c2_y_cell,
-                0,
-            )?;
-            layouter.constrain_instance(result.cell(), config.primary, 0)?;
-            Ok(())
-        }
-    }
-
-    /// Verifies that the in-circuit share commitment hash matches the native
-    /// share_commitment(blind, c1_x, c2_x, c1_y, c2_y). The test builds a minimal circuit
-    /// that computes the hash and constrains it to the instance column, then
-    /// runs MockProver with the native hash as the public input.
-    #[test]
-    fn hash_share_commitment_in_circuit_matches_native() {
-        let mut rng = OsRng;
-        let blind = pallas::Base::random(&mut rng);
-        let c1_x = pallas::Base::random(&mut rng);
-        let c2_x = pallas::Base::random(&mut rng);
-        let c1_y = pallas::Base::random(&mut rng);
-        let c2_y = pallas::Base::random(&mut rng);
-
-        let expected = share_commitment(blind, c1_x, c2_x, c1_y, c2_y);
-        let circuit = ShareCommitmentTestCircuit {
-            blind,
-            c1_x,
-            c2_x,
-            c1_y,
-            c2_y,
-        };
-        let instance = vec![vec![expected]];
-        // K=10 (1024 rows) is enough for one Poseidon(3) region.
-        const TEST_K: u32 = 10;
-        let prover = MockProver::run(TEST_K, &circuit, instance).expect("MockProver::run failed");
-        assert_eq!(prover.verify(), Ok(()));
-    }
-
-    // ================================================================
-    // Condition 11 (Encryption Integrity) tests
-    // ================================================================
-
-    /// Valid El Gamal encryptions should produce a valid proof.
+    /// A wrong decision bucket count must fail: it is bound into both the
+    /// bridge and the vote commitment.
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn encryption_integrity_valid_proof() {
+    fn bridge_reopening_wrong_bucket_count_fails() {
+        let (circuit, mut instance) = make_test_data();
+
+        instance.decision_bucket_count = pallas::Base::from(TEST_BUCKET_COUNT + 1);
+
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert!(prover.verify().is_err());
+    }
+
+    /// A bridge assembled for a different round or proposal must fail: both
+    /// context values are folded into the bridge preimage.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn bridge_reopening_cross_context_replay_fails() {
         let (circuit, instance) = make_test_data();
 
-        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
-        assert_eq!(prover.verify(), Ok(()));
-    }
-
-    /// r_i = 0 would reveal C2_i = [v_i]G for a small share value, so the
-    /// hardened circuit rejects the exact degenerate randomness witness.
-    #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn encryption_integrity_randomness_zero_is_rejected() {
-        let (mut circuit, mut instance) = make_test_data();
-        let shares_u64 = [625u64; 16];
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-        let (mut c1_x, mut c2_x, mut c1_y, mut c2_y, mut randomness, blinds, _) =
-            encrypt_shares(shares_u64, ea_pk);
-        let c2 = spend_auth_g_affine() * pallas::Scalar::from(shares_u64[0]);
-        let c2_coords = c2.to_affine().coordinates().unwrap();
-
-        randomness[0] = pallas::Base::zero();
-        c1_x[0] = pallas::Base::zero();
-        c1_y[0] = pallas::Base::zero();
-        c2_x[0] = *c2_coords.x();
-        c2_y[0] = *c2_coords.y();
-
-        circuit.share_randomness = randomness.map(Value::known);
-        circuit.enc_share_c1_x = c1_x.map(Value::known);
-        circuit.enc_share_c1_y = c1_y.map(Value::known);
-        circuit.enc_share_c2_x = c2_x.map(Value::known);
-        circuit.enc_share_c2_y = c2_y.map(Value::known);
-        let shares_hash_val = shares_hash(blinds, c1_x, c2_x, c1_y, c2_y);
-        instance.vote_commitment = set_condition_11(
-            &mut circuit,
-            shares_hash_val,
-            TEST_PROPOSAL_ID,
-            instance.voting_round_id,
-        );
-
-        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        let mut wrong_round = instance.clone();
+        wrong_round.voting_round_id = pallas::Base::random(&mut OsRng);
+        let prover = MockProver::run(K, &circuit, vec![wrong_round.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
-    }
 
-    /// A corrupted share_randomness[0] should fail condition 11:
-    /// the computed C1[0] won't match enc_share_c1_x[0].
-    #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn encryption_integrity_wrong_randomness_fails() {
-        let (mut circuit, instance) = make_test_data();
-
-        // Corrupt the randomness for share 0 — C1 will change.
-        circuit.share_randomness[0] = Value::known(pallas::Base::from(9999u64));
-
-        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        let mut wrong_proposal = instance;
+        wrong_proposal.proposal_id = pallas::Base::from(TEST_PROPOSAL_ID + 1);
+        let prover =
+            MockProver::run(K, &circuit, vec![wrong_proposal.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
-    }
-
-    /// A corrupted randomness witness on the second El Gamal track should
-    /// fail condition 11.
-    #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn encryption_integrity_second_track_wrong_randomness_fails() {
-        let (mut circuit, instance) = make_test_data();
-
-        circuit.share_randomness[ELGAMAL_TRACK_SPLIT] = Value::known(pallas::Base::from(9999u64));
-
-        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
-        assert!(prover.verify().is_err());
-    }
-
-    /// A wrong ea_pk in the instance should fail condition 11:
-    /// the computed r * ea_pk won't match the ciphertexts.
-    #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn encryption_integrity_wrong_ea_pk_instance_fails() {
-        let (circuit, mut instance) = make_test_data();
-
-        // Corrupt ea_pk_x in the instance — the constraint linking
-        // the witnessed ea_pk to the public input will fail.
-        instance.ea_pk_x = pallas::Base::from(12345u64);
-
-        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
-        assert!(prover.verify().is_err());
-    }
-
-    /// A corrupted share value (plaintext) should fail condition 11:
-    /// C2_i = [v_i]*G + [r_i]*ea_pk will not match enc_share_c2_x[i].
-    #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn encryption_integrity_wrong_share_fails() {
-        let (mut circuit, instance) = make_test_data();
-
-        // Corrupt share 0 — enc_share and randomness are unchanged (from
-        // make_test_data), so the in-circuit C2_0 will not match enc_c2_x[0].
-        circuit.shares[0] = Value::known(pallas::Base::from(9999u64));
-
-        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
-        assert!(prover.verify().is_err());
-    }
-
-    /// A corrupted enc_share_c2_x witness should cause verification to fail:
-    /// condition 11 constrains ExtractP(C2_i) == enc_c2_x[i].
-    #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn encryption_integrity_wrong_enc_c2_x_fails() {
-        let (mut circuit, instance) = make_test_data();
-
-        // Corrupt one C2 x-coordinate — the ECC will compute the real C2_0
-        // from share_0 and r_0; constrain_equal will fail (or the resulting
-        // shares_hash will not match the instance vote_commitment).
-        circuit.enc_share_c2_x[0] = Value::known(pallas::Base::random(&mut OsRng));
-
-        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
-        assert!(prover.verify().is_err());
-    }
-
-    /// The out-of-circuit elgamal_encrypt helper is deterministic.
-    #[test]
-    fn elgamal_encrypt_deterministic() {
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-
-        let v = pallas::Base::from(1000u64);
-        let r = pallas::Base::from(42u64);
-
-        let (c1_a, c2_a, _, _) =
-            elgamal_encrypt(v, r, ea_pk).expect("test encryption inputs should be valid");
-        let (c1_b, c2_b, _, _) =
-            elgamal_encrypt(v, r, ea_pk).expect("test encryption inputs should be valid");
-        assert_eq!(c1_a, c1_b);
-        assert_eq!(c2_a, c2_b);
-
-        // Different randomness → different C1.
-        let (c1_c, _, _, _) = elgamal_encrypt(v, pallas::Base::from(99u64), ea_pk)
-            .expect("test encryption inputs should be valid");
-        assert_ne!(c1_a, c1_c);
-    }
-
-    /// base_to_scalar (used by El Gamal) accepts share-sized values and
-    /// the fixed randomness used in encrypt_shares.
-    #[test]
-    fn base_to_scalar_accepts_elgamal_inputs() {
-        // Share-sized values (condition 9: [0, 2^30)) must convert.
-        assert!(base_to_scalar(pallas::Base::zero()).is_some());
-        assert!(base_to_scalar(pallas::Base::from(1u64)).is_some());
-        assert!(base_to_scalar(pallas::Base::from(1_000u64)).is_some());
-        assert!(base_to_scalar(pallas::Base::from(404u64)).is_some()); // encrypt_shares randomness
-
-        // encrypt_shares uses (i+1)*101 for i in 0..16 → 101, 202, ..., 1616.
-        for r in (1u64..=16).map(|i| i * 101) {
-            assert!(
-                base_to_scalar(pallas::Base::from(r)).is_some(),
-                "r = {} must convert for El Gamal",
-                r
-            );
-        }
     }
 
     // ================================================================
@@ -3665,20 +3038,6 @@ mod tests {
 
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert_eq!(prover.verify(), Ok(()));
-    }
-
-    /// A wrong vote_decision in the circuit should fail condition 12:
-    /// the derived vote_commitment won't match the instance.
-    #[test]
-    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn vote_commitment_wrong_decision_fails() {
-        let (mut circuit, instance) = make_test_data();
-
-        // Corrupt the vote decision — the Poseidon hash will change.
-        circuit.vote_decision = Value::known(pallas::Base::from(99u64));
-
-        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
-        assert!(prover.verify().is_err());
     }
 
     /// A wrong proposal_id in the instance should fail condition 12:
@@ -3709,29 +3068,29 @@ mod tests {
         assert!(prover.verify().is_err());
     }
 
-    /// The out-of-circuit vote_commitment_hash helper is deterministic.
+    /// The out-of-circuit vote_commitment_hash_v2 helper is deterministic.
     #[test]
-    fn vote_commitment_hash_deterministic() {
+    fn vote_commitment_hash_v2_deterministic() {
         let mut rng = OsRng;
 
         let rid = pallas::Base::random(&mut rng);
         let sh = pallas::Base::random(&mut rng);
         let pid = pallas::Base::from(5u64);
-        let dec = pallas::Base::from(1u64);
+        let bucket_count = pallas::Base::from(4u64);
 
-        let h1 = vote_commitment_hash(rid, sh, pid, dec);
-        let h2 = vote_commitment_hash(rid, sh, pid, dec);
+        let h1 = vote_commitment_hash_v2(rid, sh, pid, bucket_count);
+        let h2 = vote_commitment_hash_v2(rid, sh, pid, bucket_count);
         assert_eq!(h1, h2);
 
         // Changing any input changes the hash.
-        let h3 = vote_commitment_hash(rid, sh, pallas::Base::from(6u64), dec);
+        let h3 = vote_commitment_hash_v2(rid, sh, pallas::Base::from(6u64), bucket_count);
         assert_ne!(h1, h3);
 
         // Changing voting_round_id changes the hash.
-        let h4 = vote_commitment_hash(pallas::Base::from(999u64), sh, pid, dec);
+        let h4 = vote_commitment_hash_v2(pallas::Base::from(999u64), sh, pid, bucket_count);
         assert_ne!(h1, h4);
 
-        // DOMAIN_VC ensures separation from VAN hashes.
+        // DOMAIN_VC_V2 ensures separation from VAN hashes.
         // (Different arity prevents confusion, but domain tag adds defense-in-depth.)
         assert_ne!(h1, pallas::Base::zero());
     }

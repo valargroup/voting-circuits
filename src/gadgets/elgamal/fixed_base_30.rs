@@ -256,6 +256,7 @@ impl SpendAuthGFixedBase30Config {
 
     /// Constrains `result = [share] SpendAuthG + addend` for an unsigned
     /// 30-bit `share`. The addend must already be constrained as a curve point.
+    #[cfg(test)]
     pub(crate) fn mul_add(
         &self,
         mut layouter: impl Layouter<pallas::Base>,
@@ -288,6 +289,68 @@ impl SpendAuthGFixedBase30Config {
             &addend,
         )?;
 
+        Ok((result.x, result.y))
+    }
+
+    /// Constrains `result = [share] SpendAuthG` for an unsigned 30-bit share.
+    ///
+    /// This exposes the magnitude before the final caller-supplied addend used
+    /// by [`Self::mul_add`]. The encrypt-choice circuit uses it to compute one
+    /// shared weight point per share and reuse that point across all decision
+    /// buckets.
+    pub(crate) fn mul(
+        &self,
+        mut layouter: impl Layouter<pallas::Base>,
+        share: &AssignedCell<pallas::Base, pallas::Base>,
+    ) -> Result<
+        (
+            AssignedCell<pallas::Base, pallas::Base>,
+            AssignedCell<pallas::Base, pallas::Base>,
+        ),
+        Error,
+    > {
+        let (accumulator, most_significant) = layouter.assign_region(
+            || "Unsigned 30-bit fixed-base mul",
+            |mut region| self.assign_windows(&mut region, share),
+        )?;
+        let magnitude = self.complete_add(
+            layouter.namespace(|| "Unsigned 30-bit fixed-base final window"),
+            &accumulator,
+            &most_significant,
+        )?;
+        Ok((magnitude.x, magnitude.y))
+    }
+
+    /// Constrains `result = left + right` with the same complete-addition gate
+    /// used by [`Self::mul_add`]. Both inputs may use Halo2's `(0, 0)` identity
+    /// encoding.
+    pub(crate) fn add(
+        &self,
+        mut layouter: impl Layouter<pallas::Base>,
+        left_x: &AssignedCell<pallas::Base, pallas::Base>,
+        left_y: &AssignedCell<pallas::Base, pallas::Base>,
+        right_x: &AssignedCell<pallas::Base, pallas::Base>,
+        right_y: &AssignedCell<pallas::Base, pallas::Base>,
+    ) -> Result<
+        (
+            AssignedCell<pallas::Base, pallas::Base>,
+            AssignedCell<pallas::Base, pallas::Base>,
+        ),
+        Error,
+    > {
+        let left = AssignedPoint {
+            x: left_x.clone(),
+            y: left_y.clone(),
+        };
+        let right = AssignedPoint {
+            x: right_x.clone(),
+            y: right_y.clone(),
+        };
+        let result = self.complete_add(
+            layouter.namespace(|| "Complete addition for weighted bucket"),
+            &left,
+            &right,
+        )?;
         Ok((result.x, result.y))
     }
 

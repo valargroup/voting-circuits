@@ -1,16 +1,17 @@
 //! Share Reveal bundle builder.
 //!
 //! Constructs the [`Circuit`] and [`Instance`] from high-level inputs
-//! (Merkle path, share commitments, vote metadata). The builder computes
-//! all derived values (shares_hash, vote_commitment, share_nullifier,
-//! tree root) so the caller only provides raw witness data.
+//! (Merkle path, selected commitments, revealed bucket ciphertexts, vote
+//! metadata). The builder computes all derived values (shares_hash,
+//! vote_commitment, share_nullifier, tree root) so the caller only provides
+//! raw witness data.
 
 use voting_crypto_deps::halo2_proofs::circuit::Value;
 use voting_crypto_deps::pasta_curves::pallas;
 
 use super::circuit::{share_nullifier_hash, Circuit, Instance};
 use crate::{
-    gadgets::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash,
+    bridge::WeightedShareCiphertexts, gadgets::vote_commitment::vote_commitment_hash_v2,
     params::VOTE_COMM_TREE_DEPTH, protocol_hash::poseidon_hash_2,
     shares_hash::shares_hash_from_comms,
 };
@@ -20,7 +21,7 @@ use crate::{
 pub struct ShareRevealBundle {
     /// The share reveal circuit with all witnesses populated.
     pub circuit: Circuit,
-    /// Public inputs (9 field elements).
+    /// Public inputs (37 field elements).
     pub instance: Instance,
 }
 
@@ -30,51 +31,51 @@ pub struct ShareRevealBundle {
 ///
 /// - `merkle_auth_path`: The 24 sibling hashes from the vote commitment tree.
 /// - `merkle_position`: Leaf position in the vote commitment tree.
-/// - `share_comms`: Pre-computed per-share Poseidon commitments
-///   (`share_comm_i = Poseidon(blind_i, c1_i_x, c2_i_x, c1_i_y, c2_i_y)`).
+/// - `selected_commitments`: The 16 per-share weighted selected commitments
+///   from the vote's encrypt-choice bundle
+///   ([`crate::encrypt_choice::EncryptChoiceBundle::selected_commitments`]).
 /// - `primary_blind`: Blind factor for the revealed share (at `share_index`).
-/// - `enc_c1_x`: X-coordinate of the revealed share's El Gamal C1. This is
-///   reveal data supplied by the caller and bound to `share_comms[share_index]`
-///   through the share-commitment Poseidon hash.
-/// - `enc_c2_x`: X-coordinate of the revealed share's El Gamal C2. Same
-///   transitive binding as `enc_c1_x`.
-/// - `enc_c1_y`: Y-coordinate of the revealed share's El Gamal C1. Included so
-///   the reveal binds the exact curve point, not only its x-coordinate.
-/// - `enc_c2_y`: Y-coordinate of the revealed share's El Gamal C2. Included for
-///   exact-point binding and tied through the selected share commitment.
+/// - `revealed`: All 16 bucket ciphertext coordinates of the revealed share
+///   ([`crate::encrypt_choice::EncryptedWeightedShareOutput::ciphertexts`]).
+///   Published as public inputs and bound to
+///   `selected_commitments[share_index]` through the weighted
+///   selected-commitment hash.
 /// - `share_index`: Which of the 16 shares is being revealed (0..15).
 /// - `proposal_id`: Proposal identifier (as a field element).
-/// - `vote_decision`: The voter's choice (as a field element).
 /// - `voting_round_id`: Voting round identifier (as a field element).
+/// - `decision_bucket_count`: The proposal's public option count `D` (as a
+///   field element); must equal the value bound by the vote's cast proof.
 ///
 /// # Caller contract
 ///
-/// `share_comms`, `primary_blind`, and the encrypted-share coordinates are
-/// cross-circuit outputs from `vote_proof::build_vote_proof_from_delegation`.
-/// Pass the selected `VoteProofBundle::share_blinds[share_index]`,
-/// `VoteProofBundle::encrypted_shares[share_index]`, and full
-/// `VoteProofBundle::share_comms` array unchanged; drawing a fresh blind breaks
-/// the share-commitment constraint and can invalidate the reveal. `proposal_id`,
-/// `vote_decision`, `voting_round_id`, and the vote commitment tree witness are
-/// authenticated session parameters supplied by the caller.
+/// `selected_commitments`, `primary_blind`, and `revealed` are cross-circuit
+/// outputs from `encrypt_choice::build_encrypt_choice`. Pass the bundle's
+/// `share_blinds[share_index]`, `encrypted_shares[share_index].ciphertexts`,
+/// and full `selected_commitments` array unchanged; drawing a fresh blind
+/// breaks the selected-commitment constraint and can invalidate the reveal.
+/// `proposal_id`, `voting_round_id`, `decision_bucket_count`, and the vote
+/// commitment tree witness are authenticated session parameters supplied by
+/// the caller.
+#[allow(clippy::too_many_arguments)]
 pub fn build_share_reveal(
     merkle_auth_path: [pallas::Base; VOTE_COMM_TREE_DEPTH],
     merkle_position: u32,
-    share_comms: [pallas::Base; 16],
+    selected_commitments: [pallas::Base; 16],
     primary_blind: pallas::Base,
-    enc_c1_x: pallas::Base,
-    enc_c2_x: pallas::Base,
-    enc_c1_y: pallas::Base,
-    enc_c2_y: pallas::Base,
+    revealed: &WeightedShareCiphertexts,
     share_index: u32,
     proposal_id: pallas::Base,
-    vote_decision: pallas::Base,
     voting_round_id: pallas::Base,
+    decision_bucket_count: pallas::Base,
 ) -> ShareRevealBundle {
-    let shares_hash = shares_hash_from_comms(share_comms);
+    let shares_hash = shares_hash_from_comms(selected_commitments);
 
-    let vote_commitment =
-        compute_vote_commitment_hash(voting_round_id, shares_hash, proposal_id, vote_decision);
+    let vote_commitment = vote_commitment_hash_v2(
+        voting_round_id,
+        shares_hash,
+        proposal_id,
+        decision_bucket_count,
+    );
 
     let vote_comm_tree_root = {
         let mut current = vote_commitment;
@@ -100,7 +101,7 @@ pub fn build_share_reveal(
     let circuit = Circuit {
         vote_comm_tree_path: Value::known(merkle_auth_path),
         vote_comm_tree_position: Value::known(merkle_position),
-        share_comms: share_comms.map(Value::known),
+        share_comms: selected_commitments.map(Value::known),
         primary_blind: Value::known(primary_blind),
         share_index: Value::known(share_index_fp),
         vote_commitment: Value::known(vote_commitment),
@@ -108,14 +109,11 @@ pub fn build_share_reveal(
 
     let instance = Instance::from_parts(
         share_nullifier,
-        enc_c1_x,
-        enc_c2_x,
+        *revealed,
         proposal_id,
-        vote_decision,
         vote_comm_tree_root,
         voting_round_id,
-        enc_c1_y,
-        enc_c2_y,
+        decision_bucket_count,
     );
 
     ShareRevealBundle { circuit, instance }
@@ -124,43 +122,35 @@ pub fn build_share_reveal(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::group::Curve;
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
     use voting_crypto_deps::pasta_curves::pallas;
 
-    use crate::gadgets::elgamal::{elgamal_encrypt, spend_auth_g_affine};
-    use crate::shares_hash::share_commitment;
+    use crate::bridge::{selected_share_commitment, CiphertextCoordinates, MAX_DECISION_BUCKETS};
 
     use super::super::circuit::K;
+
+    /// Deterministic test ciphertext vector for one share.
+    fn test_ciphertexts(seed: u64) -> WeightedShareCiphertexts {
+        WeightedShareCiphertexts(core::array::from_fn(|bucket| {
+            let base = seed + (4 * bucket) as u64;
+            CiphertextCoordinates {
+                c1_x: pallas::Base::from(base),
+                c2_x: pallas::Base::from(base + 1),
+                c1_y: pallas::Base::from(base + 2),
+                c2_y: pallas::Base::from(base + 3),
+            }
+        }))
+    }
 
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_builder_round_trip() {
-        let ea_sk = pallas::Scalar::from(42u64);
-        let ea_pk = (spend_auth_g_affine() * ea_sk).to_affine();
-
-        let shares: [u64; 16] = [625; 16];
-        let randomness: [pallas::Base; 16] =
-            core::array::from_fn(|i| pallas::Base::from((i as u64 + 1) * 101));
         let share_blinds: [pallas::Base; 16] =
             core::array::from_fn(|i| pallas::Base::from(1001u64 + i as u64));
-        let mut c1_x = [pallas::Base::zero(); 16];
-        let mut c2_x = [pallas::Base::zero(); 16];
-        let mut c1_y = [pallas::Base::zero(); 16];
-        let mut c2_y = [pallas::Base::zero(); 16];
-        for i in 0..16 {
-            let (cx1, cx2, cy1, cy2) =
-                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk)
-                    .expect("test encryption inputs should be valid");
-            c1_x[i] = cx1;
-            c2_x[i] = cx2;
-            c1_y[i] = cy1;
-            c2_y[i] = cy2;
-        }
-
-        let share_comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-            share_commitment(share_blinds[i], c1_x[i], c2_x[i], c1_y[i], c2_y[i])
-        });
+        let ciphertexts: [WeightedShareCiphertexts; 16] =
+            core::array::from_fn(|i| test_ciphertexts(10_000 + 1_000 * i as u64));
+        let selected_commitments: [pallas::Base; 16] =
+            core::array::from_fn(|i| selected_share_commitment(share_blinds[i], &ciphertexts[i]));
 
         let mut empty_roots = [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH];
         empty_roots[0] = poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
@@ -172,16 +162,13 @@ mod tests {
         let bundle = build_share_reveal(
             empty_roots,
             0,
-            share_comms,
+            selected_commitments,
             share_blinds[share_idx as usize],
-            c1_x[share_idx as usize],
-            c2_x[share_idx as usize],
-            c1_y[share_idx as usize],
-            c2_y[share_idx as usize],
+            &ciphertexts[share_idx as usize],
             share_idx,
             pallas::Base::from(3u64),
-            pallas::Base::from(1u64),
             pallas::Base::from(999u64),
+            pallas::Base::from(MAX_DECISION_BUCKETS as u64),
         );
 
         let prover = MockProver::run(

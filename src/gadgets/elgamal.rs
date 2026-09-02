@@ -1,57 +1,23 @@
-//! El Gamal encryption integrity gadget for vote proof (ZKP #2).
+//! El Gamal helpers and the 30-bit fixed-base gadget shared by the vote
+//! circuits.
 //!
-//! Proves that sixteen ciphertext pairs
-//! (enc_share_c1_x/y[i], enc_share_c2_x/y[i]) are valid El Gamal encryptions of
-//! the corresponding plaintext shares under the election authority public key:
-//! C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk.
-//!
-//! Used by the vote proof circuit (Condition 11: Encryption Integrity). The
-//! caller passes share cells, randomness cells, and enc_share coordinate cells;
-//! this gadget owns all ea_pk scaffolding (witnesses ea_pk once as a
-//! `NonIdentityPoint` and pins it to the instance column via `constrain_instance`)
-//! and handles G for C1 via `FixedPointBaseField`. C2's [v_i]*G term uses a
-//! custom unsigned ten-window multiplication specialized to 30-bit shares.
+//! The production encryption-integrity constraints live in the encrypt-choice
+//! circuit (ZKP 1.5), which consumes [`SpendAuthGFixedBase30Config`] from this
+//! module.
 //!
 //! Also provides the public `spend_auth_g_affine` helper for downstream
-//! consumers and internal scalar/encryption helpers for the builder and tests.
+//! consumers and internal scalar/encryption helpers for the builders and
+//! tests.
 
 #[cfg(test)]
 use crate::ff::Field;
-use voting_crypto_deps::halo2_gadgets::ecc::{
-    chip::EccChip, FixedPointBaseField, NonIdentityPoint, ScalarVar,
-};
-use voting_crypto_deps::halo2_proofs::{
-    circuit::{AssignedCell, Layouter},
-    plonk::{Column, Error, Instance as InstanceColumn},
-};
-use voting_crypto_deps::orchard::constants::{OrchardBaseFieldBases, OrchardFixedBases};
 #[cfg(test)]
 use voting_crypto_deps::pasta_curves::arithmetic::CurveAffine;
 use voting_crypto_deps::pasta_curves::pallas;
 
-use super::nonzero::NonZeroConfig;
-
 mod fixed_base_30;
 
 pub(crate) use fixed_base_30::SpendAuthGFixedBase30Config;
-
-// ================================================================
-// Instance-location descriptor
-// ================================================================
-
-/// Describes where ea_pk lives in the public-input (instance) column.
-///
-/// The gadget uses this to call `layouter.constrain_instance` directly
-/// on the witnessed NonIdentityPoint cells, removing the need for the
-/// caller to pre-allocate advice-from-instance cells and pass them down.
-pub(crate) struct EaPkInstanceLoc {
-    /// The instance column that holds the public inputs.
-    pub instance: Column<InstanceColumn>,
-    /// Row of the ea_pk x-coordinate in the instance column.
-    pub x_row: usize,
-    /// Row of the ea_pk y-coordinate in the instance column.
-    pub y_row: usize,
-}
 
 // ================================================================
 // Out-of-circuit helpers
@@ -156,151 +122,6 @@ pub(crate) fn elgamal_encrypt(
         *c1_coords.y(),
         *c2_coords.y(),
     ))
-}
-
-// ================================================================
-// In-circuit gadget
-// ================================================================
-
-/// Proves that for each share i, (enc_c1_x/y[i], enc_c2_x/y[i]) is a
-/// valid El Gamal encryption of share_cells[i] under randomness r_cells[i]
-/// and public key ea_pk: C1_i = [r_i]*G, C2_i = [v_i]*G + [r_i]*ea_pk.
-///
-/// ## Generator handling
-///
-/// - **C1 = [r_i]*G**: uses `FixedPointBaseField::mul` (85-window, full-field scalar).
-///   `r_i` is a 255-bit scalar, so the full decomposition is required. This
-///   crate rejects `r_i = 0` with a small inverse-witness constraint to prevent
-///   the exact degenerate self-leaking ciphertext.
-/// - **C2's [v_i]*G**: uses a custom ten-window, unsigned fixed-base
-///   multiplication for the exact 30-bit share range. Its final complete
-///   addition is fused with the addition of `[r_i]ea_pk`.
-///
-/// ## Soundness
-///
-/// The custom fixed-base gadget copies the caller-supplied `share_cells[i]`
-/// directly into a strict 30-bit decomposition. Because conditions 8 and 9
-/// constrain the same source cell, the encryption scalar is identical to the
-/// summed and range-checked share value. The unsigned decomposition eliminates
-/// the separate sign witness and prevents negation.
-///
-/// ## Gadget ownership
-///
-/// The gadget witnesses ea_pk internally as a `NonIdentityPoint` and pins both
-/// coordinates to the public instance column. This proves encryption under the
-/// caller-supplied key, but the caller must authenticate that key against the
-/// active round's governance announcement. The caller need only supply the
-/// share, randomness, and ciphertext coordinate arrays plus the ea_pk value.
-pub(crate) fn prove_elgamal_encryptions(
-    ecc_chip: EccChip<OrchardFixedBases>,
-    nonzero: NonZeroConfig,
-    fixed_base_30: &SpendAuthGFixedBase30Config,
-    mut layouter: impl Layouter<pallas::Base>,
-    namespace: &str,
-    indices: core::ops::Range<usize>,
-    ea_pk: voting_crypto_deps::halo2_proofs::circuit::Value<pallas::Affine>,
-    ea_pk_loc: EaPkInstanceLoc,
-    share_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
-    r_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
-    enc_c1_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
-    enc_c2_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
-    enc_c1_y_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
-    enc_c2_y_cells: [AssignedCell<pallas::Base, pallas::Base>; 16],
-) -> Result<(), Error> {
-    // Election Authority's public key as a Pallas curve point, wrapped in Value.
-    // ea_pk must be witnessed into advice cells to compute [r_i] * ea_pk.
-    // The constrain_instance calls bind those advice cells to the public instance
-    // column, giving the verifier a guarantee that the prover used the specific
-    // EA key declared publicly. The caller is still responsible for checking
-    // that those public coordinates are the governance-announced EA key.
-
-    // Witness ea_pk once. NonIdentityPoint is Copy, so the value is cheaply
-    // copied into each iteration's mul() call without re-witnessing.
-    let ea_pk_point = NonIdentityPoint::new(
-        ecc_chip.clone(),
-        layouter.namespace(|| format!("{namespace} ea_pk witness")),
-        ea_pk,
-    )?;
-    // Pin the witness directly to the public-input column.
-    layouter.constrain_instance(
-        ea_pk_point.inner().x().cell(),
-        ea_pk_loc.instance,
-        ea_pk_loc.x_row,
-    )?;
-    layouter.constrain_instance(
-        ea_pk_point.inner().y().cell(),
-        ea_pk_loc.instance,
-        ea_pk_loc.y_row,
-    )?;
-
-    // SpendAuthG fixed-base descriptor for C1's [r_i]*G (full 85-window path).
-    // r_i is a 255-bit base-field scalar, requiring the full decomposition.
-    let spend_auth_g_base =
-        FixedPointBaseField::from_inner(ecc_chip.clone(), OrchardBaseFieldBases::SpendAuthGBase);
-
-    for i in indices {
-        nonzero.constrain_nonzero(
-            layouter.namespace(|| format!("{namespace} r[{i}] != 0")),
-            "El Gamal randomness != 0",
-            &r_cells[i],
-        )?;
-
-        // --- C1_i = [r_i] * G ---
-        //
-        // G is baked into the fixed-base lookup table; no NonIdentityPoint
-        // witness or constrain_equal needed for the base point.
-        let c1_point = spend_auth_g_base.clone().mul(
-            layouter.namespace(|| format!("{namespace} [r_{i}] * G")),
-            r_cells[i].clone(),
-        )?;
-
-        // Both coordinates of C1 are constrained: x via extract_p, y via
-        // the inner point. The y-coordinate binding prevents ciphertext
-        // sign-malleability (negating a point preserves x but flips y).
-        let c1_x = c1_point.extract_p().inner().clone();
-        layouter.assign_region(
-            || format!("{namespace} C1[{i}] x == enc_c1_x[{i}]"),
-            |mut region| region.constrain_equal(c1_x.cell(), enc_c1_cells[i].cell()),
-        )?;
-        let c1_y = c1_point.inner().y();
-        layouter.assign_region(
-            || format!("{namespace} C1[{i}] y == enc_c1_y[{i}]"),
-            |mut region| region.constrain_equal(c1_y.cell(), enc_c1_y_cells[i].cell()),
-        )?;
-
-        // --- C2_i = [v_i] * G + [r_i] * ea_pk ---
-        //
-        let r_i_scalar = ScalarVar::from_base(
-            ecc_chip.clone(),
-            layouter.namespace(|| format!("{namespace} r[{i}] to ScalarVar")),
-            &r_cells[i],
-        )?;
-        // ea_pk_point is Copy: no new witness cells, just copies the AssignedCell
-        // references for this mul.
-        let (r_ea_pk_point, _) = ea_pk_point.mul(
-            layouter.namespace(|| format!("{namespace} [r_{i}] * ea_pk")),
-            r_i_scalar,
-        )?;
-
-        let addend_x = r_ea_pk_point.inner().x();
-        let addend_y = r_ea_pk_point.inner().y();
-        let (c2_x, c2_y) = fixed_base_30.mul_add(
-            layouter.namespace(|| format!("{namespace} C2[{i}] = vG + rP")),
-            &share_cells[i],
-            &addend_x,
-            &addend_y,
-        )?;
-
-        layouter.assign_region(
-            || format!("{namespace} C2[{i}] x == enc_c2_x[{i}]"),
-            |mut region| region.constrain_equal(c2_x.cell(), enc_c2_cells[i].cell()),
-        )?;
-        layouter.assign_region(
-            || format!("{namespace} C2[{i}] y == enc_c2_y[{i}]"),
-            |mut region| region.constrain_equal(c2_y.cell(), enc_c2_y_cells[i].cell()),
-        )?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

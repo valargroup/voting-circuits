@@ -7,26 +7,28 @@
 //! - **Condition 1**: VC Membership — Poseidon Merkle path from `vote_commitment`
 //!   to `vote_comm_tree_root`.
 //! - **Condition 2**: Vote Commitment Integrity — `vote_commitment =
-//!   Poseidon(DOMAIN_VC, voting_round_id, shares_hash, proposal_id, vote_decision)`.
+//!   Poseidon(DOMAIN_VC_V2, voting_round_id, shares_hash, proposal_id,
+//!   decision_bucket_count)`.
 //! - **Condition 3**: Shares Hash Integrity — `shares_hash =
 //!   Poseidon(share_comm_0, ..., share_comm_15)`, where share_comms are
 //!   private witnesses transitively bound to the public tree root.
 //! - **Condition 4**: Primary Share Binding — the voting client knows a
-//!   blind such that
-//!   `share_comms[share_index] = Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`
-//!   (see `crate::shares_hash` for the authoritative five-input shape;
-//!   the y-coordinates defend against ciphertext sign-malleability),
-//!   binding the publicly revealed encrypted share to the committed set.
+//!   blind such that `share_comms[share_index]` equals the weighted selected
+//!   commitment over all 16 revealed bucket ciphertexts
+//!   (see `crate::bridge` for the authoritative 34-input shape; both
+//!   coordinates of every point defend against ciphertext
+//!   sign-malleability), binding the publicly revealed encrypted bucket
+//!   vector to the committed set.
 //! - **Condition 5**: Share Nullifier Integrity — `share_nullifier` is
 //!   correctly derived as
 //!   `Poseidon(domain_tag, vote_commitment, share_index, blind)`.
 //!   `blind` is the share commitment blinding factor — a secret held by
-//!   the voting client (the host program that built ZKP #2 and now
+//!   the voting client (the host program that built ZKP 1.5 / #2 and now
 //!   builds this reveal proof). Using the blind (rather than a
 //!   ciphertext coordinate) ensures the nullifier is not publicly
 //!   derivable from on-chain data, since ciphertext coordinates are
-//!   posted as public inputs alongside the proof. Round, proposal, decision,
-//!   and `shares_hash` bind through the `vote_commitment` preimage;
+//!   posted as public inputs alongside the proof. Round, proposal, bucket
+//!   count, and `shares_hash` bind through the `vote_commitment` preimage;
 //!   `share_comms` bind one hop earlier through `shares_hash`. The resulting
 //!   `vote_commitment` is checked against the vote commitment tree.
 //!
@@ -42,19 +44,22 @@
 //! coordinates bind to the selected `share_comm` through Poseidon preimage
 //! resistance of `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)`.
 //!
-//! Authoritative hash sources: `crate::shares_hash` owns the per-share and
-//! aggregate encrypted-share preimages, `crate::gadgets::vote_commitment` owns
-//! the vote commitment preimage, and `crate::domain_tags` owns the share-spend
-//! domain tag encoding. This module's prose points to those owners rather than
-//! defining competing formulas.
+//! Authoritative hash sources: `crate::bridge` owns the weighted
+//! selected-commitment preimage, `crate::shares_hash` owns the aggregate
+//! `Poseidon<16>` shares hash, `crate::gadgets::vote_commitment` owns the
+//! vote commitment preimage, and `crate::domain_tags` owns the share-spend
+//! domain tag encoding. This module's prose points to those owners rather
+//! than defining competing formulas.
 //!
 //! ## Column layout
 //!
-//! - 13 advice columns: 9 shared by the general gadgets and primary Poseidon
-//!   configuration, plus 4 for the second Merkle Poseidon configuration.
-//! - 14 explicitly allocated fixed columns for the two Poseidon configurations
-//!   and general constants.
-//! - 1 instance column (9 public inputs).
+//! - 17 advice columns: 9 shared by the general gadgets and primary Poseidon
+//!   configuration, 4 for the second Merkle Poseidon configuration, and 4
+//!   for the dedicated wide-hash Poseidon configuration (condition 4's
+//!   34-input selected commitment).
+//! - 20 explicitly allocated fixed columns for the three Poseidon
+//!   configurations and general constants.
+//! - 1 instance column (69 public inputs).
 //! - K = 10 (1,024 rows).
 
 use std::vec::Vec;
@@ -79,12 +84,13 @@ use voting_crypto_deps::orchard::circuit::gadget::assign_free_advice;
 use voting_crypto_deps::pasta_curves::{pallas, vesta};
 
 use crate::{
+    bridge::{hash_selected_commitment_in_circuit, WeightedShareCiphertexts, MAX_DECISION_BUCKETS},
     gadgets::{
         poseidon_merkle::{synthesize_poseidon_merkle_path_with_config_schedule, MerkleSwapGate},
         vote_commitment,
     },
     params::VOTE_COMM_TREE_DEPTH,
-    shares_hash::{compute_shares_hash_from_comms_in_circuit, hash_share_commitment_in_circuit},
+    shares_hash::compute_shares_hash_from_comms_in_circuit,
 };
 
 // ================================================================
@@ -93,9 +99,11 @@ use crate::{
 
 /// Circuit size (2^K rows).
 ///
-/// K=10 (1,024 rows). `CircuitCost::measure` reports a floor-planner
-/// high-water mark of 976 rows. The `V1` floor planner packs Poseidon regions
-/// on the two independent column configurations into overlapping row ranges.
+/// K=10 (1,024 rows). Condition 4's 34-input selected-commitment hash (~17
+/// Poseidon permutations) runs on a dedicated third Poseidon configuration
+/// so the `V1` floor planner can overlap it with the Merkle and primary
+/// tracks. `CircuitCost::measure` reports an 855-row high-water mark
+/// (16.5% headroom).
 ///
 /// Run the `row_budget` test to re-measure after circuit changes:
 ///   `cargo test row_budget -- --nocapture --ignored`
@@ -111,42 +119,25 @@ const MERKLE_CONFIG_SCHEDULE: [usize; VOTE_COMM_TREE_DEPTH] = [
 ];
 
 // ================================================================
-// Public input offsets (9 field elements).
+// Public input offsets (37 = 4M + 5 field elements).
 // ================================================================
 
 /// Public input offset for the share nullifier (prevents double-counting).
 const SHARE_NULLIFIER_PUBLIC_OFFSET: usize = 0;
-/// Public input offset for the revealed share's C1 x-coordinate.
+/// Base offset of the revealed share's ciphertext coordinates.
 ///
-/// This is caller-supplied. Condition 4 binds it transitively to the committed
-/// vote by proving `Poseidon(blind, c1_x, c2_x, c1_y, c2_y)` equals the
-/// selected private `share_comm`; ZKP #2 does not publish per-share
-/// ciphertext coordinates as public inputs.
-const ENC_SHARE_C1_X_PUBLIC_OFFSET: usize = 1;
-/// Public input offset for the revealed share's C1 y-coordinate.
-///
-/// Binds the proof to the exact curve point (not just x-coordinate),
-/// preventing ciphertext sign-malleability attacks where an adversary
-/// negates ElGamal ciphertext points without invalidating the ZKP. Like the
-/// x-coordinate, this is caller-supplied and bound through the selected
-/// `share_comm` Poseidon preimage.
-const ENC_SHARE_C1_Y_PUBLIC_OFFSET: usize = 2;
-/// Public input offset for the revealed share's C2 x-coordinate.
-///
-/// Caller-supplied and bound through condition 4's selected share-commitment
-/// equality; not directly published by ZKP #2.
-const ENC_SHARE_C2_X_PUBLIC_OFFSET: usize = 3;
-/// Public input offset for the revealed share's C2 y-coordinate.
-///
-/// Caller-supplied y-coordinate for exact-point binding, transitively tied to
-/// the committed vote through the selected `share_comm`.
-const ENC_SHARE_C2_Y_PUBLIC_OFFSET: usize = 4;
+/// Bucket `j` occupies offsets `1 + 4j .. 1 + 4j + 4` in the canonical
+/// preimage order `c1_x, c2_x, c1_y, c2_y` (see
+/// [`crate::bridge::WeightedShareCiphertexts::to_preimage`]). All values are
+/// caller-supplied. Condition 4 binds the full vector transitively to the
+/// committed vote by proving the 34-input weighted selected commitment over
+/// them equals the muxed private `share_comm`; both coordinates of every
+/// point are bound, preventing ciphertext sign-malleability.
+const ENC_SHARE_COORDS_PUBLIC_OFFSET: usize = 1;
 /// Public input offset for the proposal identifier.
-const PROPOSAL_ID_PUBLIC_OFFSET: usize = 5;
-/// Public input offset for the vote decision.
-const VOTE_DECISION_PUBLIC_OFFSET: usize = 6;
+const PROPOSAL_ID_PUBLIC_OFFSET: usize = 1 + 4 * MAX_DECISION_BUCKETS;
 /// Public input offset for the vote commitment tree root.
-const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 7;
+const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = PROPOSAL_ID_PUBLIC_OFFSET + 1;
 /// Public input offset for the voting round identifier.
 ///
 /// Constrained in-circuit: `voting_round_id` is hashed into `vote_commitment`
@@ -156,7 +147,12 @@ const VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET: usize = 7;
 /// `vote_comm_tree_root` alone does not provide round scoping. The chain also
 /// validates that `voting_round_id` matches an active session (Gov Steps V1
 /// §5.4 "Out-of-circuit checks").
-const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 8;
+const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET + 1;
+/// Public input offset for the active decision bucket count `D`.
+///
+/// Bound into the condition-2 vote commitment; the verifier must
+/// authenticate it from the proposal's governance declaration.
+const DECISION_BUCKET_COUNT_PUBLIC_OFFSET: usize = VOTING_ROUND_ID_PUBLIC_OFFSET + 1;
 
 // ================================================================
 // Out-of-circuit helpers
@@ -211,6 +207,10 @@ pub struct Config {
     advices: [Column<Advice>; 9],
     /// Poseidon hash chip configuration.
     poseidon_config: PoseidonConfig<pallas::Base, 3, 2>,
+    /// Dedicated Poseidon configuration for condition 4's 34-input
+    /// selected-commitment hash, so its ~33 permutations overlap the other
+    /// tracks instead of extending them.
+    wide_poseidon_config: PoseidonConfig<pallas::Base, 3, 2>,
     /// Independent Poseidon configurations used by scheduled Merkle levels.
     merkle_poseidon_configs: [PoseidonConfig<pallas::Base, 3, 2>; MERKLE_CONFIGS],
     /// Merkle conditional swap gate (condition 1).
@@ -373,6 +373,18 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         );
         let merkle_poseidon_configs = [poseidon_config.clone(), merkle_poseidon_config];
 
+        // Dedicated wide-hash Poseidon configuration (condition 4).
+        let wide_advice: [Column<Advice>; 4] = core::array::from_fn(|_| meta.advice_column());
+        let wide_round_constants: [Column<Fixed>; 6] =
+            core::array::from_fn(|_| meta.fixed_column());
+        let wide_poseidon_config = PoseidonChip::configure::<poseidon::P128Pow5T3>(
+            meta,
+            wide_advice[1..4].try_into().unwrap(),
+            wide_advice[0],
+            wide_round_constants[..3].try_into().unwrap(),
+            wide_round_constants[3..].try_into().unwrap(),
+        );
+
         // Merkle conditional swap gate (condition 1).
         let merkle_swap = MerkleSwapGate::configure(
             meta,
@@ -485,6 +497,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             primary,
             advices,
             poseidon_config,
+            wide_poseidon_config,
             merkle_poseidon_configs,
             merkle_swap,
             q_share_comm_mux,
@@ -539,13 +552,13 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             },
         )?;
 
-        let vote_decision = layouter.assign_region(
-            || "copy vote_decision from instance",
+        let decision_bucket_count = layouter.assign_region(
+            || "copy decision_bucket_count from instance",
             |mut region| {
                 region.assign_advice_from_instance(
-                    || "vote_decision",
+                    || "decision_bucket_count",
                     config.primary,
-                    VOTE_DECISION_PUBLIC_OFFSET,
+                    DECISION_BUCKET_COUNT_PUBLIC_OFFSET,
                     config.advices[0],
                     0,
                 )
@@ -631,66 +644,31 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // share-commitment hash shape owned by `crate::shares_hash`.
         // ---------------------------------------------------------------
 
-        let enc_c1_x = layouter.assign_region(
-            || "copy enc_share_c1_x from instance",
-            |mut region| {
-                region.assign_advice_from_instance(
-                    || "enc_c1_x",
-                    config.primary,
-                    ENC_SHARE_C1_X_PUBLIC_OFFSET,
-                    config.advices[0],
-                    0,
-                )
-            },
-        )?;
+        let coords: [AssignedCell<pallas::Base, pallas::Base>; 4 * MAX_DECISION_BUCKETS] = {
+            let mut cells = Vec::with_capacity(4 * MAX_DECISION_BUCKETS);
+            for slot in 0..4 * MAX_DECISION_BUCKETS {
+                cells.push(layouter.assign_region(
+                    || format!("copy ciphertext coordinate {slot} from instance"),
+                    |mut region| {
+                        region.assign_advice_from_instance(
+                            || format!("coordinate {slot}"),
+                            config.primary,
+                            ENC_SHARE_COORDS_PUBLIC_OFFSET + slot,
+                            config.advices[0],
+                            0,
+                        )
+                    },
+                )?);
+            }
+            cells.try_into().expect("4M coordinate cells")
+        };
 
-        let enc_c2_x = layouter.assign_region(
-            || "copy enc_share_c2_x from instance",
-            |mut region| {
-                region.assign_advice_from_instance(
-                    || "enc_c2_x",
-                    config.primary,
-                    ENC_SHARE_C2_X_PUBLIC_OFFSET,
-                    config.advices[0],
-                    0,
-                )
-            },
-        )?;
-
-        let enc_c1_y = layouter.assign_region(
-            || "copy enc_share_c1_y from instance",
-            |mut region| {
-                region.assign_advice_from_instance(
-                    || "enc_c1_y",
-                    config.primary,
-                    ENC_SHARE_C1_Y_PUBLIC_OFFSET,
-                    config.advices[0],
-                    0,
-                )
-            },
-        )?;
-
-        let enc_c2_y = layouter.assign_region(
-            || "copy enc_share_c2_y from instance",
-            |mut region| {
-                region.assign_advice_from_instance(
-                    || "enc_c2_y",
-                    config.primary,
-                    ENC_SHARE_C2_Y_PUBLIC_OFFSET,
-                    config.advices[0],
-                    0,
-                )
-            },
-        )?;
-
-        let derived_comm = hash_share_commitment_in_circuit(
-            config.poseidon_chip(),
-            layouter.namespace(|| "cond4: Poseidon(blind, c1_x, c2_x, c1_y, c2_y)"),
+        let derived_comm = hash_selected_commitment_in_circuit(
+            PoseidonChip::construct(config.wide_poseidon_config.clone()),
+            layouter.namespace(|| "cond4: weighted selected commitment"),
+            config.advices[0],
             primary_blind,
-            enc_c1_x,
-            enc_c2_x,
-            enc_c1_y,
-            enc_c2_y,
+            coords,
             0,
         )?;
 
@@ -781,20 +759,21 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         )?;
 
         // ---------------------------------------------------------------
-        // Condition 2: Vote Commitment Integrity.
+        // Condition 2: Vote Commitment Integrity (v2).
         //
-        // vote_commitment = Poseidon(DOMAIN_VC, voting_round_id,
-        //                            shares_hash, proposal_id, vote_decision)
+        // vote_commitment = Poseidon(DOMAIN_VC_V2, voting_round_id,
+        //                            shares_hash, proposal_id,
+        //                            decision_bucket_count)
         //
         // Same hash as the shared vote-commitment helper and the vote
-        // commitment tree.
+        // commitment tree; the plaintext vote decision of v1 is gone.
         // ---------------------------------------------------------------
 
-        // DOMAIN_VC constant (baked into the VK).
+        // DOMAIN_VC_V2 constant (baked into the VK).
         let domain_vc = config.assign_constant(
             &mut layouter,
-            "cond2: DOMAIN_VC constant",
-            pallas::Base::from(vote_commitment::DOMAIN_VC),
+            "cond2: DOMAIN_VC_V2 constant",
+            pallas::Base::from(vote_commitment::DOMAIN_VC_V2),
         )?;
 
         let derived_vc = vote_commitment::vote_commitment_poseidon(
@@ -805,7 +784,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             voting_round_id_cond2,
             shares_hash_cond2,
             proposal_id,
-            vote_decision,
+            decision_bucket_count,
         )?;
 
         // Constrain derived vote_commitment == witnessed vote_commitment.
@@ -909,7 +888,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 // Instance (public inputs)
 // ================================================================
 
-/// Public inputs to the Share Reveal circuit (9 field elements).
+/// Public inputs to the Share Reveal circuit (37 = 4M + 5 field elements).
 ///
 /// The voting client (prover) chooses these values when assembling the
 /// proof; the verifier accepts them as the binding the proof must
@@ -921,78 +900,59 @@ impl plonk::Circuit<pallas::Base> for Circuit {
 /// fields require caller authentication versus which are proof-attested
 /// outputs).
 ///
-/// The struct field order preserves the existing API layout and is not the
-/// Halo2 public input order. Use [`Self::to_halo2_instance`] and the
-/// `*_PUBLIC_OFFSET` constants as the canonical public-input mapping.
+/// The struct field order equals the Halo2 public input order; the
+/// ciphertext vector expands to 64 elements in the canonical
+/// [`WeightedShareCiphertexts::to_preimage`] order.
 #[derive(Clone, Debug)]
 pub struct Instance {
     /// Poseidon nullifier for this share (prevents double-counting).
     pub share_nullifier: pallas::Base,
-    /// Caller-supplied x-coordinate of the revealed share's El Gamal C1
-    /// component, bound through condition 4's selected share commitment.
-    pub enc_share_c1_x: pallas::Base,
-    /// Caller-supplied x-coordinate of the revealed share's El Gamal C2
-    /// component, bound through condition 4's selected share commitment.
-    pub enc_share_c2_x: pallas::Base,
+    /// Caller-supplied ciphertext coordinates of all 8 decision buckets of
+    /// the revealed share, bound through condition 4's weighted selected
+    /// commitment. Both coordinates of every point are bound, preventing
+    /// sign-malleability; the vector is not directly recovered from
+    /// vote-proof public inputs.
+    pub ciphertexts: WeightedShareCiphertexts,
     /// Which proposal this vote is for.
     pub proposal_id: pallas::Base,
-    /// The voter's choice.
-    pub vote_decision: pallas::Base,
     /// Root of the vote commitment tree at anchor height.
     pub vote_comm_tree_root: pallas::Base,
     /// The voting round identifier.
     pub voting_round_id: pallas::Base,
-    /// Caller-supplied y-coordinate of the revealed share's El Gamal C1
-    /// component.
-    ///
-    /// Binds the proof to the exact curve point, preventing sign-malleability.
-    /// This is transitively bound through the selected share commitment, not
-    /// directly recovered from vote-proof public inputs.
-    pub enc_share_c1_y: pallas::Base,
-    /// Caller-supplied y-coordinate of the revealed share's El Gamal C2
-    /// component, transitively bound through the selected share commitment.
-    pub enc_share_c2_y: pallas::Base,
+    /// The active decision bucket count `D` for the proposal.
+    pub decision_bucket_count: pallas::Base,
 }
 
 impl Instance {
     /// Number of public inputs serialized by [`Self::to_halo2_instance`].
-    pub const NUM_PUBLIC_INPUTS: usize = 9;
+    pub const NUM_PUBLIC_INPUTS: usize = 5 + 4 * MAX_DECISION_BUCKETS;
 
     /// Constructs an [`Instance`] from its constituent parts.
     ///
-    /// Callers should authenticate `proposal_id`, `vote_decision`,
-    /// `vote_comm_tree_root`, and `voting_round_id` out-of-band before
+    /// Callers should authenticate `proposal_id`, `vote_comm_tree_root`,
+    /// `voting_round_id`, and `decision_bucket_count` out-of-band before
     /// passing them here — see
     /// [`crate::share_reveal::prove::verify_share_reveal_proof`] for the
-    /// trust contract. The ciphertext coordinate fields are caller-supplied
-    /// reveal data bound through
-    /// `Poseidon(blind, c1_x, c2_x, c1_y, c2_y) = share_comm[share_index]`
-    /// and the transitive `share_comm -> shares_hash -> vote_commitment`
-    /// chain; they are not direct public outputs of ZKP #2. The remaining
-    /// fields are proof-attested outputs derived outside the circuit but
-    /// constrained in-circuit against authenticated inputs and private
-    /// witnesses.
+    /// trust contract. The ciphertext vector is caller-supplied reveal data
+    /// bound through the weighted selected commitment
+    /// (`crate::bridge::selected_share_commitment`) and the transitive
+    /// `share_comm -> shares_hash -> vote_commitment` chain. The
+    /// `share_nullifier` is a proof-attested output.
     pub fn from_parts(
         share_nullifier: pallas::Base,
-        enc_share_c1_x: pallas::Base,
-        enc_share_c2_x: pallas::Base,
+        ciphertexts: WeightedShareCiphertexts,
         proposal_id: pallas::Base,
-        vote_decision: pallas::Base,
         vote_comm_tree_root: pallas::Base,
         voting_round_id: pallas::Base,
-        enc_share_c1_y: pallas::Base,
-        enc_share_c2_y: pallas::Base,
+        decision_bucket_count: pallas::Base,
     ) -> Self {
         Instance {
             share_nullifier,
-            enc_share_c1_x,
-            enc_share_c2_x,
+            ciphertexts,
             proposal_id,
-            vote_decision,
             vote_comm_tree_root,
             voting_round_id,
-            enc_share_c1_y,
-            enc_share_c2_y,
+            decision_bucket_count,
         }
     }
 
@@ -1001,17 +961,14 @@ impl Instance {
     /// The order must match the instance column offsets defined at the
     /// top of this file.
     pub fn to_halo2_instance(&self) -> Vec<vesta::Scalar> {
-        vec![
-            self.share_nullifier,
-            self.enc_share_c1_x,
-            self.enc_share_c1_y,
-            self.enc_share_c2_x,
-            self.enc_share_c2_y,
-            self.proposal_id,
-            self.vote_decision,
-            self.vote_comm_tree_root,
-            self.voting_round_id,
-        ]
+        let mut inputs = Vec::with_capacity(Self::NUM_PUBLIC_INPUTS);
+        inputs.push(self.share_nullifier);
+        inputs.extend(self.ciphertexts.to_preimage());
+        inputs.push(self.proposal_id);
+        inputs.push(self.vote_comm_tree_root);
+        inputs.push(self.voting_round_id);
+        inputs.push(self.decision_bucket_count);
+        inputs
     }
 }
 
@@ -1023,52 +980,66 @@ impl Instance {
 mod tests {
     use super::*;
     use crate::ff::PrimeField;
-    use crate::group::Curve;
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
     use voting_crypto_deps::pasta_curves::pallas;
 
-    use crate::gadgets::elgamal::{elgamal_encrypt, spend_auth_g_affine};
-    use crate::gadgets::vote_commitment::vote_commitment_hash as compute_vote_commitment_hash;
+    use crate::bridge::{selected_share_commitment, CiphertextCoordinates};
+    use crate::gadgets::vote_commitment::vote_commitment_hash_v2;
     use crate::protocol_hash::poseidon_hash_2;
-    use crate::shares_hash::{share_commitment, shares_hash as compute_shares_hash};
+    use crate::shares_hash::shares_hash_from_comms;
 
     #[test]
     fn instance_to_halo2_instance_uses_public_input_offsets() {
         let share_nullifier = pallas::Base::from(10u64);
-        let enc_share_c1_x = pallas::Base::from(11u64);
-        let enc_share_c1_y = pallas::Base::from(12u64);
-        let enc_share_c2_x = pallas::Base::from(13u64);
-        let enc_share_c2_y = pallas::Base::from(14u64);
+        let ciphertexts = test_ciphertexts(1_000);
         let proposal_id = pallas::Base::from(15u64);
-        let vote_decision = pallas::Base::from(16u64);
         let vote_comm_tree_root = pallas::Base::from(17u64);
         let voting_round_id = pallas::Base::from(18u64);
+        let decision_bucket_count = pallas::Base::from(4u64);
 
         let instance = Instance {
             share_nullifier,
-            enc_share_c1_x,
-            enc_share_c2_x,
+            ciphertexts,
             proposal_id,
-            vote_decision,
             vote_comm_tree_root,
             voting_round_id,
-            enc_share_c1_y,
-            enc_share_c2_y,
+            decision_bucket_count,
         };
 
         let public_inputs = instance.to_halo2_instance();
 
         assert_eq!(public_inputs.len(), Instance::NUM_PUBLIC_INPUTS);
+        assert_eq!(Instance::NUM_PUBLIC_INPUTS, 37);
         assert_eq!(
             public_inputs[SHARE_NULLIFIER_PUBLIC_OFFSET],
             share_nullifier
         );
-        assert_eq!(public_inputs[ENC_SHARE_C1_X_PUBLIC_OFFSET], enc_share_c1_x);
-        assert_eq!(public_inputs[ENC_SHARE_C1_Y_PUBLIC_OFFSET], enc_share_c1_y);
-        assert_eq!(public_inputs[ENC_SHARE_C2_X_PUBLIC_OFFSET], enc_share_c2_x);
-        assert_eq!(public_inputs[ENC_SHARE_C2_Y_PUBLIC_OFFSET], enc_share_c2_y);
+        let preimage = ciphertexts.to_preimage();
+        for (slot, value) in preimage.iter().enumerate() {
+            assert_eq!(
+                public_inputs[ENC_SHARE_COORDS_PUBLIC_OFFSET + slot],
+                *value,
+                "coordinate slot {slot} must match the canonical preimage order"
+            );
+        }
+        // Pin the per-bucket layout explicitly for bucket 2.
+        assert_eq!(
+            public_inputs[ENC_SHARE_COORDS_PUBLIC_OFFSET + 8],
+            instance.ciphertexts.0[2].c1_x
+        );
+        assert_eq!(
+            public_inputs[ENC_SHARE_COORDS_PUBLIC_OFFSET + 9],
+            instance.ciphertexts.0[2].c2_x
+        );
+        assert_eq!(
+            public_inputs[ENC_SHARE_COORDS_PUBLIC_OFFSET + 10],
+            instance.ciphertexts.0[2].c1_y
+        );
+        assert_eq!(
+            public_inputs[ENC_SHARE_COORDS_PUBLIC_OFFSET + 11],
+            instance.ciphertexts.0[2].c2_y
+        );
         assert_eq!(public_inputs[PROPOSAL_ID_PUBLIC_OFFSET], proposal_id);
-        assert_eq!(public_inputs[VOTE_DECISION_PUBLIC_OFFSET], vote_decision);
         assert_eq!(
             public_inputs[VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET],
             vote_comm_tree_root
@@ -1077,73 +1048,61 @@ mod tests {
             public_inputs[VOTING_ROUND_ID_PUBLIC_OFFSET],
             voting_round_id
         );
+        assert_eq!(
+            public_inputs[DECISION_BUCKET_COUNT_PUBLIC_OFFSET],
+            decision_bucket_count
+        );
     }
 
-    fn generate_ea_keypair() -> (pallas::Scalar, pallas::Affine) {
-        let ea_sk = pallas::Scalar::from(42u64);
-        let ea_pk = (spend_auth_g_affine() * ea_sk).to_affine();
-        (ea_sk, ea_pk)
+    /// Deterministic test ciphertext vector for one share.
+    fn test_ciphertexts(seed: u64) -> WeightedShareCiphertexts {
+        WeightedShareCiphertexts(core::array::from_fn(|bucket| {
+            let base = seed + (4 * bucket) as u64;
+            CiphertextCoordinates {
+                c1_x: pallas::Base::from(base),
+                c2_x: pallas::Base::from(base + 1),
+                c1_y: pallas::Base::from(base + 2),
+                c2_y: pallas::Base::from(base + 3),
+            }
+        }))
     }
 
-    /// Returns `(c1_x, c2_x, c1_y, c2_y, share_blinds, share_comms, shares_hash_value)`.
-    fn encrypt_shares(
-        shares: [u64; 16],
-        ea_pk: pallas::Affine,
+    /// Returns `(ciphertexts, share_blinds, selected_commitments)` for a
+    /// deterministic 16-share weighted witness set.
+    fn weighted_test_shares(
+        seed: u64,
     ) -> (
+        [WeightedShareCiphertexts; 16],
         [pallas::Base; 16],
         [pallas::Base; 16],
-        [pallas::Base; 16],
-        [pallas::Base; 16],
-        [pallas::Base; 16],
-        [pallas::Base; 16],
-        pallas::Base,
     ) {
-        let mut c1_x = [pallas::Base::zero(); 16];
-        let mut c2_x = [pallas::Base::zero(); 16];
-        let mut c1_y = [pallas::Base::zero(); 16];
-        let mut c2_y = [pallas::Base::zero(); 16];
-        let randomness: [pallas::Base; 16] =
-            core::array::from_fn(|i| pallas::Base::from((i as u64 + 1) * 101));
+        let ciphertexts: [WeightedShareCiphertexts; 16] =
+            core::array::from_fn(|i| test_ciphertexts(seed + 1_000 * i as u64));
         let share_blinds: [pallas::Base; 16] =
             core::array::from_fn(|i| pallas::Base::from(1001u64 + i as u64));
-        for i in 0..16 {
-            let (cx1, cx2, cy1, cy2) =
-                elgamal_encrypt(pallas::Base::from(shares[i]), randomness[i], ea_pk)
-                    .expect("test encryption inputs should be valid");
-            c1_x[i] = cx1;
-            c2_x[i] = cx2;
-            c1_y[i] = cy1;
-            c2_y[i] = cy2;
-        }
-        let comms: [pallas::Base; 16] = core::array::from_fn(|i| {
-            share_commitment(share_blinds[i], c1_x[i], c2_x[i], c1_y[i], c2_y[i])
-        });
-        let hash = compute_shares_hash(share_blinds, c1_x, c2_x, c1_y, c2_y);
-        (c1_x, c2_x, c1_y, c2_y, share_blinds, comms, hash)
+        let comms: [pallas::Base; 16] =
+            core::array::from_fn(|i| selected_share_commitment(share_blinds[i], &ciphertexts[i]));
+        (ciphertexts, share_blinds, comms)
     }
 
     fn make_test_data(share_idx: u32) -> (Circuit, Instance) {
-        let (circuit, instance, _) = make_test_ballot(share_idx, [625; 16]);
+        let (circuit, instance, _) = make_test_ballot(share_idx, 10_000);
         (circuit, instance)
     }
 
-    fn make_test_ballot(
-        share_idx: u32,
-        shares_u64: [u64; 16],
-    ) -> (Circuit, Instance, pallas::Base) {
+    fn make_test_ballot(share_idx: u32, ciphertext_seed: u64) -> (Circuit, Instance, pallas::Base) {
         let proposal_id = pallas::Base::from(3u64);
-        let vote_decision = pallas::Base::from(1u64);
+        let decision_bucket_count = pallas::Base::from(4u64);
         let voting_round_id = pallas::Base::from(999u64);
 
-        let (_ea_sk, ea_pk) = generate_ea_keypair();
-        let (enc_c1_x, enc_c2_x, enc_c1_y, enc_c2_y, share_blinds, share_comms, shares_hash_val) =
-            encrypt_shares(shares_u64, ea_pk);
+        let (ciphertexts, share_blinds, share_comms) = weighted_test_shares(ciphertext_seed);
+        let shares_hash_val = shares_hash_from_comms(share_comms);
 
-        let vote_commitment = compute_vote_commitment_hash(
+        let vote_commitment = vote_commitment_hash_v2(
             voting_round_id,
             shares_hash_val,
             proposal_id,
-            vote_decision,
+            decision_bucket_count,
         );
 
         let (auth_path, position, vote_comm_tree_root) =
@@ -1167,14 +1126,11 @@ mod tests {
 
         let instance = Instance::from_parts(
             share_nullifier,
-            enc_c1_x[share_idx as usize],
-            enc_c2_x[share_idx as usize],
+            ciphertexts[share_idx as usize],
             proposal_id,
-            vote_decision,
             vote_comm_tree_root,
             voting_round_id,
-            enc_c1_y[share_idx as usize],
-            enc_c2_y[share_idx as usize],
+            decision_bucket_count,
         );
 
         (circuit, instance, vote_commitment)
@@ -1218,7 +1174,7 @@ mod tests {
         // levels, including handoffs between the two Poseidon configurations.
         const POSITION: u32 = 0xA5_5A_C3;
 
-        let (mut circuit, mut instance, vote_commitment) = make_test_ballot(0, [625; 16]);
+        let (mut circuit, mut instance, vote_commitment) = make_test_ballot(0, 10_000);
         let (path, position, root) = build_single_leaf_merkle_path(vote_commitment, POSITION);
         circuit.vote_comm_tree_path = Value::known(path);
         circuit.vote_comm_tree_position = Value::known(position);
@@ -1273,7 +1229,7 @@ mod tests {
     #[ignore = "exhaustive Merkle lane-schedule mutation diagnostic"]
     fn merkle_schedule_rejects_each_sibling_and_position_bit_mutation() {
         for level in 0..VOTE_COMM_TREE_DEPTH {
-            let (mut circuit, instance, vote_commitment) = make_test_ballot(0, [625; 16]);
+            let (mut circuit, instance, vote_commitment) = make_test_ballot(0, 10_000);
             let (mut path, _, _) = build_single_leaf_merkle_path(vote_commitment, 0);
             path[level] += pallas::Base::one();
             circuit.vote_comm_tree_path = Value::known(path);
@@ -1283,7 +1239,7 @@ mod tests {
                 "tampered sibling at level {level} must fail"
             );
 
-            let (mut circuit, instance, _) = make_test_ballot(0, [625; 16]);
+            let (mut circuit, instance, _) = make_test_ballot(0, 10_000);
             circuit.vote_comm_tree_position = Value::known(1u32 << level);
             let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
             assert!(
@@ -1306,16 +1262,16 @@ mod tests {
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_wrong_share_index() {
         let (circuit, instance) = make_test_data(0);
+        // Publish a different share's ciphertext vector: the recomputed
+        // selected commitment no longer matches the muxed share_comm[0].
+        let (ciphertexts, _, _) = weighted_test_shares(10_000);
         let bad_instance = Instance::from_parts(
             instance.share_nullifier,
-            pallas::Base::from(999u64),
-            pallas::Base::from(888u64),
+            ciphertexts[1],
             instance.proposal_id,
-            instance.vote_decision,
             instance.vote_comm_tree_root,
             instance.voting_round_id,
-            instance.enc_share_c1_y,
-            instance.enc_share_c2_y,
+            instance.decision_bucket_count,
         );
         let prover = MockProver::run(K, &circuit, vec![bad_instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
@@ -1323,9 +1279,9 @@ mod tests {
 
     #[test]
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
-    fn test_share_reveal_wrong_vote_decision() {
+    fn test_share_reveal_wrong_bucket_count() {
         let (circuit, mut instance) = make_test_data(0);
-        instance.vote_decision = pallas::Base::from(42u64);
+        instance.decision_bucket_count = pallas::Base::from(5u64);
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
     }
@@ -1343,12 +1299,15 @@ mod tests {
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_cannot_replay_across_vote_commitments() {
         let share_idx = 0;
-        let (circuit_a, instance_a, vote_commitment_a) = make_test_ballot(share_idx, [625; 16]);
-        let (_circuit_b, instance_b, vote_commitment_b) = make_test_ballot(share_idx, [626; 16]);
+        let (circuit_a, instance_a, vote_commitment_a) = make_test_ballot(share_idx, 10_000);
+        let (_circuit_b, instance_b, vote_commitment_b) = make_test_ballot(share_idx, 50_000);
 
         assert_eq!(instance_a.voting_round_id, instance_b.voting_round_id);
         assert_eq!(instance_a.proposal_id, instance_b.proposal_id);
-        assert_eq!(instance_a.vote_decision, instance_b.vote_decision);
+        assert_eq!(
+            instance_a.decision_bucket_count,
+            instance_b.decision_bucket_count
+        );
         assert_ne!(vote_commitment_a, vote_commitment_b);
         assert_ne!(
             instance_a.vote_comm_tree_root,
@@ -1375,7 +1334,44 @@ mod tests {
     #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
     fn test_share_reveal_sign_flip_detected() {
         let (circuit, mut instance) = make_test_data(0);
-        instance.enc_share_c1_y = -instance.enc_share_c1_y;
+        instance.ciphertexts.0[3].c1_y = -instance.ciphertexts.0[3].c1_y;
+        let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+        assert!(prover.verify().is_err());
+    }
+
+    /// Any single altered coordinate among the 64 must be rejected: the
+    /// weighted selected commitment binds every slot.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn test_share_reveal_each_altered_coordinate_fails() {
+        // Sampling all 32 slots is slow; exercise one coordinate of
+        // each kind in the first, a middle, and the last bucket.
+        for bucket in [0usize, 3, 7] {
+            for kind in 0..4usize {
+                let (circuit, mut instance) = make_test_data(0);
+                let coords = &mut instance.ciphertexts.0[bucket];
+                match kind {
+                    0 => coords.c1_x += pallas::Base::one(),
+                    1 => coords.c2_x += pallas::Base::one(),
+                    2 => coords.c1_y += pallas::Base::one(),
+                    _ => coords.c2_y += pallas::Base::one(),
+                }
+                let prover =
+                    MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
+                assert!(
+                    prover.verify().is_err(),
+                    "altered coordinate kind {kind} in bucket {bucket} must be rejected"
+                );
+            }
+        }
+    }
+
+    /// A wrong blind must be rejected by the selected-commitment equality.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn test_share_reveal_wrong_blind_fails() {
+        let (mut circuit, instance) = make_test_data(0);
+        circuit.primary_blind = Value::known(pallas::Base::from(424242u64));
         let prover = MockProver::run(K, &circuit, vec![instance.to_halo2_instance()]).unwrap();
         assert!(prover.verify().is_err());
     }
@@ -1408,23 +1404,23 @@ mod tests {
     fn share_nullifier_tracks_shares_hash_through_vote_commitment() {
         let voting_round_id = pallas::Base::from(42u64);
         let proposal_id = pallas::Base::from(7u64);
-        let vote_decision = pallas::Base::from(1u64);
+        let decision_bucket_count = pallas::Base::from(4u64);
         let shares_hash_a = pallas::Base::from(100u64);
         let shares_hash_b = pallas::Base::from(101u64);
         let share_index = pallas::Base::from(3u64);
         let blind = pallas::Base::from(200u64);
 
-        let vote_commitment_a = compute_vote_commitment_hash(
+        let vote_commitment_a = vote_commitment_hash_v2(
             voting_round_id,
             shares_hash_a,
             proposal_id,
-            vote_decision,
+            decision_bucket_count,
         );
-        let vote_commitment_b = compute_vote_commitment_hash(
+        let vote_commitment_b = vote_commitment_hash_v2(
             voting_round_id,
             shares_hash_b,
             proposal_id,
-            vote_decision,
+            decision_bucket_count,
         );
         assert_ne!(vote_commitment_a, vote_commitment_b);
 
@@ -1435,29 +1431,29 @@ mod tests {
         assert_eq!(
             vote_commitment_a.to_repr(),
             [
-                246, 84, 48, 178, 227, 178, 234, 71, 2, 178, 177, 211, 238, 120, 238, 157, 174, 5,
-                29, 244, 76, 128, 250, 245, 139, 137, 84, 246, 108, 197, 47, 31,
+                110, 183, 25, 111, 169, 124, 27, 220, 124, 219, 126, 128, 52, 98, 61, 174, 212,
+                123, 35, 188, 205, 178, 219, 101, 55, 91, 155, 198, 193, 197, 131, 19,
             ]
         );
         assert_eq!(
             vote_commitment_b.to_repr(),
             [
-                153, 178, 215, 171, 108, 162, 193, 164, 62, 112, 205, 83, 186, 133, 99, 176, 44,
-                202, 218, 73, 114, 189, 204, 58, 82, 13, 52, 188, 69, 70, 131, 3,
+                34, 157, 120, 250, 247, 73, 204, 166, 78, 255, 70, 184, 244, 79, 65, 172, 13, 5,
+                185, 127, 37, 64, 137, 95, 53, 84, 1, 255, 114, 36, 184, 44,
             ]
         );
         assert_eq!(
             share_nullifier_a.to_repr(),
             [
-                119, 176, 211, 29, 114, 129, 188, 150, 122, 163, 222, 136, 21, 250, 159, 126, 139,
-                224, 205, 109, 60, 84, 112, 66, 101, 139, 161, 62, 127, 17, 37, 22,
+                45, 134, 202, 17, 253, 95, 59, 251, 251, 60, 47, 231, 5, 77, 4, 226, 126, 54, 246,
+                105, 235, 0, 148, 142, 192, 168, 9, 171, 96, 9, 66, 37,
             ]
         );
         assert_eq!(
             share_nullifier_b.to_repr(),
             [
-                244, 6, 225, 7, 34, 104, 123, 192, 48, 94, 4, 222, 156, 224, 137, 204, 121, 90, 18,
-                186, 234, 235, 223, 30, 101, 75, 79, 249, 44, 11, 24, 59,
+                101, 72, 74, 223, 211, 229, 95, 226, 59, 130, 22, 109, 174, 40, 84, 137, 70, 154,
+                119, 255, 250, 216, 209, 153, 134, 239, 111, 220, 217, 102, 188, 36,
             ]
         );
     }

@@ -108,7 +108,7 @@ pub fn create_share_reveal_proof(
 // ================================================================
 
 /// Verify a share reveal circuit proof given serialized proof bytes and
-/// the 9 public inputs.
+/// the 37 public inputs.
 ///
 /// Returns `Ok(())` if verification succeeds, or an error message.
 ///
@@ -129,30 +129,25 @@ pub fn create_share_reveal_proof(
 /// - `instance.vote_comm_tree_root` — must be the vote commitment tree
 ///   root at the announced snapshot height (verifier looks it up by
 ///   height, not by accepting it from the prover bundle).
-/// - `instance.vote_decision` — the on-chain reveal of the voter's
-///   choice; the caller must accept it only as part of the same chain
-///   bundle that carries the proof, not from an untrusted side channel
-///   (the proof binds it but does not assert it equals any particular
-///   value).
+/// - `instance.decision_bucket_count` — must equal the option count `D`
+///   declared by governance for `proposal_id` (the same value bound into
+///   the matching vote-proof's `vote_commitment`).
 ///
 /// # Caller-supplied values bound transitively by the proof
 ///
 /// The revealed ciphertext coordinates are public values supplied by the
 /// caller. The circuit does not recover them from ZKP #2, because vote-proof
 /// publishes only the aggregate `vote_commitment`. Instead, condition 4 binds
-/// them by proving:
-///
-/// `Poseidon(blind, c1_x, c2_x, c1_y, c2_y) = share_comms[share_index]`
-///
-/// for a private `blind` and one of the 16 private share commitments, which
-/// are then bound to `vote_comm_tree_root` through
+/// them by proving the 34-input weighted selected commitment
+/// (`crate::bridge::selected_share_commitment`) over a private `blind` and
+/// the full public bucket ciphertext vector equals one of the 16 private
+/// share commitments, which are then bound to `vote_comm_tree_root` through
 /// `share_comms -> shares_hash -> vote_commitment -> Merkle path`. This
-/// category is sound under the share-commitment Poseidon preimage-resistance
-/// assumption, but it is not a direct `constrain_instance` derivation from
-/// other public inputs.
+/// category is sound under the selected-commitment Poseidon
+/// preimage-resistance assumption, but it is not a direct
+/// `constrain_instance` derivation from other public inputs.
 ///
-/// - `instance.enc_share_c1_x`, `instance.enc_share_c1_y`
-/// - `instance.enc_share_c2_x`, `instance.enc_share_c2_y`
+/// - `instance.ciphertexts` (all 32 coordinate slots)
 ///
 /// # Proof-attested outputs
 ///
@@ -162,7 +157,6 @@ pub fn create_share_reveal_proof(
 /// not need a separate trusted channel:
 ///
 /// - `instance.share_nullifier`
-#[allow(dead_code)]
 pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<(), String> {
     let (params, _pk, vk) = share_reveal_cached_keys().map_err(|error| error.to_string())?;
 
@@ -175,7 +169,6 @@ pub fn verify_share_reveal_proof(proof: &[u8], instance: &Instance) -> Result<()
 mod tests {
     use super::*;
     use crate::{
-        share_commitment,
         share_reveal::{build_share_reveal, ShareRevealBundle},
         ProveError, VOTE_COMM_TREE_DEPTH,
     };
@@ -185,17 +178,19 @@ mod tests {
     fn valid_bundle() -> ShareRevealBundle {
         let blinds: [pallas::Base; 16] =
             core::array::from_fn(|i| pallas::Base::from(1_001 + i as u64));
-        let c1_x: [pallas::Base; 16] =
-            core::array::from_fn(|i| pallas::Base::from(2_001 + i as u64));
-        let c2_x: [pallas::Base; 16] =
-            core::array::from_fn(|i| pallas::Base::from(3_001 + i as u64));
-        let c1_y: [pallas::Base; 16] =
-            core::array::from_fn(|i| pallas::Base::from(4_001 + i as u64));
-        let c2_y: [pallas::Base; 16] =
-            core::array::from_fn(|i| pallas::Base::from(5_001 + i as u64));
-        let share_comms = core::array::from_fn(|i| {
-            share_commitment(blinds[i], c1_x[i], c2_x[i], c1_y[i], c2_y[i])
+        let ciphertexts: [crate::WeightedShareCiphertexts; 16] = core::array::from_fn(|i| {
+            crate::WeightedShareCiphertexts(core::array::from_fn(|bucket| {
+                let base = 2_001 + 1_000 * i as u64 + 4 * bucket as u64;
+                crate::CiphertextCoordinates {
+                    c1_x: pallas::Base::from(base),
+                    c2_x: pallas::Base::from(base + 1),
+                    c1_y: pallas::Base::from(base + 2),
+                    c2_y: pallas::Base::from(base + 3),
+                }
+            }))
         });
+        let share_comms =
+            core::array::from_fn(|i| crate::selected_share_commitment(blinds[i], &ciphertexts[i]));
         let share_index = 2usize;
 
         build_share_reveal(
@@ -203,24 +198,25 @@ mod tests {
             0,
             share_comms,
             blinds[share_index],
-            c1_x[share_index],
-            c2_x[share_index],
-            c1_y[share_index],
-            c2_y[share_index],
+            &ciphertexts[share_index],
             share_index as u32,
             pallas::Base::from(3),
-            pallas::Base::from(1),
             pallas::Base::from(999),
+            pallas::Base::from(4),
         )
     }
 
     fn minimal_instance() -> Instance {
         Instance::from_parts(
             pallas::Base::from(1),
-            pallas::Base::from(2),
-            pallas::Base::from(3),
-            pallas::Base::from(4),
-            pallas::Base::from(5),
+            crate::WeightedShareCiphertexts(
+                [crate::CiphertextCoordinates {
+                    c1_x: pallas::Base::from(2),
+                    c2_x: pallas::Base::from(3),
+                    c1_y: pallas::Base::from(4),
+                    c2_y: pallas::Base::from(5),
+                }; crate::MAX_DECISION_BUCKETS],
+            ),
             pallas::Base::from(6),
             pallas::Base::from(7),
             pallas::Base::from(8),
@@ -276,9 +272,9 @@ mod tests {
         let actual: &[u8] = fingerprint.as_bytes();
 
         let expected: [u8; 32] = [
-            0xe7, 0x16, 0x5d, 0xa4, 0x31, 0xd5, 0xc6, 0xf8, 0x39, 0x6d, 0x08, 0x2a, 0xba, 0x6a,
-            0xbf, 0xd0, 0x21, 0x3c, 0x56, 0x70, 0x71, 0xca, 0x44, 0x35, 0xb3, 0x8d, 0x09, 0x22,
-            0x42, 0xcc, 0x48, 0x37,
+            0x0c, 0x0c, 0x04, 0x21, 0xdf, 0x7f, 0x70, 0x43, 0x1c, 0xfc, 0x63, 0xf1, 0x5f, 0x31,
+            0x1b, 0xd6, 0x6e, 0x77, 0x6f, 0x73, 0x34, 0x32, 0x24, 0x00, 0x66, 0xd9, 0xe1, 0x78,
+            0xf1, 0x65, 0x84, 0x1b,
         ];
 
         assert_eq!(
