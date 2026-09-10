@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.11.3
+
+### Changed
+
+- Updated the coordinated Zakura cryptography package family from `1.0.0` to
+  `1.2.0` without changing the voting circuits or their proving and verifying
+  keys.
+- Prepared `voting-crypto-deps 0.2.3` and `voting-circuits 0.11.3`.
+
 ## v0.11.2
 
 ### Added
