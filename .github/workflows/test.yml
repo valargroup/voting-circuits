@@ -43,6 +43,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+      - name: Verify package against published dependencies
+        run: cargo package --locked
+
       - name: Run short tests
         run: cargo test --locked
 
@@ -120,6 +123,9 @@ jobs:
 
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
+
+      - name: Verify LRZ package against published dependencies
+        run: cargo package --locked --no-default-features --features lrz
 
       - name: Run short tests
         run: cargo test --locked --no-default-features --features lrz

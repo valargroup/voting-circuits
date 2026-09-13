@@ -122,7 +122,7 @@ pub fn warm_share_reveal_keys() -> Result<(), ProveError> {
 /// this warms the keys and returns `Ok(false)` without building tables.
 pub fn prepare_share_reveal_proving() -> Result<bool, ProveError> {
     share_reveal_cached_keys()
-        .map(|(params, _pk, _vk)| voting_crypto_deps::prepare_commitments(params))
+        .map(|(params, _pk, _vk)| crate::prove_error::prepare_commitments(params))
 }
 
 // ================================================================

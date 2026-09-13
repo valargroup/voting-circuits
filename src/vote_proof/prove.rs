@@ -99,7 +99,7 @@ pub fn warm_vote_proof_keys() -> Result<(), ProveError> {
 /// this warms the keys and returns `Ok(false)` without building tables.
 pub fn prepare_vote_proof_proving() -> Result<bool, ProveError> {
     vote_proof_cached_keys()
-        .map(|(params, _pk, _vk)| voting_crypto_deps::prepare_commitments(params))
+        .map(|(params, _pk, _vk)| crate::prove_error::prepare_commitments(params))
 }
 
 // ================================================================

@@ -11,6 +11,9 @@
   fixed-base tables the prover's commitments then evaluate through. Each
   `warm_*_keys` now arms its circuit as a side effect, so callers that already
   warm need no change. With LRZ, preparation warms keys and returns `Ok(false)`.
+  Backend adaptation stays private to `voting-circuits`, preserving compatibility
+  with the published `voting-crypto-deps =0.2.3`; CI verifies packaging on both
+  backends against registry dependencies.
   `*_cached_keys` is untouched, so callers using it directly avoid preparation
   costs. Warming pays table construction time and retained memory even for wide
   pools and verifier-only callers; proving gains depend on the circuit and host.

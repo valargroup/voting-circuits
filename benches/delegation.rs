@@ -312,7 +312,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     let params_prepared =
         voting_crypto_deps::halo2_proofs::poly::commitment::Params::<vesta::Affine>::new(K);
     let before_prepare = live_allocated_bytes();
-    let armed = voting_crypto_deps::prepare_commitments(&params_prepared);
+    #[cfg(not(feature = "lrz"))]
+    let armed = params_prepared.prepare_commitments();
+    #[cfg(feature = "lrz")]
+    let armed = false;
     let prepared_retained_bytes = live_allocated_bytes().saturating_sub(before_prepare);
     eprintln!(
         "delegation prepared commitments (K={K}): armed={armed}, retained {}, pool threads {}",

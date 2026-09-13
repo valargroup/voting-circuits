@@ -121,7 +121,7 @@ pub fn warm_delegation_keys() -> Result<(), ProveError> {
 /// this warms the keys and returns `Ok(false)` without building tables.
 pub fn prepare_delegation_proving() -> Result<bool, ProveError> {
     delegation_cached_keys()
-        .map(|(params, _pk, _vk)| voting_crypto_deps::prepare_commitments(params))
+        .map(|(params, _pk, _vk)| crate::prove_error::prepare_commitments(params))
 }
 
 // ================================================================
