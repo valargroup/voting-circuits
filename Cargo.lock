@@ -1762,6 +1762,7 @@ dependencies = [
  "itertools 0.14.0",
  "lazy_static",
  "rand_core 0.10.1",
+ "rayon",
  "voting-crypto-deps",
 ]
 

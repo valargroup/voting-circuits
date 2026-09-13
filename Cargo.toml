@@ -30,6 +30,8 @@ incrementalmerkletree = "0.8.1"
 # deterministic RNG, so prepared and unprepared proving can be compared
 # byte for byte.
 rand_core = { version = "0.10", default-features = false }
+# Force prepared-path tests into a narrow pool, independently of host defaults.
+rayon = "1"
 
 [lints.clippy]
 # Halo2 circuit helpers naturally take many `AssignedCell` parameters and

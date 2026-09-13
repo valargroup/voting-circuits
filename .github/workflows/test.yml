@@ -98,7 +98,12 @@ jobs:
             exit 1
           fi
 
+      - name: Test prepared proving on all circuits
+        run: cargo test --locked prepared_proving_roundtrip -- --ignored --test-threads=1
+
       - name: Check delegation benchmark
+        env:
+          RAYON_NUM_THREADS: 6
         run: cargo bench --locked --bench delegation -- --test
 
   lrz-tests:
@@ -118,6 +123,9 @@ jobs:
 
       - name: Run short tests
         run: cargo test --locked --no-default-features --features lrz
+
+      - name: Test LRZ preparation fallback on all circuits
+        run: cargo test --locked --no-default-features --features lrz prepared_proving_roundtrip -- --ignored --test-threads=1
 
       - name: Check LRZ dependency graph
         run: |
@@ -178,6 +186,8 @@ jobs:
         run: cargo test --locked -- --ignored --skip row_budget --skip cost_breakdown
 
       - name: Check delegation benchmark
+        env:
+          RAYON_NUM_THREADS: 6
         run: cargo bench --locked --bench delegation -- --test
 
   diagnostics:

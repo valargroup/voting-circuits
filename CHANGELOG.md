@@ -10,8 +10,10 @@
   precomputes the polynomial-side data and stops there; these build the
   fixed-base tables the prover's commitments then evaluate through. Each
   `warm_*_keys` now arms its circuit as a side effect, so callers that already
-  warm need no change. `*_cached_keys` is untouched, so one-shot verifiers and
-  tests do not pay the cost.
+  warm need no change. With LRZ, preparation warms keys and returns `Ok(false)`.
+  `*_cached_keys` is untouched, so callers using it directly avoid preparation
+  costs. Warming pays table construction time and retained memory even for wide
+  pools and verifier-only callers; proving gains depend on the circuit and host.
 
   Measured on the delegation circuit (`K = 12`, Apple M4, 16 logical cores,
   `benches/delegation.rs`), median proof generation by pool width:
@@ -36,6 +38,10 @@
   and all three circuits' verifying-key fingerprints are unchanged. Already
   published verifying keys and unmodified verifiers stay compatible, and a
   prover on this version interoperates with one that is not.
+
+  CI exercises all three circuits after warming in a six-thread pool, checks
+  preparation succeeds on Zakura (and returns false on LRZ), verifies with
+  fresh parameters, and rejects proofs replayed into a different voting round.
 
   Preparation is idempotent and single-flighted, and reports whether the
   tables were actually built; a decline is not an error and is never memoized

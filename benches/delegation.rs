@@ -83,11 +83,15 @@ fn rayon_threads() -> usize {
         })
 }
 
+/// Zakura only: LRZ is on rand 0.8, and has no prepared tables to compare
+/// against in the first place.
+#[cfg(not(feature = "lrz"))]
 /// A deterministic RNG, so the prepared and unprepared provers can be driven
 /// with byte-identical randomness. SplitMix64; not cryptographic, and used
 /// only to make one comparison reproducible.
 struct FixedRng(u64);
 
+#[cfg(not(feature = "lrz"))]
 impl rand_core::TryRng for FixedRng {
     type Error = rand_core::Infallible;
 
@@ -308,7 +312,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     let params_prepared =
         voting_crypto_deps::halo2_proofs::poly::commitment::Params::<vesta::Affine>::new(K);
     let before_prepare = live_allocated_bytes();
-    let armed = params_prepared.prepare_commitments();
+    let armed = voting_crypto_deps::prepare_commitments(&params_prepared);
     let prepared_retained_bytes = live_allocated_bytes().saturating_sub(before_prepare);
     eprintln!(
         "delegation prepared commitments (K={K}): armed={armed}, retained {}, pool threads {}",
@@ -326,6 +330,11 @@ fn criterion_benchmark(c: &mut Criterion) {
     // randomness, same proof bytes. Only the route by which the commitment
     // MSMs are evaluated differs, so an unmodified verifier — and any already
     // published verifying key — stays compatible.
+    //
+    // Only meaningful on a pool narrow enough for halo2 to actually route
+    // through the prepared tables (`RAYON_NUM_THREADS=6`). On a wide pool both
+    // arms take the identical unprepared path and this passes vacuously.
+    #[cfg(not(feature = "lrz"))]
     {
         let prove_with =
             |srs: &voting_crypto_deps::halo2_proofs::poly::commitment::Params<vesta::Affine>| {

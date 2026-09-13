@@ -125,6 +125,42 @@ pub use lrz_sinsemilla as sinsemilla;
 #[cfg(feature = "lrz-validator")]
 pub use lrz_zcash_primitives as zcash_primitives;
 
+/// Arms halo2's prepared commitment tables over `params`, where the selected
+/// backend has them.
+///
+/// Key generation precomputes the polynomial-side proving data and stops
+/// there. The Zakura backend can additionally build fixed-base tables that the
+/// prover's polynomial commitments then evaluate through; this arms them. The
+/// LRZ backend has no such API, so there this reports `false` and proving
+/// keeps its ordinary path — the same answer the Zakura backend gives when it
+/// declines.
+///
+/// Preparation is idempotent, single-flighted, and shared with every clone of
+/// `params`; it is never serialized, so call it again after `Params::read`.
+/// Call it once from a long-lived prover, off the proving critical path, and
+/// not fanned out across a worker pool.
+///
+/// Arming is a pure performance change: it alters only the route by which the
+/// commitment MSMs are evaluated, never their results, so proofs and verifying
+/// keys are unaffected.
+///
+/// Returns whether tables were actually built and cached.
+#[cfg(feature = "proofs")]
+pub fn prepare_commitments<C: halo2_proofs::arithmetic::CurveAffine>(
+    params: &halo2_proofs::poly::commitment::Params<C>,
+) -> bool {
+    params.prepare_commitments()
+}
+
+/// LRZ counterpart of the Zakura [`prepare_commitments`]; always `false`,
+/// because upstream halo2 has no prepared commitment tables to arm.
+#[cfg(feature = "lrz-proofs")]
+pub fn prepare_commitments<C: halo2_proofs::arithmetic::CurveAffine>(
+    _params: &halo2_proofs::poly::commitment::Params<C>,
+) -> bool {
+    false
+}
+
 #[cfg(all(test, any(feature = "validator", feature = "lrz-validator")))]
 mod tests {
     use super::{orchard, zcash_primitives};

@@ -76,15 +76,15 @@ pub fn delegation_cached_keys() -> Result<&'static DelegationKeys, ProveError> {
 /// This lets callers pay deterministic keygen before the first user-visible
 /// proof generation or verification path needs the key. It also arms
 /// the prepared commitment tables through [`prepare_delegation_proving`]: a
-/// caller that warms at all is a long-lived prover, which is exactly who
-/// those tables pay off for.
+/// long-lived prover can use those tables on supported pool widths. Verifiers
+/// can use the cached-key accessor directly to avoid preparation costs.
 pub fn warm_delegation_keys() -> Result<(), ProveError> {
     prepare_delegation_proving().map(|_| ())
 }
 
 /// Arm the prepared commitment tables over this circuit's SRS.
 ///
-/// [`halo2_proofs::poly::commitment::Params::prepare_commitments`] builds
+/// On Zakura, `Params::prepare_commitments` builds
 /// fixed-base tables that the prover's polynomial commitments then evaluate
 /// through. Key generation does not build them: it precomputes the
 /// polynomial-side data (fixed cosets, FFT twiddles, quotient plans) and
@@ -108,17 +108,20 @@ pub fn warm_delegation_keys() -> Result<(), ProveError> {
 /// halo2 routes through the prepared tables only on pools of at most eight
 /// effective threads (ten for `K = 11` on AArch64 macOS); past that the
 /// unprepared planner out-scales them and halo2 falls back on its own. So
-/// this is a win on phones and constrained hosts, and inert — though never a
-/// pessimization — on a wide desktop pool.
+/// proving gains depend on the circuit and host. Warming still pays table
+/// construction time and retains memory on wide pools and verifier-only
+/// callers, even when the large tables are not used.
 ///
 /// # Returns
 ///
 /// Whether the tables were actually built and cached. `false` means arming
 /// was a no-op (no prepared backend, or the backend declined) and proving
 /// simply keeps its unprepared path; it is not an error, and unlike a key
-/// generation failure it is never memoized as one.
+/// generation failure it is never memoized as one. With the LRZ backend,
+/// this warms the keys and returns `Ok(false)` without building tables.
 pub fn prepare_delegation_proving() -> Result<bool, ProveError> {
-    delegation_cached_keys().map(|(params, _pk, _vk)| params.prepare_commitments())
+    delegation_cached_keys()
+        .map(|(params, _pk, _vk)| voting_crypto_deps::prepare_commitments(params))
 }
 
 // ================================================================
@@ -358,6 +361,18 @@ mod prove_tests {
         let proof = create_delegation_proof(bundle.circuit, &bundle.instance)
             .expect("delegation proof creation should succeed");
         verify_delegation_proof(&proof, &bundle.instance).expect("real proof roundtrip failed");
+        let (_, _, vk) = delegation_cached_keys().unwrap();
+        verify_proof_bytes(
+            "delegation",
+            &delegation_params(),
+            vk,
+            &proof,
+            &bundle.instance.to_halo2_instance(),
+        )
+        .expect("fresh verifier params");
+        let mut wrong_round = bundle.instance;
+        wrong_round.vote_round_id += pallas::Base::from(1);
+        assert!(verify_delegation_proof(&proof, &wrong_round).is_err());
     }
 
     #[test]
@@ -365,23 +380,24 @@ mod prove_tests {
         let _: fn() -> Result<bool, ProveError> = prepare_delegation_proving;
     }
 
-    // Arming must be safe to repeat: callers warm from several entry points,
-    // and `warm_delegation_keys` arms as a side effect.
+    // Exercise the warm entry point first, then repeat preparation and prove
+    // within the same narrow pool. LRZ must retain ordinary proving behavior.
     #[test]
-    #[ignore = "long-running K=12 keygen plus commitment-table preparation"]
-    fn prepare_delegation_proving_is_idempotent() {
-        let first = prepare_delegation_proving().expect("delegation keys");
-        let second = prepare_delegation_proving().expect("delegation keys");
-        assert_eq!(
-            first, second,
-            "repeat preparation must share one attempt and report it stably"
-        );
-
-        warm_delegation_keys().expect("warm delegation keys");
-        assert_eq!(
-            prepare_delegation_proving().expect("delegation keys"),
-            first,
-            "warming after preparation must not disturb the prepared tables"
-        );
+    #[ignore = "real proof with prepared commitments; also exercised in CI"]
+    fn prepared_proving_roundtrip() {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(6)
+            .build()
+            .unwrap()
+            .install(|| {
+                warm_delegation_keys().expect("warm keys");
+                let first = prepare_delegation_proving().expect("prepare keys");
+                assert_eq!(first, !cfg!(feature = "lrz"));
+                assert_eq!(
+                    prepare_delegation_proving().expect("repeat preparation"),
+                    first
+                );
+                real_proof_roundtrip();
+            });
     }
 }
