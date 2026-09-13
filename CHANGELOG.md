@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.12.0
+
+### Changed
+
+- Released the exact `v0.12.0-rc.2` implementation as `v0.12.0` without
+  circuit or verifying-key changes.
+
 ## v0.12.0-rc.2
 
 ### Changed
