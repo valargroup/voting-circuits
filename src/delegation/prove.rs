@@ -74,9 +74,54 @@ pub fn delegation_cached_keys() -> Result<&'static DelegationKeys, ProveError> {
 /// Warm the process-lifetime delegation params/proving-key cache.
 ///
 /// This lets callers pay deterministic keygen before the first user-visible
-/// proof generation or verification path needs the key.
+/// proof generation or verification path needs the key. It also arms
+/// the prepared commitment tables through [`prepare_delegation_proving`]: a
+/// long-lived prover can use those tables on supported pool widths. Verifiers
+/// can use the cached-key accessor directly to avoid preparation costs.
 pub fn warm_delegation_keys() -> Result<(), ProveError> {
-    delegation_cached_keys().map(|_| ())
+    prepare_delegation_proving().map(|_| ())
+}
+
+/// Arm the prepared commitment tables over this circuit's SRS.
+///
+/// On Zakura, `Params::prepare_commitments` builds
+/// fixed-base tables that the prover's polynomial commitments then evaluate
+/// through. Key generation does not build them: it precomputes the
+/// polynomial-side data (fixed cosets, FFT twiddles, quotient plans) and
+/// stops there.
+///
+/// Call this once from a long-lived prover, off the proving critical path —
+/// [`warm_delegation_keys`] already does, so callers that warm need not call it
+/// separately. Preparation is idempotent and single-flighted; concurrent
+/// callers share one attempt. Do not fan it out across a worker pool, which
+/// would occupy the workers its own internal parallelism wants.
+///
+/// # Cost
+///
+/// Preparation retains fixed-base tables that scale with `2^K`. Measured for
+/// the `K = 12` delegation circuit (`benches/delegation.rs`): 26,426.91 KiB,
+/// against a proving key that is already 154,706 KiB. This circuit is
+/// `K = 12`.
+///
+/// # When it pays off
+///
+/// halo2 routes through the prepared tables only on pools of at most eight
+/// effective threads (ten for `K = 11` on AArch64 macOS); past that the
+/// unprepared planner out-scales them and halo2 falls back on its own. So
+/// proving gains depend on the circuit and host. Warming still pays table
+/// construction time and retains memory on wide pools and verifier-only
+/// callers, even when the large tables are not used.
+///
+/// # Returns
+///
+/// Whether the tables were actually built and cached. `false` means arming
+/// was a no-op (no prepared backend, or the backend declined) and proving
+/// simply keeps its unprepared path; it is not an error, and unlike a key
+/// generation failure it is never memoized as one. With the LRZ backend,
+/// this warms the keys and returns `Ok(false)` without building tables.
+pub fn prepare_delegation_proving() -> Result<bool, ProveError> {
+    delegation_cached_keys()
+        .map(|(params, _pk, _vk)| crate::prove_error::prepare_commitments(params))
 }
 
 // ================================================================
@@ -316,5 +361,43 @@ mod prove_tests {
         let proof = create_delegation_proof(bundle.circuit, &bundle.instance)
             .expect("delegation proof creation should succeed");
         verify_delegation_proof(&proof, &bundle.instance).expect("real proof roundtrip failed");
+        let (_, _, vk) = delegation_cached_keys().unwrap();
+        verify_proof_bytes(
+            "delegation",
+            &delegation_params(),
+            vk,
+            &proof,
+            &bundle.instance.to_halo2_instance(),
+        )
+        .expect("fresh verifier params");
+        let mut wrong_round = bundle.instance;
+        wrong_round.vote_round_id += pallas::Base::from(1);
+        assert!(verify_delegation_proof(&proof, &wrong_round).is_err());
+    }
+
+    #[test]
+    fn prepare_delegation_proving_signature_returns_result() {
+        let _: fn() -> Result<bool, ProveError> = prepare_delegation_proving;
+    }
+
+    // Exercise the warm entry point first, then repeat preparation and prove
+    // within the same narrow pool. LRZ must retain ordinary proving behavior.
+    #[test]
+    #[ignore = "real proof with prepared commitments; also exercised in CI"]
+    fn prepared_proving_roundtrip() {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(6)
+            .build()
+            .unwrap()
+            .install(|| {
+                warm_delegation_keys().expect("warm keys");
+                let first = prepare_delegation_proving().expect("prepare keys");
+                assert_eq!(first, !cfg!(feature = "lrz"));
+                assert_eq!(
+                    prepare_delegation_proving().expect("repeat preparation"),
+                    first
+                );
+                real_proof_roundtrip();
+            });
     }
 }

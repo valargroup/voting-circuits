@@ -28,6 +28,6 @@ pub use builder::{
 };
 pub use circuit::{Circuit, Instance, K};
 pub use prove::{
-    verify_vote_proof, vote_proof_cached_keys, vote_proof_params, vote_proof_proving_key,
-    warm_vote_proof_keys,
+    prepare_vote_proof_proving, verify_vote_proof, vote_proof_cached_keys, vote_proof_params,
+    vote_proof_proving_key, warm_vote_proof_keys,
 };

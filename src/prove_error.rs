@@ -8,6 +8,18 @@ use voting_crypto_deps::halo2_proofs::{
 };
 use voting_crypto_deps::pasta_curves::vesta;
 
+/// Prepare the selected backend without requiring an unpublished facade API.
+/// Zakura shares the table cache across calls and clones; LRZ has no tables.
+#[cfg(not(feature = "lrz"))]
+pub(crate) fn prepare_commitments(params: &Params<EqAffine>) -> bool {
+    params.prepare_commitments()
+}
+
+#[cfg(feature = "lrz")]
+pub(crate) fn prepare_commitments(_params: &Params<EqAffine>) -> bool {
+    false
+}
+
 pub(crate) fn create_proof_bytes<ConcreteCircuit>(
     params: &Params<EqAffine>,
     pk: &plonk::ProvingKey<EqAffine>,
