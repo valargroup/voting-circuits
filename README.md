@@ -44,7 +44,7 @@ packages, so Zakura consumers use a plain dependency declaration.
 LRZ consumers select the crates.io package family explicitly:
 
 ```toml
-voting-circuits = { version = "0.11", default-features = false, features = ["lrz"] }
+voting-circuits = { version = "0.12", default-features = false, features = ["lrz"] }
 ```
 
 The default Zakura features and `lrz` are mutually exclusive. Disabling default
