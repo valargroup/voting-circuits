@@ -69,6 +69,49 @@ fn measured_heap_usage_via_clone<T: Clone>(value: &T) -> usize {
     after_clone.saturating_sub(after_drop)
 }
 
+/// The pool width halo2 will see, which decides whether it routes through the
+/// prepared tables at all (at most eight effective threads, ten for `k = 11`
+/// on AArch64 macOS).
+fn rayon_threads() -> usize {
+    std::env::var("RAYON_NUM_THREADS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|value| value.get())
+                .unwrap_or(1)
+        })
+}
+
+/// A deterministic RNG, so the prepared and unprepared provers can be driven
+/// with byte-identical randomness. SplitMix64; not cryptographic, and used
+/// only to make one comparison reproducible.
+struct FixedRng(u64);
+
+impl rand_core::TryRng for FixedRng {
+    type Error = rand_core::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        Ok(self.try_next_u64()? as u32)
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        Ok(z ^ (z >> 31))
+    }
+
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+        for chunk in dst.chunks_mut(8) {
+            let word = self.try_next_u64()?.to_le_bytes();
+            chunk.copy_from_slice(&word[..chunk.len()]);
+        }
+        Ok(())
+    }
+}
+
 fn format_bytes(bytes: usize) -> String {
     format!("{bytes} bytes ({:.2} KiB)", bytes as f64 / 1024.0)
 }
@@ -255,6 +298,77 @@ fn criterion_benchmark(c: &mut Criterion) {
     };
     eprintln!("delegation proof bytes: {}", proof_bytes.len());
 
+    // A second SRS instance, armed with the prepared commitment tables. The
+    // caches are shared with every clone of a `Params`, so this has to be an
+    // independent `Params::new(K)` rather than a clone of the one above —
+    // otherwise the "unprepared" arm would be silently prepared too.
+    //
+    // `Params::new` is deterministic for a given `K`, so the proving key built
+    // over the first SRS is equally valid over this one.
+    let params_prepared =
+        voting_crypto_deps::halo2_proofs::poly::commitment::Params::<vesta::Affine>::new(K);
+    let before_prepare = live_allocated_bytes();
+    let armed = params_prepared.prepare_commitments();
+    let prepared_retained_bytes = live_allocated_bytes().saturating_sub(before_prepare);
+    eprintln!(
+        "delegation prepared commitments (K={K}): armed={armed}, retained {}, pool threads {}",
+        format_bytes(prepared_retained_bytes),
+        rayon_threads(),
+    );
+    if !armed {
+        eprintln!(
+            "delegation prepared commitments: arming declined \u{2014} the prepared arm below \
+             measures the same unprepared path as the control"
+        );
+    }
+
+    // Preparation must be a pure performance change: same proving key, same
+    // randomness, same proof bytes. Only the route by which the commitment
+    // MSMs are evaluated differs, so an unmodified verifier — and any already
+    // published verifying key — stays compatible.
+    {
+        let prove_with =
+            |srs: &voting_crypto_deps::halo2_proofs::poly::commitment::Params<vesta::Affine>| {
+                let mut transcript = Blake2bWrite::<_, vesta::Affine, _>::init(vec![]);
+                plonk::create_proof(
+                    srs,
+                    &pk,
+                    std::slice::from_ref(&bundle.circuit),
+                    &instances,
+                    &mut FixedRng(0x5EED),
+                    &mut transcript,
+                )
+                .unwrap();
+                transcript.finalize()
+            };
+        assert_eq!(
+            prove_with(&params),
+            prove_with(&params_prepared),
+            "preparation changed the proof bytes; it must only change how the \
+             commitment MSMs are evaluated"
+        );
+        eprintln!("delegation prepared/unprepared proof bytes: identical under a fixed RNG");
+    }
+
+    // A prepared proof must still verify under the ordinary verifier.
+    {
+        let mut transcript = Blake2bWrite::<_, vesta::Affine, _>::init(vec![]);
+        plonk::create_proof(
+            &params_prepared,
+            &pk,
+            std::slice::from_ref(&bundle.circuit),
+            &instances,
+            &mut OsRng,
+            &mut transcript,
+        )
+        .unwrap();
+        let prepared_proof = transcript.finalize();
+        let strategy = SingleVerifier::new(&params);
+        let mut transcript = Blake2bRead::init(&prepared_proof[..]);
+        plonk::verify_proof(&params, &vk, strategy, &instances, &mut transcript)
+            .expect("a proof built over prepared params must verify");
+    }
+
     {
         let mut group = c.benchmark_group("delegation-keygen");
         group.sample_size(10);
@@ -276,6 +390,25 @@ fn criterion_benchmark(c: &mut Criterion) {
                 let mut transcript = Blake2bWrite::<_, vesta::Affine, _>::init(vec![]);
                 plonk::create_proof(
                     &params,
+                    &pk,
+                    std::slice::from_ref(&circuit),
+                    &instances,
+                    &mut OsRng,
+                    &mut transcript,
+                )
+                .unwrap();
+                transcript.finalize()
+            });
+        });
+
+        // Same circuit and key, prepared SRS. halo2 only routes through the
+        // prepared tables on narrow pools, so run this with a phone-shaped
+        // `RAYON_NUM_THREADS` (6) as well as the host default.
+        group.bench_function("prove-prepared", |b| {
+            b.iter(|| {
+                let mut transcript = Blake2bWrite::<_, vesta::Affine, _>::init(vec![]);
+                plonk::create_proof(
+                    &params_prepared,
                     &pk,
                     std::slice::from_ref(&circuit),
                     &instances,

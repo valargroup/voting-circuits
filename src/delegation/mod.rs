@@ -25,7 +25,7 @@ pub use imt::{
 };
 pub use prove::{
     create_delegation_proof, delegation_cached_keys, delegation_params, delegation_proving_key,
-    verify_delegation_proof, warm_delegation_keys,
+    prepare_delegation_proving, verify_delegation_proof, warm_delegation_keys,
 };
 
 #[cfg(feature = "unstable-internal-api")]

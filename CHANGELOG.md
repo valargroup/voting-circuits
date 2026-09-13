@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Added
+
+- Added `prepare_delegation_proving`, `prepare_vote_proof_proving`, and
+  `prepare_share_reveal_proving`, which arm halo2's prepared commitment tables
+  (`Params::prepare_commitments`) over each circuit's SRS. Key generation
+  precomputes the polynomial-side data and stops there; these build the
+  fixed-base tables the prover's commitments then evaluate through. Each
+  `warm_*_keys` now arms its circuit as a side effect, so callers that already
+  warm need no change. `*_cached_keys` is untouched, so one-shot verifiers and
+  tests do not pay the cost.
+
+  Measured on the delegation circuit (`K = 12`, Apple M4, 16 logical cores,
+  `benches/delegation.rs`), median proof generation by pool width:
+
+  | `RAYON_NUM_THREADS` | unprepared | prepared | delta |
+  |---|---|---|---|
+  | 6 | 292.45 ms | 200.50 ms | −31.4% |
+  | 8 | 167.70 ms | 154.46 ms | −7.9% |
+  | 10 | 206.07 ms | 200.00 ms | −2.9% (gated off; noise) |
+  | 16 (host default) | 163.21 ms | 165.93 ms | none (gated off) |
+
+  halo2 routes through the prepared tables only on pools of at most eight
+  effective threads (ten for `K = 11` on AArch64 macOS) and falls back to the
+  planned multiexp past that, so the win concentrates on narrow pools. Arming
+  costs 26,426.91 KiB of retained tables — about 17% on top of the circuit's
+  154,706 KiB proving key — and that memory is retained whether or not the
+  pool is narrow enough to read it.
+
+  This is a pure performance change. Preparation alters only the route by
+  which the commitment MSMs are evaluated, never their results: driven from a
+  fixed RNG, prepared and unprepared proving produce byte-identical proofs,
+  and all three circuits' verifying-key fingerprints are unchanged. Already
+  published verifying keys and unmodified verifiers stay compatible, and a
+  prover on this version interoperates with one that is not.
+
+  Preparation is idempotent and single-flighted, and reports whether the
+  tables were actually built; a decline is not an error and is never memoized
+  as one.
+
 ## v0.12.0
 
 ### Changed

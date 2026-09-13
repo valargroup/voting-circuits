@@ -52,9 +52,51 @@ pub fn vote_proof_cached_keys() -> Result<&'static VoteProofKeys, ProveError> {
 /// Warm the process-lifetime vote proof params/proving-key cache.
 ///
 /// This lets callers pay deterministic keygen before the first user-visible
-/// proof generation or verification path needs the params and keys.
+/// proof generation or verification path needs the params and keys. It also arms
+/// the prepared commitment tables through [`prepare_vote_proof_proving`]: a
+/// caller that warms at all is a long-lived prover, which is exactly who
+/// those tables pay off for.
 pub fn warm_vote_proof_keys() -> Result<(), ProveError> {
-    vote_proof_cached_keys().map(|_| ())
+    prepare_vote_proof_proving().map(|_| ())
+}
+
+/// Arm the prepared commitment tables over this circuit's SRS.
+///
+/// [`halo2_proofs::poly::commitment::Params::prepare_commitments`] builds
+/// fixed-base tables that the prover's polynomial commitments then evaluate
+/// through. Key generation does not build them: it precomputes the
+/// polynomial-side data (fixed cosets, FFT twiddles, quotient plans) and
+/// stops there.
+///
+/// Call this once from a long-lived prover, off the proving critical path —
+/// [`warm_vote_proof_keys`] already does, so callers that warm need not call it
+/// separately. Preparation is idempotent and single-flighted; concurrent
+/// callers share one attempt. Do not fan it out across a worker pool, which
+/// would occupy the workers its own internal parallelism wants.
+///
+/// # Cost
+///
+/// Preparation retains fixed-base tables that scale with `2^K`. Measured for
+/// the `K = 12` delegation circuit (`benches/delegation.rs`): 26,426.91 KiB,
+/// against a proving key that is already 154,706 KiB. This circuit is
+/// `K = 11`.
+///
+/// # When it pays off
+///
+/// halo2 routes through the prepared tables only on pools of at most eight
+/// effective threads (ten for `K = 11` on AArch64 macOS); past that the
+/// unprepared planner out-scales them and halo2 falls back on its own. So
+/// this is a win on phones and constrained hosts, and inert — though never a
+/// pessimization — on a wide desktop pool.
+///
+/// # Returns
+///
+/// Whether the tables were actually built and cached. `false` means arming
+/// was a no-op (no prepared backend, or the backend declined) and proving
+/// simply keeps its unprepared path; it is not an error, and unlike a key
+/// generation failure it is never memoized as one.
+pub fn prepare_vote_proof_proving() -> Result<bool, ProveError> {
+    vote_proof_cached_keys().map(|(params, _pk, _vk)| params.prepare_commitments())
 }
 
 // ================================================================
@@ -315,5 +357,30 @@ mod tests {
 
         verify_vote_proof(&bundle.proof, &bundle.instance)
             .expect("typed verifier should accept the builder's proof and public inputs");
+    }
+
+    #[test]
+    fn prepare_vote_proof_proving_signature_returns_result() {
+        let _: fn() -> Result<bool, ProveError> = prepare_vote_proof_proving;
+    }
+
+    // Arming must be safe to repeat: callers warm from several entry points,
+    // and `warm_vote_proof_keys` arms as a side effect.
+    #[test]
+    #[ignore = "long-running K=11 keygen plus commitment-table preparation"]
+    fn prepare_vote_proof_proving_is_idempotent() {
+        let first = prepare_vote_proof_proving().expect("vote proof keys");
+        let second = prepare_vote_proof_proving().expect("vote proof keys");
+        assert_eq!(
+            first, second,
+            "repeat preparation must share one attempt and report it stably"
+        );
+
+        warm_vote_proof_keys().expect("warm vote proof keys");
+        assert_eq!(
+            prepare_vote_proof_proving().expect("vote proof keys"),
+            first,
+            "warming after preparation must not disturb the prepared tables"
+        );
     }
 }
