@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.12.2
+
+### Changed
+
+- Updated the coordinated Zakura cryptography package family from `1.2.0` to
+  `2.0.0`, matching the package family selected by
+  `zakura-wallet-lib 0.1.0-rc6`.
+- Prepared `voting-crypto-deps 0.2.4` and `voting-circuits 0.12.2`.
+
 ## v0.12.1
 
 ### Added
