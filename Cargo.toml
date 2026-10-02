@@ -2,7 +2,7 @@
 name = "voting-circuits"
 version = "0.12.2"
 edition = "2021"
-rust-version = "1.86.0"
+rust-version = "1.88.0"
 description = "Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/valargroup/voting-circuits"
@@ -63,3 +63,26 @@ required-features = ["unstable-internal-api"]
 [workspace]
 resolver = "2"
 members = ["voting-crypto-deps"]
+
+# Zakura 2.0.0 on crates.io pins pre-release RustCrypto crates (bip32
+# 0.6.0-pre.1, crypto-common 0.2.0-rc.1) that cannot share a lockfile with the
+# LRZ backend's stable releases. This fork migrates Zakura to the stable stack.
+# Remove this section once zakura-core/common publishes that migration
+# (zakura-core/common#538).
+[patch.crates-io]
+zakura-address = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-bls12-381 = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-halo2-gadgets = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-halo2-legacy-pdqsort = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-halo2-poseidon = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-halo2-proofs = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-jubjub = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-orchard = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-pasta-curves = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-primitives = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-protocol = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-reddsa = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-redjubjub = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-sapling-crypto = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-sinsemilla = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-transparent = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }

@@ -83,8 +83,7 @@ fn rayon_threads() -> usize {
         })
 }
 
-/// Zakura only: LRZ is on rand 0.8, and has no prepared tables to compare
-/// against in the first place.
+/// Zakura only: LRZ has no prepared tables to compare against.
 #[cfg(not(feature = "lrz"))]
 /// A deterministic RNG, so the prepared and unprepared provers can be driven
 /// with byte-identical randomness. SplitMix64; not cryptographic, and used

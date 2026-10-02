@@ -34,7 +34,7 @@ use voting_circuits::vote_proof::Circuit as VoteProofCircuit;
 ```
 
 The default Zakura backend requires Rust 1.91. The alternate LRZ backend
-supports Rust 1.86.
+supports Rust 1.88.
 
 ### Cryptography backend
 

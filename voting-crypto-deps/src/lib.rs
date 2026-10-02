@@ -6,7 +6,7 @@
 //! `lrz-*` features. Mixing the two package families, or selecting neither
 //! family, is an error.
 //!
-//! The facade itself supports Rust 1.86 in LRZ mode. The default Zakura
+//! The facade itself supports Rust 1.88 in LRZ mode. The default Zakura
 //! packages currently require Rust 1.91.
 
 #![deny(missing_debug_implementations)]
@@ -81,11 +81,18 @@ pub use ::orchard;
 #[cfg(feature = "pasta")]
 pub use ::pasta_curves;
 #[cfg(feature = "rand")]
+use ::rand as selected_rand;
+#[cfg(feature = "lrz-rand")]
+use lrz_rand as selected_rand;
+
+/// The RNG traits of the selected backend's `rand` 0.10, and an infallible
+/// operating-system RNG.
+#[cfg(any(feature = "rand", feature = "lrz-rand"))]
 pub mod rand {
-    pub use ::rand::{CryptoRng, Rng};
+    pub use crate::selected_rand::{CryptoRng, Rng};
 
     pub mod rngs {
-        use ::rand::{
+        use crate::selected_rand::{
             rand_core::{TryCryptoRng, TryRng, UnwrapErr},
             rngs::SysRng,
         };
@@ -136,8 +143,6 @@ pub use lrz_incrementalmerkletree as incrementalmerkletree;
 pub use lrz_orchard as orchard;
 #[cfg(feature = "lrz-pasta")]
 pub use lrz_pasta_curves as pasta_curves;
-#[cfg(feature = "lrz-rand")]
-pub use lrz_rand as rand;
 #[cfg(feature = "lrz-validator")]
 pub use lrz_reddsa as reddsa;
 #[cfg(feature = "lrz-sinsemilla")]

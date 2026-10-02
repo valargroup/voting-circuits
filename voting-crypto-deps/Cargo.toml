@@ -2,7 +2,7 @@
 name = "voting-crypto-deps"
 version = "0.2.4"
 edition = "2021"
-rust-version = "1.86"
+rust-version = "1.88"
 description = "Selectable Zakura and LRZ cryptography dependency facade for shielded voting"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/valargroup/voting-circuits"
@@ -71,18 +71,18 @@ lrz-validator = [
 ]
 
 [dependencies]
-lrz-halo2-gadgets = { package = "halo2_gadgets", version = "0.5", optional = true, default-features = false }
-lrz-halo2-poseidon = { package = "halo2_poseidon", version = "0.1", optional = true }
-lrz-incrementalmerkletree = { package = "incrementalmerkletree", version = "0.8.1", optional = true }
-lrz-halo2-proofs = { package = "halo2_proofs", version = "0.3", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
-lrz-orchard = { package = "orchard", version = "0.15", optional = true, features = ["circuit", "unstable-voting-circuits"] }
-lrz-pasta-curves = { package = "pasta_curves", version = "0.5", optional = true }
-lrz-reddsa = { package = "reddsa", version = "0.5", optional = true, default-features = false, features = ["std"] }
-lrz-rand = { package = "rand", version = "0.8", optional = true, default-features = false, features = ["getrandom"] }
-lrz-sinsemilla = { package = "sinsemilla", version = "0.1", optional = true }
-lrz-zcash-note-encryption = { package = "zcash_note_encryption", version = "0.4.2", optional = true }
-lrz-zcash-primitives = { package = "zcash_primitives", version = "0.30", optional = true, default-features = false, features = ["std"] }
-lrz-zip32 = { package = "zip32", version = "0.2.0", optional = true }
+lrz-halo2-gadgets = { package = "halo2_gadgets", version = "0.6", optional = true, default-features = false }
+lrz-halo2-poseidon = { package = "halo2_poseidon", version = "0.2", optional = true }
+lrz-incrementalmerkletree = { package = "incrementalmerkletree", version = "0.9", optional = true }
+lrz-halo2-proofs = { package = "halo2_proofs", version = "0.4", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
+lrz-orchard = { package = "orchard", version = "0.16", optional = true, features = ["circuit", "unstable-voting-circuits"] }
+lrz-pasta-curves = { package = "pasta_curves", version = "0.6", optional = true }
+lrz-reddsa = { package = "reddsa", version = "0.6", optional = true, default-features = false, features = ["std"] }
+lrz-rand = { package = "rand", version = "0.10", optional = true, default-features = false, features = ["sys_rng"] }
+lrz-sinsemilla = { package = "sinsemilla", version = "0.2", optional = true }
+lrz-zcash-note-encryption = { package = "zcash_note_encryption", version = "0.5.1", optional = true }
+lrz-zcash-primitives = { package = "zcash_primitives", version = "=0.31.0-pre.0", optional = true, default-features = false, features = ["std"] }
+lrz-zip32 = { package = "zip32", version = "0.3", optional = true }
 
 halo2-gadgets = { package = "zakura-halo2-gadgets", version = "2.0", optional = true, default-features = false }
 halo2-poseidon = { package = "zakura-halo2-poseidon", version = "2.0", optional = true }
