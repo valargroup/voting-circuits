@@ -12,8 +12,6 @@ readme = "README.md"
 # Keep this exact so a published release cannot resolve a different circuit dependency graph.
 voting-crypto-deps = { path = "voting-crypto-deps", version = "=0.2.4", default-features = false }
 blake2b_simd = "1"
-# incrementalmerkletree is the Orchard Merkle API line mirrored by delegation witness construction.
-incrementalmerkletree = "0.8.1"
 lazy_static = "1"
 # zip_eq makes length-pairing fail loudly if fixed-size share arrays are ever generalized.
 itertools = "0.14.0"
@@ -25,7 +23,6 @@ imt-tree = { version = "=0.2.0", optional = true }
 
 [dev-dependencies]
 criterion = "0.8"
-incrementalmerkletree = "0.8.1"
 # Benches only: lets `benches/delegation.rs` drive the prover from a
 # deterministic RNG, so prepared and unprepared proving can be compared
 # byte for byte.

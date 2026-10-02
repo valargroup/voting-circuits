@@ -24,11 +24,11 @@ voting-crypto-deps = { version = "0.2", default-features = false, features = ["v
 
 The equivalent `lrz-vct` feature selects the LRZ packages. Individual default
 packages can also be selected with the clean `pasta`, `gadgets`, `poseidon`,
-`proofs`, `orchard`, `sinsemilla`, and `rand` features or their `lrz-*`
-counterparts. The default feature set and `lrz` aggregate include the matching
-RNG crate (`rand` 0.10 Zakura, `rand` 0.8 LRZ) so consumers share one coherent
-RNG trait family with the selected backend. Features from the two package
-families cannot be mixed.
+`proofs`, `orchard`, `sinsemilla`, `rand`, `incrementalmerkletree`, `zip32`,
+and `note-encryption` features or their `lrz-*` counterparts. The default
+feature set and `lrz` aggregate include the matching RNG crate (`rand` 0.10
+Zakura, `rand` 0.8 LRZ) so consumers share one coherent RNG trait family with
+the selected backend. Features from the two package families cannot be mixed.
 
 The default Zakura package family currently requires Rust 1.91; the LRZ family
 supports Rust 1.86.

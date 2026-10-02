@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- `voting-crypto-deps` now reexports the selected backend's
+  `incrementalmerkletree`, `zip32`, and `zcash_note_encryption` crates as
+  `voting_crypto_deps::{incrementalmerkletree, zip32, zcash_note_encryption}`,
+  behind the new `incrementalmerkletree`, `zip32`, and `note-encryption`
+  features and their `lrz-*` counterparts. The default feature set and the
+  `lrz` aggregate enable them.
+
 ## v0.12.2
 
 ### Changed

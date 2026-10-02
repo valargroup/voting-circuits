@@ -1758,7 +1758,6 @@ dependencies = [
  "blake2b_simd",
  "criterion",
  "imt-tree",
- "incrementalmerkletree",
  "itertools 0.14.0",
  "lazy_static",
  "rand_core 0.10.1",
@@ -1773,6 +1772,7 @@ dependencies = [
  "halo2_gadgets",
  "halo2_poseidon",
  "halo2_proofs",
+ "incrementalmerkletree",
  "orchard",
  "pasta_curves",
  "rand 0.10.2",
@@ -1787,7 +1787,9 @@ dependencies = [
  "zakura-primitives",
  "zakura-reddsa",
  "zakura-sinsemilla",
+ "zcash_note_encryption",
  "zcash_primitives",
+ "zip32",
 ]
 
 [[package]]
