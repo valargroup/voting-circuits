@@ -2007,9 +2007,9 @@ mod tests {
     };
     use crate::ff::Field;
     use crate::rand::rngs::OsRng;
-    use incrementalmerkletree::{Hashable, Level};
     use std::string::{String, ToString};
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
+    use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
     use voting_crypto_deps::orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
         note::{commitment::ExtractedNoteCommitment, Note, NoteVersion, Rho},

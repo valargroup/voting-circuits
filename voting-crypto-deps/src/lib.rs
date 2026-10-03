@@ -6,7 +6,7 @@
 //! `lrz-*` features. Mixing the two package families, or selecting neither
 //! family, is an error.
 //!
-//! The facade itself supports Rust 1.86 in LRZ mode. The default Zakura
+//! The facade itself supports Rust 1.88 in LRZ mode. The default Zakura
 //! packages currently require Rust 1.91.
 
 #![deny(missing_debug_implementations)]
@@ -21,6 +21,9 @@
         feature = "orchard",
         feature = "rand",
         feature = "sinsemilla",
+        feature = "incrementalmerkletree",
+        feature = "zip32",
+        feature = "note-encryption",
         feature = "validator",
     ),
     any(
@@ -31,6 +34,9 @@
         feature = "lrz-orchard",
         feature = "lrz-rand",
         feature = "lrz-sinsemilla",
+        feature = "lrz-incrementalmerkletree",
+        feature = "lrz-zip32",
+        feature = "lrz-note-encryption",
         feature = "lrz-validator",
     )
 ))]
@@ -44,6 +50,9 @@ compile_error!("Zakura and LRZ dependency features cannot be enabled together");
     feature = "orchard",
     feature = "rand",
     feature = "sinsemilla",
+    feature = "incrementalmerkletree",
+    feature = "zip32",
+    feature = "note-encryption",
     feature = "validator",
     feature = "lrz-pasta",
     feature = "lrz-gadgets",
@@ -52,6 +61,9 @@ compile_error!("Zakura and LRZ dependency features cannot be enabled together");
     feature = "lrz-orchard",
     feature = "lrz-rand",
     feature = "lrz-sinsemilla",
+    feature = "lrz-incrementalmerkletree",
+    feature = "lrz-zip32",
+    feature = "lrz-note-encryption",
     feature = "lrz-validator",
 )))]
 compile_error!("enable at least one Zakura or LRZ dependency feature");
@@ -62,16 +74,23 @@ pub use ::halo2_gadgets;
 pub use ::halo2_poseidon;
 #[cfg(feature = "proofs")]
 pub use ::halo2_proofs;
+#[cfg(feature = "incrementalmerkletree")]
+pub use ::incrementalmerkletree;
 #[cfg(feature = "orchard")]
 pub use ::orchard;
 #[cfg(feature = "pasta")]
 pub use ::pasta_curves;
-#[cfg(feature = "rand")]
+#[cfg(any(feature = "rand", feature = "lrz-rand"))]
+use ::rand as selected_rand;
+
+/// The RNG traits of the selected backend's `rand` 0.10, and an infallible
+/// operating-system RNG.
+#[cfg(any(feature = "rand", feature = "lrz-rand"))]
 pub mod rand {
-    pub use ::rand::{CryptoRng, Rng};
+    pub use crate::selected_rand::{CryptoRng, Rng};
 
     pub mod rngs {
-        use ::rand::{
+        use crate::selected_rand::{
             rand_core::{TryCryptoRng, TryRng, UnwrapErr},
             rngs::SysRng,
         };
@@ -103,8 +122,12 @@ pub mod rand {
 pub use ::reddsa;
 #[cfg(feature = "sinsemilla")]
 pub use ::sinsemilla;
+#[cfg(feature = "note-encryption")]
+pub use ::zcash_note_encryption;
 #[cfg(feature = "validator")]
 pub use ::zcash_primitives;
+#[cfg(feature = "zip32")]
+pub use ::zip32;
 
 #[cfg(feature = "lrz-gadgets")]
 pub use lrz_halo2_gadgets as halo2_gadgets;
@@ -112,18 +135,22 @@ pub use lrz_halo2_gadgets as halo2_gadgets;
 pub use lrz_halo2_poseidon as halo2_poseidon;
 #[cfg(feature = "lrz-proofs")]
 pub use lrz_halo2_proofs as halo2_proofs;
+#[cfg(feature = "lrz-incrementalmerkletree")]
+pub use lrz_incrementalmerkletree as incrementalmerkletree;
 #[cfg(feature = "lrz-orchard")]
 pub use lrz_orchard as orchard;
 #[cfg(feature = "lrz-pasta")]
 pub use lrz_pasta_curves as pasta_curves;
-#[cfg(feature = "lrz-rand")]
-pub use lrz_rand as rand;
 #[cfg(feature = "lrz-validator")]
 pub use lrz_reddsa as reddsa;
 #[cfg(feature = "lrz-sinsemilla")]
 pub use lrz_sinsemilla as sinsemilla;
+#[cfg(feature = "lrz-note-encryption")]
+pub use lrz_zcash_note_encryption as zcash_note_encryption;
 #[cfg(feature = "lrz-validator")]
 pub use lrz_zcash_primitives as zcash_primitives;
+#[cfg(feature = "lrz-zip32")]
+pub use lrz_zip32 as zip32;
 
 #[cfg(all(test, any(feature = "validator", feature = "lrz-validator")))]
 mod tests {

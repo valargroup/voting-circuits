@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- `voting-crypto-deps` now reexports the selected backend's
+  `incrementalmerkletree`, `zip32`, and `zcash_note_encryption` crates as
+  `voting_crypto_deps::{incrementalmerkletree, zip32, zcash_note_encryption}`,
+  behind the new `incrementalmerkletree`, `zip32`, and `note-encryption`
+  features and their `lrz-*` counterparts. The default feature set and the
+  `lrz` aggregate enable them.
+
+### Changed
+
+- **Breaking:** Updated the LRZ cryptography package family to the
+  librustzcash NU7 pre-release generation: `orchard` 0.16, `halo2_proofs` 0.4,
+  `halo2_gadgets` 0.6, `halo2_poseidon` 0.2, `pasta_curves` 0.6, `sinsemilla`
+  0.2, `reddsa` 0.6, `incrementalmerkletree` 0.9, `zip32` 0.3,
+  `zcash_note_encryption` 0.5.1, and `zcash_primitives` `=0.31.0-pre.0`.
+  The LRZ backend now requires Rust 1.88.
+- **Breaking:** With `lrz-rand`, `voting_crypto_deps::rand` is now the same
+  `rand` 0.10 facade the Zakura backend exposes (`CryptoRng`, `Rng`, and
+  `rngs::OsRng`) instead of a reexport of the `rand` 0.8 crate.
+
 ## v0.12.2
 
 ### Changed
