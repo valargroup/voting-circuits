@@ -45,7 +45,9 @@ lrz-poseidon = ["dep:lrz-halo2-poseidon"]
 lrz-proofs = ["dep:lrz-halo2-proofs"]
 lrz-orchard = ["dep:lrz-orchard"]
 lrz-sinsemilla = ["dep:lrz-sinsemilla"]
-lrz-rand = ["dep:lrz-rand"]
+# Both backends use `rand` 0.10, so `lrz-rand` enables the same dependency as
+# `rand`.
+lrz-rand = ["dep:rand"]
 lrz-incrementalmerkletree = ["dep:lrz-incrementalmerkletree"]
 lrz-zip32 = ["dep:lrz-zip32"]
 lrz-note-encryption = ["dep:lrz-zcash-note-encryption"]
@@ -78,7 +80,6 @@ lrz-halo2-proofs = { package = "halo2_proofs", version = "0.4", optional = true,
 lrz-orchard = { package = "orchard", version = "0.16", optional = true, features = ["circuit", "unstable-voting-circuits"] }
 lrz-pasta-curves = { package = "pasta_curves", version = "0.6", optional = true }
 lrz-reddsa = { package = "reddsa", version = "0.6", optional = true, default-features = false, features = ["std"] }
-lrz-rand = { package = "rand", version = "0.10", optional = true, default-features = false, features = ["sys_rng"] }
 lrz-sinsemilla = { package = "sinsemilla", version = "0.2", optional = true }
 lrz-zcash-note-encryption = { package = "zcash_note_encryption", version = "0.5.1", optional = true }
 lrz-zcash-primitives = { package = "zcash_primitives", version = "=0.31.0-pre.0", optional = true, default-features = false, features = ["std"] }

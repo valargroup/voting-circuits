@@ -80,10 +80,8 @@ pub use ::incrementalmerkletree;
 pub use ::orchard;
 #[cfg(feature = "pasta")]
 pub use ::pasta_curves;
-#[cfg(feature = "rand")]
+#[cfg(any(feature = "rand", feature = "lrz-rand"))]
 use ::rand as selected_rand;
-#[cfg(feature = "lrz-rand")]
-use lrz_rand as selected_rand;
 
 /// The RNG traits of the selected backend's `rand` 0.10, and an infallible
 /// operating-system RNG.
