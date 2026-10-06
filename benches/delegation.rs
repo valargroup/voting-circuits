@@ -4,7 +4,6 @@ use std::{
 };
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use incrementalmerkletree::{Hashable, Level};
 use voting_circuits::delegation::{
     build_delegation_bundle, DelegationBundle, ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
 };
@@ -14,6 +13,7 @@ use voting_crypto_deps::halo2_proofs::{
     plonk::{self, SingleVerifier},
     transcript::{Blake2bRead, Blake2bWrite},
 };
+use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
 use voting_crypto_deps::orchard::{
     constants::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH,
     keys::{FullViewingKey, Scope, SpendingKey},
@@ -83,8 +83,7 @@ fn rayon_threads() -> usize {
         })
 }
 
-/// Zakura only: LRZ is on rand 0.8, and has no prepared tables to compare
-/// against in the first place.
+/// Zakura only: LRZ has no prepared tables to compare against.
 #[cfg(not(feature = "lrz"))]
 /// A deterministic RNG, so the prepared and unprepared provers can be driven
 /// with byte-identical randomness. SplitMix64; not cryptographic, and used

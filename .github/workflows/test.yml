@@ -46,8 +46,17 @@ jobs:
       - name: Verify package against published dependencies
         run: cargo package --locked
 
+      - name: Verify imt-tree package against published dependencies
+        run: cargo package --locked -p imt-tree
+
       - name: Run short tests
         run: cargo test --locked
+
+      - name: Test imt-tree
+        run: cargo test --locked -p imt-tree
+
+      - name: Check imt-tree benchmark
+        run: cargo bench --locked -p imt-tree --bench tree_build -- --test
 
       - name: Check minimal default VCT facade
         run: |
@@ -61,7 +70,7 @@ jobs:
 
       - name: Check default Zakura dependency graph
         run: |
-          if cargo tree --locked -e normal --prefix none \
+          if cargo tree --locked --workspace -e normal --prefix none \
             | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla|zcash_primitives) v'; then
             echo "LRZ cryptography package found in the default Zakura dependency graph"
             exit 1
@@ -87,6 +96,9 @@ jobs:
             exit 1
           fi
 
+      - name: Run IMT integration tests
+        run: cargo test --locked --features unstable-internal-api --test imt_circuit_integration
+
       - name: Check verifying-key fingerprints
         run: cargo test --locked vk_fingerprint_unchanged -- --ignored --test-threads=1
 
@@ -98,6 +110,14 @@ jobs:
           fi
           if cargo check --locked -p voting-crypto-deps --features lrz; then
             echo "The default Zakura and LRZ backends must remain mutually exclusive"
+            exit 1
+          fi
+          if cargo check --locked -p imt-tree --no-default-features; then
+            echo "imt-tree must select a cryptography backend"
+            exit 1
+          fi
+          if cargo check --locked -p imt-tree --all-features; then
+            echo "The imt-tree zakura and upstream backends must remain mutually exclusive"
             exit 1
           fi
 
@@ -119,7 +139,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.86.0
+        uses: dtolnay/rust-toolchain@1.88.0
 
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
@@ -127,8 +147,17 @@ jobs:
       - name: Verify LRZ package against published dependencies
         run: cargo package --locked --no-default-features --features lrz
 
+      - name: Verify LRZ imt-tree package against published dependencies
+        run: cargo package --locked -p imt-tree --no-default-features --features upstream
+
       - name: Run short tests
         run: cargo test --locked --no-default-features --features lrz
+
+      - name: Test LRZ imt-tree
+        run: cargo test --locked -p imt-tree --no-default-features --features upstream
+
+      - name: Check LRZ imt-tree benchmark
+        run: cargo bench --locked -p imt-tree --no-default-features --features upstream --bench tree_build -- --test
 
       - name: Test LRZ preparation fallback on all circuits
         run: cargo test --locked --no-default-features --features lrz prepared_proving_roundtrip -- --ignored --test-threads=1
@@ -138,6 +167,12 @@ jobs:
           if cargo tree --locked --no-default-features --features lrz -e normal --prefix none \
             | grep -Eq '^zakura-'; then
             echo "Zakura package found in the LRZ dependency graph"
+            exit 1
+          fi
+          if cargo tree --locked -p imt-tree --no-default-features --features upstream \
+            -e normal --prefix none \
+            | grep -Eq '^zakura-'; then
+            echo "Zakura package found in the LRZ imt-tree dependency graph"
             exit 1
           fi
 
@@ -151,7 +186,7 @@ jobs:
             exit 1
           fi
 
-      - name: Run IMT integration tests
+      - name: Run LRZ IMT integration tests
         run: cargo test --locked --no-default-features --features lrz,unstable-internal-api --test imt_circuit_integration
 
       - name: Check delegation benchmark
@@ -182,11 +217,14 @@ jobs:
 
       - name: Check default Zakura dependency graph
         run: |
-          if cargo tree --locked -e normal --prefix none \
+          if cargo tree --locked --workspace -e normal --prefix none \
             | grep -Eq '^(halo2_gadgets|halo2_legacy_pdqsort|halo2_poseidon|halo2_proofs|orchard|pasta_curves|reddsa|sinsemilla|zcash_primitives) v'; then
             echo "LRZ cryptography package found in the default Zakura dependency graph"
             exit 1
           fi
+
+      - name: Test imt-tree
+        run: cargo test --locked -p imt-tree
 
       - name: Run long tests
         run: cargo test --locked -- --ignored --skip row_budget --skip cost_breakdown

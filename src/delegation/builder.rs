@@ -968,9 +968,9 @@ mod tests {
     use crate::delegation::imt::{ImtError, SpacedLeafImtProvider};
     use crate::ff::Field;
     use crate::rand::rngs::OsRng;
-    use incrementalmerkletree::{Hashable, Level};
     use std::cell::{Cell, RefCell};
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
+    use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
     use voting_crypto_deps::orchard::{
         constants::MERKLE_DEPTH_ORCHARD,
         keys::{FullViewingKey, Scope, SpendingKey},

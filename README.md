@@ -34,7 +34,7 @@ use voting_circuits::vote_proof::Circuit as VoteProofCircuit;
 ```
 
 The default Zakura backend requires Rust 1.91. The alternate LRZ backend
-supports Rust 1.86.
+supports Rust 1.88.
 
 ### Cryptography backend
 
@@ -52,6 +52,18 @@ features without selecting `lrz` also fails to compile, so a build cannot
 silently omit or combine backends.
 
 Protocol domain-separation tags are registered in [`src/domain_tags.rs`](src/domain_tags.rs). Hash-owning modules document their own preimage layout, but new tags should be added to the registry first so the encoding rule and distinctness test stay centralized.
+
+## Workspace crates
+
+| Crate | Path | Role |
+|-------|------|------|
+| `voting-circuits` | `./` | Delegation, vote-proof, and share-reveal circuits. |
+| `voting-crypto-deps` | `voting-crypto-deps/` | Selectable Zakura and LRZ cryptography dependency facade. |
+| `imt-tree` | `imt-tree/` | Indexed Merkle Tree for nullifier non-membership proofs: Poseidon hashing, punctured-range tree building, and exclusion proofs for the delegation circuit. Versioned independently; see [`imt-tree/CHANGELOG.md`](imt-tree/CHANGELOG.md). |
+
+Each crate selects its cryptography backend the same way: the default
+features select Zakura, and `lrz` (`upstream` for `imt-tree`) selects the
+crates.io family.
 
 ## Package layout
 
@@ -115,7 +127,7 @@ Reusable halo2 gadgets that appear in more than one circuit:
 ## Dependency on Orchard
 
 The default backend uses the Zakura Orchard package. The opt-in LRZ backend
-uses the API-compatible crates.io `orchard 0.15` release. Both enable the
+uses the API-compatible crates.io `orchard 0.16` release. Both enable the
 `circuit` and `unstable-voting-circuits` features required by the governance proofs. The
 delegation bundle builder requires Ironwood V3 notes and constructs its
 synthetic signed and output notes as V3.

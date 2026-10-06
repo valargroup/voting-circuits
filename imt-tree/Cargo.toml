@@ -1,0 +1,30 @@
+[package]
+name = "imt-tree"
+version = "0.5.4"
+edition = "2021"
+rust-version = "1.88"
+description = "Indexed Merkle Tree for nullifier non-membership proofs"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/valargroup/voting-circuits"
+readme = "README.md"
+
+[features]
+default = ["zakura"]
+upstream = ["voting-crypto-deps/lrz-vct"]
+zakura = ["voting-crypto-deps/vct"]
+
+[dependencies]
+anyhow = "1.0"
+hex = "0.4"
+# Keep this exact so a published release cannot resolve a different
+# cryptography dependency graph from the voting-circuits release it pairs with.
+voting-crypto-deps = { path = "../voting-crypto-deps", version = "=0.2.4", default-features = false }
+rayon = "1"
+
+[dev-dependencies]
+criterion = "0.5"
+rand = "0.8"
+
+[[bench]]
+name = "tree_build"
+harness = false

@@ -2,7 +2,7 @@
 name = "voting-circuits"
 version = "0.12.2"
 edition = "2021"
-rust-version = "1.86.0"
+rust-version = "1.88.0"
 description = "Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/valargroup/voting-circuits"
@@ -12,20 +12,16 @@ readme = "README.md"
 # Keep this exact so a published release cannot resolve a different circuit dependency graph.
 voting-crypto-deps = { path = "voting-crypto-deps", version = "=0.2.4", default-features = false }
 blake2b_simd = "1"
-# incrementalmerkletree is the Orchard Merkle API line mirrored by delegation witness construction.
-incrementalmerkletree = "0.8.1"
 lazy_static = "1"
 # zip_eq makes length-pairing fail loudly if fixed-size share arrays are ever generalized.
 itertools = "0.14.0"
 # Reference IMT implementation used by the opt-in integration tests to
-# cross-check the in-tree provider. It is optional so selecting the Zakura
-# backend does not activate an upstream cryptography family through test-only
-# code while imt-tree's own backend migration is developed independently.
-imt-tree = { version = "=0.2.0", optional = true }
+# cross-check the in-tree provider. Its cryptography backend is selected by
+# `unstable-internal-api` to match this crate's active backend.
+imt-tree = { path = "imt-tree", version = "0.5.4", optional = true, default-features = false }
 
 [dev-dependencies]
 criterion = "0.8"
-incrementalmerkletree = "0.8.1"
 # Benches only: lets `benches/delegation.rs` drive the prover from a
 # deterministic RNG, so prepared and unprepared proving can be compared
 # byte for byte.
@@ -44,9 +40,9 @@ needless_range_loop = "allow"
 
 [features]
 # Use Zakura's cryptography family by default.
-default = ["voting-crypto-deps/default"]
+default = ["voting-crypto-deps/default", "imt-tree?/zakura"]
 # Use the crates.io librustzcash cryptography family.
-lrz = ["voting-crypto-deps/lrz"]
+lrz = ["voting-crypto-deps/lrz", "imt-tree?/upstream"]
 # Re-exports `delegation::build_nullifier_list`, used by the in-tree IMT
 # integration test. Not part of the stable public API; downstream consumers
 # should not enable this.
@@ -65,4 +61,27 @@ required-features = ["unstable-internal-api"]
 
 [workspace]
 resolver = "2"
-members = ["voting-crypto-deps"]
+members = ["imt-tree", "voting-crypto-deps"]
+
+# Zakura 2.0.0 on crates.io pins pre-release RustCrypto crates (bip32
+# 0.6.0-pre.1, crypto-common 0.2.0-rc.1) that cannot share a lockfile with the
+# LRZ backend's stable releases. This fork migrates Zakura to the stable stack.
+# Remove these entries once zakura-core/common publishes that migration
+# (zakura-core/common#538).
+[patch.crates-io]
+zakura-address = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-bls12-381 = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-halo2-gadgets = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-halo2-legacy-pdqsort = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-halo2-poseidon = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-halo2-proofs = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-jubjub = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-orchard = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-pasta-curves = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-primitives = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-protocol = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-reddsa = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-redjubjub = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-sapling-crypto = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-sinsemilla = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
+zakura-transparent = { git = "https://github.com/zodl-inc/zakura-common", rev = "c714f350a629d5419a1c341c192812ce58cb4013" }
