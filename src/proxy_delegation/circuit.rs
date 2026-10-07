@@ -15,10 +15,8 @@
 //! - C12 w = sum(shares) != 0.
 //! - C13 DC = Poseidon(DOMAIN_VC, round, shares_hash, 0, delegate_index) -> instance.
 //! - C14 dc_slot in [0, 8) (3-bit short lookup); slot nullifier -> instance.
-//! - C15 1 <= delegate_index <= bound (bound from instance).
 
 use std::vec::Vec;
-use crate::ff::Field as _ReviewField;
 
 use voting_crypto_deps::halo2_gadgets::{
     ecc::{
@@ -87,12 +85,6 @@ const VOTING_ROUND_ID_PUBLIC_OFFSET: usize = 7;
 const EA_PK_X_PUBLIC_OFFSET: usize = 8;
 const EA_PK_Y_PUBLIC_OFFSET: usize = 9;
 const DC_SLOT_NULLIFIER_PUBLIC_OFFSET: usize = 10;
-/// REVIEW: public delegate_index_bound (1 <= d <= bound).
-const DELEGATE_INDEX_BOUND_PUBLIC_OFFSET: usize = 11;
-/// REVIEW: which track hosts the two bound range checks (0 = primary, 1 = track B).
-pub(crate) const BOUND_TRACK: u8 = 1;
-/// REVIEW: 10-bit words per bound range check (4 => 40 bits).
-const BOUND_WORDS: usize = 4;
 /// Bits of the per-VAN-chain DC slot index (cap = 2^DC_SLOT_BITS = 8 DCs per chain).
 pub(crate) const DC_SLOT_BITS: usize = 3;
 
@@ -218,8 +210,6 @@ pub struct Circuit {
     pub(crate) delegate_index: Value<pallas::Base>,
     /// Per-VAN-chain DC slot index in [0, 2^DC_SLOT_BITS).
     pub(crate) dc_slot: Value<pallas::Base>,
-    /// REVIEW: d - 1 and bound - d witnesses come from these.
-    pub(crate) delegate_index_bound: Value<pallas::Base>,
 }
 
 impl plonk::Circuit<pallas::Base> for Circuit {
@@ -730,43 +720,6 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             config.advices[0],
             self.delegate_index,
         )?;
-        // ---- REVIEW C15: 1 <= delegate_index <= bound (public) ----
-        {
-            let bound = layouter.assign_region(
-                || "copy bound",
-                |mut region| {
-                    region.assign_advice_from_instance(
-                        || "bound",
-                        config.primary,
-                        DELEGATE_INDEX_BOUND_PUBLIC_OFFSET,
-                        config.advices[0],
-                        0,
-                    )
-                },
-            )?;
-            let one = config.constant(&mut layouter, "one", pallas::Base::one())?;
-            let a = assign_free_advice(
-                layouter.namespace(|| "d - 1"),
-                config.advices[0],
-                self.delegate_index.map(|d| d - pallas::Base::one()),
-            )?;
-            let b = assign_free_advice(
-                layouter.namespace(|| "bound - d"),
-                config.advices[0],
-                self.delegate_index_bound.zip(self.delegate_index).map(|(m, d)| m - d),
-            )?;
-            let a1 = config.add_chip().add(layouter.namespace(|| "a + 1"), &a, &one)?;
-            layouter.assign_region(|| "a + 1 == d", |mut region| region.constrain_equal(a1.cell(), delegate_index.cell()))?;
-            let bd = config.add_chip().add(layouter.namespace(|| "b + d"), &b, &delegate_index)?;
-            layouter.assign_region(|| "b + d == bound", |mut region| region.constrain_equal(bd.cell(), bound.cell()))?;
-            if BOUND_TRACK == 0 {
-                config.range_check.copy_check(layouter.namespace(|| "d-1 range"), a, BOUND_WORDS, true)?;
-                config.range_check.copy_check(layouter.namespace(|| "bound-d range"), b, BOUND_WORDS, true)?;
-            } else {
-                config.range_check_b.copy_check(layouter.namespace(|| "d-1 range"), a, BOUND_WORDS, true)?;
-                config.range_check_b.copy_check(layouter.namespace(|| "bound-d range"), b, BOUND_WORDS, true)?;
-            }
-        }
         let dc = vote_commitment::vote_commitment_poseidon(
             &config.poseidon_config,
             &mut layouter,
@@ -800,7 +753,6 @@ pub struct Instance {
     pub ea_pk_x: pallas::Base,
     pub ea_pk_y: pallas::Base,
     pub dc_slot_nullifier: pallas::Base,
-    pub delegate_index_bound: pallas::Base,
 }
 
 impl Instance {
@@ -818,7 +770,6 @@ impl Instance {
             self.ea_pk_x,
             self.ea_pk_y,
             self.dc_slot_nullifier,
-            self.delegate_index_bound,
         ]
     }
 }

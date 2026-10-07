@@ -70,7 +70,6 @@ pub(super) struct Fx {
     pub instance_delegate_index: Option<u64>,
     pub instance_dc_proposal: u64,
     pub dc_slot: u64,
-    pub bound: u64,
 }
 
 impl Default for Fx {
@@ -88,7 +87,6 @@ impl Default for Fx {
             instance_delegate_index: None,
             instance_dc_proposal: 0,
             dc_slot: 3,
-            bound: 5000,
         }
     }
 }
@@ -196,7 +194,6 @@ pub(super) fn build(fx: &Fx) -> Built {
         ea_pk: Value::known(ea_pk),
         delegate_index: Value::known(pallas::Base::from(fx.delegate_index)),
         dc_slot: Value::known(pallas::Base::from(fx.dc_slot)),
-        delegate_index_bound: Value::known(pallas::Base::from(fx.bound)),
     };
     let instance = Instance {
         van_nullifier: nf,
@@ -210,7 +207,6 @@ pub(super) fn build(fx: &Fx) -> Built {
         ea_pk_x: *ea_pk.coordinates().unwrap().x(),
         ea_pk_y: *ea_pk.coordinates().unwrap().y(),
         dc_slot_nullifier: dc_slot_nullifier_hash(nk, round, rand, fx.dc_slot as u8),
-        delegate_index_bound: pallas::Base::from(fx.bound),
     };
     Built {
         circuit,
@@ -619,22 +615,6 @@ fn print_slot_vector() {
     println!("VEC slot_nf(nk=1,round=42,rand=5,slot=3) = {}", nf.to_repr().iter().map(|b| format!("{b:02x}")).collect::<String>());
 }
 
-#[test]
-fn review_bound_eq_ok() { let mut fx = Fx::default(); fx.bound = fx.delegate_index; assert!(verify(&fx)); }
-#[test]
-fn review_bound_lt_rejected() { let mut fx = Fx::default(); fx.bound = fx.delegate_index - 1; assert!(!verify(&fx)); }
-#[test]
-fn review_bound_d_zero_rejected() { let mut fx = Fx::default(); fx.delegate_index = 0; fx.bound = 10; assert!(!verify(&fx)); }
-#[test]
-fn review_bound_u32max_ok() { let mut fx = Fx::default(); fx.delegate_index = u32::MAX as u64; fx.bound = u32::MAX as u64; assert!(verify(&fx)); }
-#[test]
-#[ignore]
-fn review_row_budget() {
-    use voting_crypto_deps::halo2_proofs::dev::CircuitCost;
-    let b = build(&Fx::default());
-    let cost = CircuitCost::<vesta::Point, _>::measure(K, &b.circuit);
-    println!("REVIEW ZKP4+bound track={} filled: {cost:?}", super::BOUND_TRACK);
-}
 
 /// Last-moment single-share DC layout: all weight in share 0, shares 1..15 zero.
 #[test]
