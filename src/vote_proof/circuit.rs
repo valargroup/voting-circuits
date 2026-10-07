@@ -208,8 +208,9 @@ pub(super) fn domain_van_nullifier() -> pallas::Base {
 /// ```
 ///
 /// Single `ConstantLength<4>` call (2 permutations at rate=2).
-/// Used by the builder and tests to compute the expected VAN nullifier.
-pub(super) fn van_nullifier_hash(
+/// Used by the builders and tests to compute the expected VAN nullifier;
+/// ZKP #4 condition 5 publishes the same value.
+pub(crate) fn van_nullifier_hash(
     vsk_nk: pallas::Base,
     voting_round_id: pallas::Base,
     vote_authority_note_old: pallas::Base,
