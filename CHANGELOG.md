@@ -10,6 +10,15 @@
   circuit opens as proposal 0 into the delegate's pool. The statement has 14
   conditions and 11 public inputs at K=11, and registers the
   `"proxy delegation slot"` domain tag.
+- Added `proxy_delegation::build_proxy_delegation_proof`, which builds the
+  proxy delegation circuit and public inputs from a VAN spend witness, the
+  delegate index, the delegated ballots, a DC slot, a `dc_seed` and a
+  `ShareLayout`, together with `create_proxy_delegation_proof`,
+  `verify_proxy_delegation_proof` and the cached-key, warm-up and
+  preparation helpers the other circuits have. Every share secret is derived
+  from `dc_seed` through PRF domains `0x10` to `0x14` under the
+  `"ZcashVoteProxyEx"` personalization, so rebuilding with the same inputs
+  reproduces the same delegation commitment.
 
 ## v0.15.0
 

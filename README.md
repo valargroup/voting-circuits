@@ -88,7 +88,9 @@ src/
 │
 └── proxy_delegation/             # ZKP #4 — Proxy Delegation circuit (K=11)
     ├── mod.rs                    #   Statement (conditions) and exports
-    └── circuit.rs                #   14-condition halo2 circuit
+    ├── circuit.rs                #   14-condition halo2 circuit
+    ├── builder.rs                #   Builder producing ProxyDelegationBundle
+    └── prove.rs                  #   Prove / verify helpers
 
 benches/
 └── delegation.rs                 # Criterion benchmarks for delegation proving
