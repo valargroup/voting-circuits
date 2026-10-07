@@ -8,4 +8,3 @@
 mod circuit;
 
 pub use circuit::{delegation_commitment_hash, Circuit, Instance, K};
-mod circuit_b1;
