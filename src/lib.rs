@@ -29,3 +29,4 @@ pub use shares_hash::{share_commitment, shares_hash, shares_hash_from_comms};
 pub mod delegation;
 pub mod share_reveal;
 pub mod vote_proof;
+pub mod proxy_delegation;
