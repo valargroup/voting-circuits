@@ -149,7 +149,7 @@ fn point_xy(point: pallas::Affine) -> Option<(pallas::Base, pallas::Base)> {
 /// This is ZKP #2's vote share PRF with `dc_seed` as the key. It hashes no
 /// round, proposal or VAN, because `dc_seed` already binds them (see the
 /// caller contract of [`build_proxy_delegation_proof`]).
-fn proxy_share_prf(dc_seed: &[u8; 32], domain: u8, share_index: u8) -> [u8; 64] {
+pub(super) fn proxy_share_prf(dc_seed: &[u8; 32], domain: u8, share_index: u8) -> [u8; 64] {
     *blake2b_simd::Params::new()
         .hash_length(64)
         .personal(domain_tags::PROXY_PRF_PERSONALIZATION)

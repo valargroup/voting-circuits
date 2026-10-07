@@ -1788,12 +1788,15 @@ dependencies = [
  "blake2b_simd",
  "criterion",
  "halo2_proofs 0.3.5",
+ "hex",
  "imt-tree",
  "itertools 0.14.0",
  "lazy_static",
  "pasta_curves 0.5.2",
  "rand_core 0.10.1",
  "rayon",
+ "serde",
+ "serde_json",
  "voting-crypto-deps",
 ]
 

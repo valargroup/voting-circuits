@@ -36,6 +36,8 @@
 mod builder;
 mod circuit;
 mod prove;
+#[cfg(test)]
+mod vectors;
 
 pub use builder::{
     build_proxy_delegation_proof, ProxyDelegationBuildError, ProxyDelegationBundle, ShareLayout,

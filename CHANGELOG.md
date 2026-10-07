@@ -19,6 +19,12 @@
   from `dc_seed` through PRF domains `0x10` to `0x14` under the
   `"ZcashVoteProxyEx"` personalization, so rebuilding with the same inputs
   reproduces the same delegation commitment.
+- Added the proxy delegation circuit vectors,
+  `test-vectors/proxy_delegation_circuit_v1.json`, which ship with the crate.
+  `zkp4_instance` pins the public-input packing and `share_secrets` pins the
+  share secrets derived from `dc_seed`. The tests recompute every case, and
+  `VOTING_CIRCUITS_WRITE_VECTORS=1 cargo test --locked --lib
+  write_circuit_vectors -- --ignored` rewrites the file as a contract change.
 
 ## v0.15.0
 
