@@ -14,7 +14,8 @@
 //!   replay domains. These are encoded as a zero-padded 32-byte little-endian
 //!   integer and parsed as a canonical Pallas base-field element.
 //! - Single-byte PRF domain tags are used as byte preimage fields when one
-//!   BLAKE2b construction produces several independent vote-proof streams.
+//!   BLAKE2b construction produces several independent vote-proof or
+//!   proxy-delegation streams.
 
 use crate::ff::PrimeField;
 use voting_crypto_deps::pasta_curves::pallas;
@@ -42,6 +43,21 @@ pub const VOTE_PRF_DOMAIN_SHUFFLE: u8 = 0x02;
 pub const VOTE_PRF_DOMAIN_REMAINDER: u8 = 0x03;
 /// PRF domain for single-share vote-proof El Gamal encryption randomness.
 pub const VOTE_PRF_DOMAIN_ELGAMAL_SINGLE_SHARE: u8 = 0x04;
+
+/// Blake2b-512 personalization for ZKP #4 share secrets, which are keyed by
+/// the caller's `dc_seed` rather than the spending key.
+pub const PROXY_PRF_PERSONALIZATION: &[u8; 16] = b"ZcashVoteProxyEx";
+
+/// PRF domain for ZKP #4 El Gamal encryption randomness (standard layout).
+pub const PROXY_PRF_DOMAIN_ELGAMAL: u8 = 0x10;
+/// PRF domain for ZKP #4 share commitment blind factors (both layouts).
+pub const PROXY_PRF_DOMAIN_BLIND: u8 = 0x11;
+/// PRF domain for the ZKP #4 share-order shuffle seed.
+pub const PROXY_PRF_DOMAIN_SHUFFLE: u8 = 0x12;
+/// PRF domain for ZKP #4 remainder distribution weights.
+pub const PROXY_PRF_DOMAIN_REMAINDER: u8 = 0x13;
+/// PRF domain for single-share ZKP #4 El Gamal encryption randomness.
+pub const PROXY_PRF_DOMAIN_ELGAMAL_SINGLE_SHARE: u8 = 0x14;
 
 /// Encodes a short ASCII tag as a canonical Pallas base-field element.
 ///
@@ -154,20 +170,41 @@ mod tests {
     }
 
     #[test]
-    fn vote_prf_domains_are_distinct() {
+    fn proxy_prf_domain_values_are_pinned() {
+        assert_eq!(PROXY_PRF_PERSONALIZATION, b"ZcashVoteProxyEx");
+        assert_eq!(PROXY_PRF_DOMAIN_ELGAMAL, 0x10);
+        assert_eq!(PROXY_PRF_DOMAIN_BLIND, 0x11);
+        assert_eq!(PROXY_PRF_DOMAIN_SHUFFLE, 0x12);
+        assert_eq!(PROXY_PRF_DOMAIN_REMAINDER, 0x13);
+        assert_eq!(PROXY_PRF_DOMAIN_ELGAMAL_SINGLE_SHARE, 0x14);
+    }
+
+    /// The proxy streams have their own personalization, and their domain
+    /// bytes also stay clear of the vote-proof ones.
+    #[test]
+    fn prf_domains_are_distinct() {
+        assert_ne!(PROXY_PRF_PERSONALIZATION, VOTE_PRF_PERSONALIZATION);
         let domains = [
             ("elgamal", VOTE_PRF_DOMAIN_ELGAMAL),
             ("blind", VOTE_PRF_DOMAIN_BLIND),
             ("shuffle", VOTE_PRF_DOMAIN_SHUFFLE),
             ("remainder", VOTE_PRF_DOMAIN_REMAINDER),
             ("single-share elgamal", VOTE_PRF_DOMAIN_ELGAMAL_SINGLE_SHARE),
+            ("proxy elgamal", PROXY_PRF_DOMAIN_ELGAMAL),
+            ("proxy blind", PROXY_PRF_DOMAIN_BLIND),
+            ("proxy shuffle", PROXY_PRF_DOMAIN_SHUFFLE),
+            ("proxy remainder", PROXY_PRF_DOMAIN_REMAINDER),
+            (
+                "proxy single-share elgamal",
+                PROXY_PRF_DOMAIN_ELGAMAL_SINGLE_SHARE,
+            ),
         ];
 
         for (i, (left_name, left)) in domains.iter().enumerate() {
             for (right_name, right) in domains.iter().skip(i + 1) {
                 assert_ne!(
                     left, right,
-                    "vote PRF domains must be distinct: {left_name} and {right_name}"
+                    "PRF domains must be distinct: {left_name} and {right_name}"
                 );
             }
         }

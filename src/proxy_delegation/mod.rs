@@ -33,6 +33,10 @@
 //! not the circuit, keeps `d` on a registered delegate: it accepts a pool share
 //! reveal only for `1 <= d < NextDelegateIndex`.
 
+mod builder;
 mod circuit;
 
+pub use builder::{
+    build_proxy_delegation_proof, ProxyDelegationBuildError, ProxyDelegationBundle, ShareLayout,
+};
 pub use circuit::{dc_slot_nullifier_hash, delegation_commitment_hash, Circuit, Instance, K};

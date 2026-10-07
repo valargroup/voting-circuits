@@ -201,7 +201,7 @@ fn distribute_remainder(
     }
 }
 
-/// Encrypted share output from the vote proof builder.
+/// Encrypted share output from the vote proof and proxy delegation builders.
 ///
 /// Contains the El Gamal ciphertext components (compressed point bytes),
 /// plaintext share value, and encryption randomness. Returned so the caller
@@ -218,7 +218,8 @@ pub struct EncryptedShareOutput {
     pub plaintext_value: u64,
     /// El Gamal randomness r (32 bytes, LE pallas::Base repr).
     /// Deterministically derived from (sk, share_layout, round_id, proposal_id,
-    /// van_commitment, share_index).
+    /// van_commitment, share_index) for a vote, and from (dc_seed, layout,
+    /// share_index) for a delegation commitment.
     pub randomness: [u8; 32],
 }
 

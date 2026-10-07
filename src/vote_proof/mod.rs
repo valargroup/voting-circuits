@@ -26,6 +26,8 @@ pub use builder::{
     build_vote_proof_from_delegation, derive_vote_authority_transition, EncryptedShareOutput,
     VoteAuthorityTransition, VoteProofBundle,
 };
+pub(crate) use builder::{denomination_split_with, extract_vsk, shuffle_with_seed};
+pub(crate) use circuit::van_nullifier_hash;
 pub use circuit::{Circuit, Instance, K};
 pub use prove::{
     prepare_vote_proof_proving, verify_vote_proof, vote_proof_cached_keys, vote_proof_params,
