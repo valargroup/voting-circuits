@@ -13,6 +13,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use voting_crypto_deps::orchard::keys::SpendingKey;
 use voting_crypto_deps::pasta_curves::{arithmetic::CurveAffine, pallas};
 
@@ -31,6 +32,9 @@ use crate::{
 
 /// The committed vector file.
 const COMMITTED_VECTORS: &str = include_str!("../../test-vectors/proxy_delegation_circuit_v1.json");
+
+/// The committed file's SHA-256, frozen by contracts v1, §13.
+const FROZEN_SHA256: &str = "6293658ba866a7738f5d34ae5364559938b8f3b3b8175bbd77ac6b3431e5b883";
 
 /// Where [`write_circuit_vectors`] writes the vector file.
 const VECTOR_FILE_PATH: &str = concat!(
@@ -532,6 +536,16 @@ fn committed_vectors_match_generator() {
     assert!(
         render(&generated) == COMMITTED_VECTORS,
         "the committed file is not formatted as the generator writes it"
+    );
+}
+
+/// The committed file is byte for byte the one contracts v1 froze.
+#[test]
+fn committed_vectors_match_frozen_hash() {
+    assert_eq!(
+        hex::encode(Sha256::digest(COMMITTED_VECTORS)),
+        FROZEN_SHA256,
+        "the vector file changed; any change is a new contract version"
     );
 }
 
