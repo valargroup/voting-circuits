@@ -1,7 +1,8 @@
 //! Vote Commitment integrity gadget.
 //!
-//! Authoritative in-tree definition of the 5-input Poseidon hash used by both
-//! ZKP #2 (vote proof, condition 12) and ZKP #3 (share reveal, condition 2).
+//! Authoritative in-tree definition of the 5-input Poseidon hash used by
+//! ZKP #2 (vote proof, condition 12), ZKP #3 (share reveal, condition 2) and
+//! ZKP #4 (proxy delegation, condition 13, with proposal 0).
 //!
 //! ```text
 //! vote_commitment = Poseidon(DOMAIN_VC, voting_round_id,
@@ -68,8 +69,8 @@ pub(crate) fn vote_commitment_hash(
 /// The `domain_vc` cell must be assigned via `assign_advice_from_constant`
 /// so the value is baked into the verification key.
 ///
-/// Used by ZKP #2 (vote proof, condition 12) and ZKP #3 (share reveal,
-/// condition 2).
+/// Used by ZKP #2 (vote proof, condition 12), ZKP #3 (share reveal,
+/// condition 2) and ZKP #4 (proxy delegation, condition 13).
 pub(crate) fn vote_commitment_poseidon(
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
     layouter: &mut impl Layouter<pallas::Base>,

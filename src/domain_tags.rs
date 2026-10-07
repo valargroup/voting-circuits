@@ -22,7 +22,8 @@ use voting_crypto_deps::pasta_curves::pallas;
 /// Domain tag for Vote Authority Note commitments in the shared vote tree.
 pub const DOMAIN_VAN: u64 = 0;
 
-/// Domain tag for vote commitments in the shared vote tree.
+/// Domain tag for vote commitments in the shared vote tree, including ZKP #4
+/// delegation commitments, which use proposal 0.
 pub const DOMAIN_VC: u64 = 1;
 
 /// Blake2b-512 personalization for vote share secret derivation.
@@ -72,6 +73,12 @@ pub fn share_spend() -> pallas::Base {
     string_domain_tag(b"share spend")
 }
 
+/// Domain tag for ZKP #4 DC slot nullifiers. ZKP #4 adds the slot index to it
+/// (see `proxy_delegation::circuit::DC_SLOT_BITS`).
+pub fn proxy_delegation_slot() -> pallas::Base {
+    string_domain_tag(b"proxy delegation slot")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +115,11 @@ mod tests {
             b"governance authorization",
         );
         assert_string_tag("share spend", share_spend(), b"share spend");
+        assert_string_tag(
+            "proxy delegation slot",
+            proxy_delegation_slot(),
+            b"proxy delegation slot",
+        );
     }
 
     #[test]
@@ -128,6 +140,7 @@ mod tests {
             ("vote authority spend", vote_authority_spend()),
             ("governance authorization", governance_authorization()),
             ("share spend", share_spend()),
+            ("proxy delegation slot", proxy_delegation_slot()),
         ];
 
         for (i, (left_name, left)) in tags.iter().enumerate() {

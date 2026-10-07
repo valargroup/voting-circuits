@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Added the proxy delegation circuit in `voting_circuits::proxy_delegation`.
+  It spends a VAN that has not voted, emits a successor VAN with the weight
+  left over, and publishes a delegation commitment that the share reveal
+  circuit opens as proposal 0 into the delegate's pool. The statement has 14
+  conditions and 11 public inputs at K=11, and registers the
+  `"proxy delegation slot"` domain tag.
+
 ## v0.15.0
 
 ### Changed
