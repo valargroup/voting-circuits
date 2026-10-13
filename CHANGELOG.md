@@ -8,6 +8,9 @@
   default backend now requires Rust 1.97. Updated the LRZ validator family
   to the corresponding stable bip32 releases so both backends resolve together.
 
+- Kept the published IMT as an independent oracle by comparing canonical field
+  encodings across the old and current dependency families.
+
 ## v0.12.2
 
 ### Changed

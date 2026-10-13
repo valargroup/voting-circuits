@@ -20,6 +20,10 @@ itertools = "0.14.0"
 # backend does not activate an upstream cryptography family through test-only
 # code while imt-tree's own backend migration is developed independently.
 imt-tree = { version = "=0.2.0", optional = true }
+# Keep the published IMT as an independent encoding oracle for the new family.
+legacy-pasta-curves = { package = "pasta_curves", version = "0.5", optional = true }
+# The legacy oracle must match the shared maybe-rayon threading configuration.
+legacy-halo2-proofs = { package = "halo2_proofs", version = "0.3", features = ["multicore"], optional = true }
 
 [dev-dependencies]
 criterion = "0.8"
@@ -47,7 +51,7 @@ lrz = ["voting-crypto-deps/lrz"]
 # Re-exports `delegation::build_nullifier_list`, used by the in-tree IMT
 # integration test. Not part of the stable public API; downstream consumers
 # should not enable this.
-unstable-internal-api = ["dep:imt-tree"]
+unstable-internal-api = ["dep:imt-tree", "dep:legacy-pasta-curves", "dep:legacy-halo2-proofs"]
 
 [lib]
 bench = false

@@ -6,7 +6,10 @@
 //! - `ProductionSentinelImtAdapter`: replicates the production `prepare_nullifiers`
 //!   sentinel injection path using `imt-tree` functions directly
 
-use imt_tree::tree::{
+#[path = "imt_circuit_integration/reference_imt.rs"]
+mod reference_imt;
+
+use reference_imt::{
     build_levels, build_punctured_ranges, commit_punctured_ranges, find_punctured_range_for_value,
     precompute_empty_hashes, verify_punctured_range_spans, PuncturedRange, TREE_DEPTH,
 };
