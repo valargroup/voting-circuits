@@ -80,9 +80,6 @@ pub use ::orchard;
 pub use ::pasta_curves;
 #[cfg(any(feature = "rand", feature = "lrz-rand"))]
 pub mod rand {
-    #[cfg(not(feature = "rand"))]
-    use ::lrz_rand as backend;
-    #[cfg(feature = "rand")]
     use ::rand as backend;
 
     pub use backend::{CryptoRng, Rng};
