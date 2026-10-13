@@ -33,8 +33,7 @@ use voting_circuits::vote_proof::Circuit as VoteProofCircuit;
 // ... assemble public/private inputs and run halo2_proofs
 ```
 
-The default Zakura backend requires Rust 1.91. The alternate LRZ backend
-supports Rust 1.86.
+Both the default Zakura backend and the alternate LRZ backend require Rust 1.97.
 
 ### Cryptography backend
 

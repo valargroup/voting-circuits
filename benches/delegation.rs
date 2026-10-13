@@ -4,7 +4,6 @@ use std::{
 };
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use incrementalmerkletree::{Hashable, Level};
 use voting_circuits::delegation::{
     build_delegation_bundle, DelegationBundle, ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
 };
@@ -14,6 +13,7 @@ use voting_crypto_deps::halo2_proofs::{
     plonk::{self, SingleVerifier},
     transcript::{Blake2bRead, Blake2bWrite},
 };
+use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
 use voting_crypto_deps::orchard::{
     constants::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH,
     keys::{FullViewingKey, Scope, SpendingKey},

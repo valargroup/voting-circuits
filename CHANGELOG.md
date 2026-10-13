@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- Updated the default cryptography backend to Zakura Common 3.0.0. The
+  default backend now requires Rust 1.97. Updated the LRZ validator family
+  to the corresponding stable bip32 releases so both backends resolve together.
+
 ## v0.12.2
 
 ### Changed

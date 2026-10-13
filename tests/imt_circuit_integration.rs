@@ -10,7 +10,6 @@ use imt_tree::tree::{
     build_levels, build_punctured_ranges, commit_punctured_ranges, find_punctured_range_for_value,
     precompute_empty_hashes, verify_punctured_range_spans, PuncturedRange, TREE_DEPTH,
 };
-use incrementalmerkletree::{Hashable, Level};
 use voting_circuits::delegation::{
     build_delegation_bundle, build_nullifier_list, build_sentinel_list, ImtError, ImtProofData,
     ImtProvider, RealNoteInput, SpacedLeafImtProvider, K,
@@ -18,6 +17,7 @@ use voting_circuits::delegation::{
 use voting_circuits::ff::{Field, PrimeField};
 use voting_circuits::rand::rngs::OsRng;
 use voting_crypto_deps::halo2_proofs::dev::MockProver;
+use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
 use voting_crypto_deps::orchard::{
     keys::{FullViewingKey, Scope, SpendingKey},
     note::{ExtractedNoteCommitment, Note, NoteVersion, Rho},

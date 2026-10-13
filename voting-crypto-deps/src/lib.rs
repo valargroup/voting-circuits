@@ -6,8 +6,7 @@
 //! `lrz-*` features. Mixing the two package families, or selecting neither
 //! family, is an error.
 //!
-//! The facade itself supports Rust 1.86 in LRZ mode. The default Zakura
-//! packages currently require Rust 1.91.
+//! Both dependency families require Rust 1.97.
 
 #![deny(missing_debug_implementations)]
 #![deny(unsafe_code)]
@@ -56,6 +55,19 @@ compile_error!("Zakura and LRZ dependency features cannot be enabled together");
 )))]
 compile_error!("enable at least one Zakura or LRZ dependency feature");
 
+#[cfg(feature = "orchard")]
+pub use ::incrementalmerkletree;
+#[cfg(feature = "orchard")]
+pub use ::zcash_note_encryption;
+#[cfg(feature = "orchard")]
+pub use ::zip32;
+#[cfg(feature = "lrz-orchard")]
+pub use lrz_incrementalmerkletree as incrementalmerkletree;
+#[cfg(feature = "lrz-orchard")]
+pub use lrz_zcash_note_encryption as zcash_note_encryption;
+#[cfg(feature = "lrz-orchard")]
+pub use lrz_zip32 as zip32;
+
 #[cfg(feature = "gadgets")]
 pub use ::halo2_gadgets;
 #[cfg(feature = "poseidon")]
@@ -66,12 +78,17 @@ pub use ::halo2_proofs;
 pub use ::orchard;
 #[cfg(feature = "pasta")]
 pub use ::pasta_curves;
-#[cfg(feature = "rand")]
+#[cfg(any(feature = "rand", feature = "lrz-rand"))]
 pub mod rand {
-    pub use ::rand::{CryptoRng, Rng};
+    #[cfg(not(feature = "rand"))]
+    use ::lrz_rand as backend;
+    #[cfg(feature = "rand")]
+    use ::rand as backend;
+
+    pub use backend::{CryptoRng, Rng};
 
     pub mod rngs {
-        use ::rand::{
+        use super::backend::{
             rand_core::{TryCryptoRng, TryRng, UnwrapErr},
             rngs::SysRng,
         };
@@ -116,8 +133,6 @@ pub use lrz_halo2_proofs as halo2_proofs;
 pub use lrz_orchard as orchard;
 #[cfg(feature = "lrz-pasta")]
 pub use lrz_pasta_curves as pasta_curves;
-#[cfg(feature = "lrz-rand")]
-pub use lrz_rand as rand;
 #[cfg(feature = "lrz-validator")]
 pub use lrz_reddsa as reddsa;
 #[cfg(feature = "lrz-sinsemilla")]
