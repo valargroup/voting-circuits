@@ -2,11 +2,17 @@
 
 ## Unreleased
 
+## v0.13.0
+
 ### Changed
 
 - Updated the default cryptography backend to Zakura Common 3.0.0. The
   default backend now requires Rust 1.97. Updated the LRZ validator family
   to the corresponding stable bip32 releases so both backends resolve together.
+
+- Released `voting-crypto-deps 0.3.0`. Consumers must use its Common v3
+  types for notes, addresses, witnesses, and randomness; Common v2 types are
+  no longer interchangeable with the default backend.
 
 - Kept the published IMT as an independent oracle by comparing canonical field
   encodings across the old and current dependency families.

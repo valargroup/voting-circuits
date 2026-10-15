@@ -1797,7 +1797,7 @@ dependencies = [
 
 [[package]]
 name = "voting-circuits"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "blake2b_simd",
  "criterion",
@@ -1813,7 +1813,7 @@ dependencies = [
 
 [[package]]
 name = "voting-crypto-deps"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "halo2_gadgets 0.6.0",
  "halo2_poseidon 0.2.0",

@@ -6,20 +6,20 @@ used by Valar's shielded-voting crates.
 The default features select the Zakura packages:
 
 ```toml
-voting-crypto-deps = "0.2"
+voting-crypto-deps = "0.3"
 ```
 
 LRZ consumers select the crates.io Zcash packages explicitly:
 
 ```toml
-voting-crypto-deps = { version = "0.2", default-features = false, features = ["lrz"] }
+voting-crypto-deps = { version = "0.3", default-features = false, features = ["lrz"] }
 ```
 
 Consumers that only need the Vote Commitment Tree (VCT) dependency graph can
 select just Pasta and the Halo2 gadgets facade from the default Zakura family:
 
 ```toml
-voting-crypto-deps = { version = "0.2", default-features = false, features = ["vct"] }
+voting-crypto-deps = { version = "0.3", default-features = false, features = ["vct"] }
 ```
 
 The equivalent `lrz-vct` feature selects the LRZ packages. Individual default
