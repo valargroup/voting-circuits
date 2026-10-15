@@ -33,8 +33,7 @@ use voting_circuits::vote_proof::Circuit as VoteProofCircuit;
 // ... assemble public/private inputs and run halo2_proofs
 ```
 
-The default Zakura backend requires Rust 1.91. The alternate LRZ backend
-supports Rust 1.86.
+Both the default Zakura backend and the alternate LRZ backend require Rust 1.97.
 
 ### Cryptography backend
 
@@ -115,7 +114,7 @@ Reusable halo2 gadgets that appear in more than one circuit:
 ## Dependency on Orchard
 
 The default backend uses the Zakura Orchard package. The opt-in LRZ backend
-uses the API-compatible crates.io `orchard 0.15` release. Both enable the
+uses the API-compatible crates.io `orchard 0.16` release. Both enable the
 `circuit` and `unstable-voting-circuits` features required by the governance proofs. The
 delegation bundle builder requires Ironwood V3 notes and constructs its
 synthetic signed and output notes as V3.

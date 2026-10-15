@@ -218,8 +218,8 @@ mod prove_tests {
     use crate::ff::Field;
     use crate::rand::rngs::OsRng;
     use crate::ProveError;
-    use incrementalmerkletree::{Hashable, Level};
     use voting_crypto_deps::halo2_proofs::plonk;
+    use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
     use voting_crypto_deps::orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
         note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, NoteVersion, Rho},
