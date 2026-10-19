@@ -148,3 +148,42 @@ mod tests {
         let _: Option<orchard::Action<()>> = parsed.ok();
     }
 }
+
+/// Canonical spend-authorization randomizer for the selected Orchard backend.
+#[cfg(feature = "orchard")]
+pub use orchard::primitives::redpallas::SpendAuthRandomizer;
+#[cfg(feature = "lrz-orchard")]
+pub type SpendAuthRandomizer = pasta_curves::pallas::Scalar;
+
+/// Converts a circuit witness scalar to the selected backend's signing randomizer.
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub fn spend_auth_randomizer(scalar: &pasta_curves::pallas::Scalar) -> SpendAuthRandomizer {
+    #[cfg(feature = "orchard")]
+    {
+        use pasta_curves::group::ff::PrimeField;
+        SpendAuthRandomizer::from_bytes(scalar.to_repr()).unwrap()
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        *scalar
+    }
+}
+
+/// Value representation consumed by the selected Orchard commitment gadget.
+#[cfg(feature = "orchard")]
+pub type NoteValueWitness = pasta_curves::pallas::Base;
+#[cfg(feature = "lrz-orchard")]
+pub type NoteValueWitness = orchard::value::NoteValue;
+
+/// Preserves the note value while adapting the selected gadget's witness type.
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub fn note_value_witness(value: orchard::value::NoteValue) -> NoteValueWitness {
+    #[cfg(feature = "orchard")]
+    {
+        pasta_curves::pallas::Base::from(value.inner())
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        value
+    }
+}

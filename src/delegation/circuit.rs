@@ -1003,7 +1003,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
                         || "v_signed",
                         config.advices[0],
                         0,
-                        NoteValue::from_raw(KEYSTONE_NOTE_VALUE),
+                        voting_crypto_deps::note_value_witness(NoteValue::from_raw(
+                            KEYSTONE_NOTE_VALUE,
+                        )),
                     )
                 },
             )?;
@@ -1279,7 +1281,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let v_new = assign_free_advice(
                 layouter.namespace(|| "v_new = 0"),
                 config.advices[0],
-                Value::known(NoteValue::ZERO),
+                Value::known(voting_crypto_deps::note_value_witness(NoteValue::ZERO)),
             )?;
 
             // Compute NoteCommit for the output note using the second chip pair.
@@ -1606,7 +1608,7 @@ fn synthesize_note_slot(
     let v = assign_free_advice(
         layouter.namespace(|| format!("note {s} witness v")),
         config.advices[0],
-        note.v,
+        note.v.map(voting_crypto_deps::note_value_witness),
     )?;
 
     let rho = assign_free_advice(
@@ -2218,7 +2220,7 @@ mod tests {
         let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
 
         let alpha = alpha_override.unwrap_or_else(|| pallas::Scalar::random(&mut rng));
-        let rk = ak.randomize(&alpha);
+        let rk = ak.randomize(&voting_crypto_deps::spend_auth_randomizer(&alpha));
 
         let circuit = Circuit::from_note_unchecked(&fvk, &signed_note, alpha)
             .with_output_note(&output_note)
@@ -2340,7 +2342,9 @@ mod tests {
         let sk2 = SpendingKey::random(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let ak2: SpendValidatingKey = fvk2.into();
-        let wrong_rk = ak2.randomize(&pallas::Scalar::random(&mut rng));
+        let wrong_rk = ak2.randomize(&voting_crypto_deps::spend_auth_randomizer(
+            &pallas::Scalar::random(&mut rng),
+        ));
 
         let mut instance = t.instance.clone();
         let rk_bytes: [u8; 32] = (&wrong_rk).into();

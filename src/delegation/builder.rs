@@ -922,7 +922,7 @@ pub fn build_delegation_bundle(
     let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
 
     // Condition 4: spend authority — rk is the randomized spend key.
-    let rk = ak.randomize(&alpha);
+    let rk = ak.randomize(&voting_crypto_deps::spend_auth_randomizer(&alpha));
 
     // Assemble the circuit (private witnesses) and instance (public inputs).
     // The caller runs keygen + create_proof on the circuit, then submits

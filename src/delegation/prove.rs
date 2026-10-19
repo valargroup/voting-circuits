@@ -233,7 +233,9 @@ mod prove_tests {
         let sk = SpendingKey::random(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.into();
-        let rk = ak.randomize(&pallas::Scalar::from(1));
+        let rk = ak.randomize(&voting_crypto_deps::spend_auth_randomizer(
+            &pallas::Scalar::from(1),
+        ));
 
         Instance::from_parts(
             Nullifier::from_inner(pallas::Base::from(1)),
