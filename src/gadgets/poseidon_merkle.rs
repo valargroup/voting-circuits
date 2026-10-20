@@ -28,8 +28,8 @@ use voting_crypto_deps::halo2_proofs::{
     plonk::{self, Advice, Column, Constraints, Selector},
     poly::Rotation,
 };
-use voting_crypto_deps::orchard::circuit::gadget::assign_free_advice;
 use voting_crypto_deps::pasta_curves::pallas;
+use voting_crypto_deps::voting::assign_free_advice;
 
 use crate::protocol_hash::poseidon_hash_in_circuit;
 

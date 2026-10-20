@@ -26,8 +26,8 @@ use voting_crypto_deps::halo2_proofs::{
     circuit::{Layouter, Value},
     plonk::{Column, Error, Instance as InstanceColumn},
 };
-use voting_crypto_deps::orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
 use voting_crypto_deps::pasta_curves::pallas;
+use voting_crypto_deps::voting::{OrchardFixedBases, OrchardFixedBasesFull};
 
 /// Proves spend authority: `rk = [alpha] * SpendAuthG + ak_P`, then constrains
 /// `rk` to the public instance columns at the given rows.

@@ -68,17 +68,11 @@ use voting_crypto_deps::halo2_proofs::{
     circuit::{floor_planner, AssignedCell, Layouter, Value},
     plonk::{self, Advice, Column, ConstraintSystem, Fixed, Instance as InstanceColumn},
 };
-use voting_crypto_deps::orchard::{
-    circuit::{
-        commit_ivk::{CommitIvkChip, CommitIvkConfig},
-        gadget::{
-            add_chip::{AddChip, AddConfig},
-            assign_free_advice, AddInstruction,
-        },
-    },
-    constants::{OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains},
-};
 use voting_crypto_deps::pasta_curves::{pallas, vesta};
+use voting_crypto_deps::voting::{
+    assign_free_advice, AddChip, AddConfig, AddInstruction, CommitIvkChip, CommitIvkConfig,
+    OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains,
+};
 
 use super::gadgets::authority_decrement::{AuthorityDecrementChip, AuthorityDecrementConfig};
 use crate::{
@@ -1604,9 +1598,7 @@ mod tests {
     use voting_crypto_deps::pasta_curves::arithmetic::CurveAffine;
     use voting_crypto_deps::pasta_curves::pallas;
 
-    use voting_crypto_deps::orchard::constants::{
-        fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE,
-    };
+    use voting_crypto_deps::voting::{COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
 
     /// Generates an El Gamal keypair for testing.
     fn generate_ea_keypair() -> (pallas::Scalar, pallas::Affine) {

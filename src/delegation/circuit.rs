@@ -29,7 +29,9 @@
 //! - **Condition 14** (×5): Alternate nullifier integrity.
 
 use std::vec::Vec;
+use voting_crypto_deps::CircuitValue as _;
 
+use crate::ff::PrimeField as _;
 use crate::group::{Curve, GroupEncoding};
 use voting_crypto_deps::halo2_gadgets::{
     ecc::{
@@ -58,28 +60,21 @@ use voting_crypto_deps::halo2_proofs::{
     poly::Rotation,
 };
 use voting_crypto_deps::orchard::{
-    circuit::{
-        commit_ivk::{CommitIvkChip, CommitIvkConfig},
-        gadget::{
-            add_chip::{AddChip, AddConfig},
-            assign_free_advice, derive_nullifier, note_commit, AddInstruction,
-        },
-        note_commit::{NoteCommitChip, NoteCommitConfig},
-    },
-    constants::{
-        OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains, MERKLE_DEPTH_ORCHARD,
-    },
     keys::{
         CommitIvkRandomness, DiversifiedTransmissionKey, FullViewingKey, NullifierDerivingKey,
         Scope, SpendValidatingKey,
     },
-    note::{commitment::NoteCommitment, nullifier::Nullifier, Note, NoteVersion, RandomSeed, Rho},
+    note::{Note, NoteCommitment, NoteVersion, Nullifier, RandomSeed, Rho},
     primitives::redpallas::{SpendAuth, VerificationKey},
-    spec::NonIdentityPallasPoint,
     tree::MerkleHashOrchard,
     value::NoteValue,
 };
 use voting_crypto_deps::pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
+use voting_crypto_deps::voting::{
+    assign_free_advice, derive_nullifier, note_commit, AddChip, AddConfig, AddInstruction,
+    CommitIvkChip, CommitIvkConfig, NonIdentityPallasPoint, NoteCommitChip, NoteCommitConfig,
+    OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains, MERKLE_DEPTH_ORCHARD,
+};
 
 use super::{
     gadgets::{
@@ -128,18 +123,15 @@ pub(super) fn rcm_scalar_for_note_parts(
     value: NoteValue,
     psi: pallas::Base,
 ) -> pallas::Scalar {
-    match version {
-        NoteVersion::V2 => rseed.rcm_v2(rho).inner(),
-        NoteVersion::V3 => rseed.rcm_v3(rho, g_d, pk_d, value.inner(), &psi).inner(),
-    }
+    voting_crypto_deps::note_trapdoor(version, rseed, rho, g_d, pk_d, value, psi)
 }
 
 pub(super) fn note_rcm_scalar(note: &Note) -> pallas::Scalar {
     let rho = note.rho();
-    let psi = note.rseed().psi(&rho);
+    let psi = voting_crypto_deps::note_psi(note.rseed(), &rho);
     let recipient = note.recipient();
     let g_d = recipient.g_d();
-    let pk_d = recipient.pk_d().inner();
+    let pk_d = voting_crypto_deps::transmission_point(recipient.pk_d());
 
     rcm_scalar_for_note_parts(
         note.version(),
@@ -444,11 +436,11 @@ impl Circuit {
     ) -> Self {
         let sender_address = note.recipient();
         let rho_signed = note.rho();
-        let psi_signed = note.rseed().psi(&rho_signed);
+        let psi_signed = voting_crypto_deps::note_psi(note.rseed(), &rho_signed);
         let rcm_signed = note_rcm_scalar(note);
         Circuit {
             nk: Value::known(*fvk.nk()),
-            rho_signed: Value::known(rho_signed.into_inner()),
+            rho_signed: Value::known(rho_signed.circuit_value()),
             psi_signed: Value::known(psi_signed),
             cm_signed: Value::known(note.commitment()),
             ak: Value::known(fvk.clone().into()),
@@ -465,7 +457,7 @@ impl Circuit {
     /// Sets the output note witness fields (condition 6).
     pub(super) fn with_output_note(mut self, output_note: &Note) -> Self {
         let rho_new = output_note.rho();
-        let psi_new = output_note.rseed().psi(&rho_new);
+        let psi_new = voting_crypto_deps::note_psi(output_note.rseed(), &rho_new);
         let rcm_new = note_rcm_scalar(output_note);
         self.g_d_new = Value::known(output_note.recipient().g_d());
         self.pk_d_new = Value::known(*output_note.recipient().pk_d());
@@ -781,9 +773,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let ak_P = NonIdentityPoint::new(
             ecc_chip.clone(),
             layouter.namespace(|| "witness ak_P"),
-            self.ak
-                .as_ref()
-                .map(|ak| pallas::Point::from(ak).to_affine()),
+            self.ak.as_ref().map(|ak| ak.circuit_value().to_affine()),
         )?;
 
         // Witness g_d_signed (diversified generator from the note's address).
@@ -799,16 +789,16 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let pk_d_signed = NonIdentityPoint::new(
             ecc_chip.clone(),
             layouter.namespace(|| "witness pk_d_signed"),
-            self.pk_d_signed
-                .as_ref()
-                .map(|pk_d_signed| pk_d_signed.inner().to_affine()),
+            self.pk_d_signed.as_ref().map(|pk_d_signed| {
+                voting_crypto_deps::transmission_point(&pk_d_signed).to_affine()
+            }),
         )?;
 
         // Witness nk (nullifier deriving key).
         let nk = assign_free_advice(
             layouter.namespace(|| "witness nk"),
             config.advices[0],
-            self.nk.map(|nk| nk.inner()),
+            self.nk.map(|nk| nk.circuit_value()),
         )?;
 
         // Witness rho_signed.
@@ -852,7 +842,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let cm_signed = Point::new(
             ecc_chip.clone(),
             layouter.namespace(|| "witness cm_signed"),
-            self.cm_signed.as_ref().map(|cm| cm.inner().to_affine()),
+            self.cm_signed
+                .as_ref()
+                .map(|cm| cm.circuit_value().to_affine()),
         )?;
 
         // ---------------------------------------------------------------
@@ -921,7 +913,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let rivk = ScalarFixed::new(
             ecc_chip.clone(),
             layouter.namespace(|| "rivk"),
-            self.rivk.map(|rivk| rivk.inner()),
+            self.rivk.map(|rivk| rivk.circuit_value()),
         )?;
         let ivk_cell = prove_address_ownership(
             config.sinsemilla_chip_1(),
@@ -941,11 +933,11 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Used by Condition 11 for notes with internal (change) scope.
         // ---------------------------------------------------------------
         let ivk_internal_cell = {
-            use voting_crypto_deps::orchard::circuit::commit_ivk::gadgets::commit_ivk;
+            use voting_crypto_deps::voting::commit_ivk;
             let rivk_internal = ScalarFixed::new(
                 ecc_chip.clone(),
                 layouter.namespace(|| "rivk_internal"),
-                self.rivk_internal.map(|rivk| rivk.inner()),
+                self.rivk_internal.map(|rivk| rivk.circuit_value()),
             )?;
             let ivk_internal = commit_ivk(
                 config.sinsemilla_chip_1(),
@@ -975,8 +967,9 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let pk_d_signed_for_nc = NonIdentityPoint::new(
                 ecc_chip.clone(),
                 layouter.namespace(|| "pk_d_signed for note_commit"),
-                self.pk_d_signed
-                    .map(|pk_d_signed| pk_d_signed.inner().to_affine()),
+                self.pk_d_signed.map(|pk_d_signed| {
+                    voting_crypto_deps::transmission_point(&pk_d_signed).to_affine()
+                }),
             )?;
             // Copy-constrain to the condition-5 witness so both cells are bound to the same
             // point. Without this, a malicious prover could supply a different point here;
@@ -1253,7 +1246,8 @@ impl plonk::Circuit<pallas::Base> for Circuit {
             let pk_d_new = NonIdentityPoint::new(
                 ecc_chip.clone(),
                 layouter.namespace(|| "witness pk_d_new"),
-                self.pk_d_new.map(|pk_d_new| pk_d_new.inner().to_affine()),
+                self.pk_d_new
+                    .map(|pk_d_new| voting_crypto_deps::transmission_point(&pk_d_new).to_affine()),
             )?;
 
             // rho_new = nf_signed: the output note's rho is chained from the
@@ -1795,7 +1789,7 @@ fn synthesize_note_slot(
         // Convert the witnessed Merkle path siblings to raw field elements.
         let path = note
             .path
-            .map(|typed_path| typed_path.map(|node| node.inner()));
+            .map(|typed_path| typed_path.map(|node| node.circuit_value()));
         let merkle_inputs = GadgetMerklePath::construct(
             config.merkle_chips(),
             OrchardHashDomains::MerkleCrh,
@@ -1979,7 +1973,7 @@ impl Instance {
     /// `RK_Y_PUBLIC_OFFSET`, `CMX_NEW_PUBLIC_OFFSET`, etc.).
     pub fn to_halo2_instance(&self) -> Vec<vesta::Scalar> {
         vec![
-            self.nf_signed.inner(),
+            self.nf_signed.circuit_value(),
             self.rk_x,
             self.rk_y,
             self.cmx_new,
@@ -2014,7 +2008,7 @@ mod tests {
     use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
     use voting_crypto_deps::orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
-        note::{commitment::ExtractedNoteCommitment, Note, NoteVersion, Rho},
+        note::{ExtractedNoteCommitment, Note, NoteVersion, Rho},
     };
     use voting_crypto_deps::pasta_curves::{arithmetic::CurveAffine, pallas};
 
@@ -2030,19 +2024,19 @@ mod tests {
         is_internal: bool,
     ) -> NoteSlotWitness {
         let rho = note.rho();
-        let psi = note.rseed().psi(&rho);
+        let psi = voting_crypto_deps::note_psi(note.rseed(), &rho);
         let rcm = note_rcm_scalar(note);
         let cm = note.commitment();
         let recipient = note.recipient();
 
         NoteSlotWitness {
             g_d: Value::known(recipient.g_d()),
-            pk_d: Value::known(recipient.pk_d().inner()),
+            pk_d: Value::known(voting_crypto_deps::transmission_point(recipient.pk_d())),
             v: Value::known(note.value()),
-            rho: Value::known(rho.into_inner()),
+            rho: Value::known(rho.circuit_value()),
             psi: Value::known(psi),
             rcm: Value::known(rcm),
-            cm: Value::known(cm.inner().to_affine()),
+            cm: Value::known(cm.circuit_value().to_affine()),
             path: Value::known(*auth_path),
             pos: Value::known(pos),
             imt_nf_bounds: Value::known(imt.nf_bounds),
@@ -2067,12 +2061,12 @@ mod tests {
     ) -> TestData {
         let mut rng = OsRng;
 
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let output_recipient = fvk.address_at(1u32, Scope::External);
 
         // Key material.
-        let nk_val = fvk.nk().inner();
+        let nk_val = fvk.nk().circuit_value();
         let ak: SpendValidatingKey = fvk.clone().into();
 
         let vote_round_id = pallas::Base::random(&mut rng);
@@ -2086,18 +2080,18 @@ mod tests {
         // Real note (slot 0) with value = 13,000,000.
         let recipient = fvk.address_at(0u32, Scope::External);
         let note_value = NoteValue::from_raw(13_000_000);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
-        let real_note = Note::new(
+        let (_, _, dummy_parent) = voting_crypto_deps::dummy_note(&mut rng, None, NoteVersion::V3);
+        let real_note = voting_crypto_deps::new_note(
             recipient,
             note_value,
-            Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
+            voting_crypto_deps::rho_from_nullifier(dummy_parent.nullifier(&fvk)),
             NoteVersion::V3,
             &mut rng,
         );
 
         // Build Merkle tree with real note at position 0.
         let cmx_real_e = ExtractedNoteCommitment::from(real_note.commitment());
-        let cmx_real = cmx_real_e.inner();
+        let cmx_real = cmx_real_e.circuit_value();
         let empty_leaf = MerkleHashOrchard::empty_leaf();
         let leaves = [
             MerkleHashOrchard::from_cmx(&cmx_real_e),
@@ -2114,7 +2108,7 @@ mod tests {
             let sibling = MerkleHashOrchard::empty_root(Level::from(level as u8));
             current = MerkleHashOrchard::combine(Level::from(level as u8), &current, &sibling);
         }
-        let nc_root = current.inner();
+        let nc_root = current.circuit_value();
 
         let mut auth_path_0 = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
         auth_path_0[0] = leaves[1];
@@ -2124,8 +2118,10 @@ mod tests {
         }
         // IMT proof for real note (from shared provider).
         let real_nf = real_note.nullifier(&fvk);
-        let imt_0 = imt_provider.non_membership_proof(real_nf.inner()).unwrap();
-        let gov_null_0 = gov_null_hash(nk_val, dom, real_nf.inner());
+        let imt_0 = imt_provider
+            .non_membership_proof(real_nf.circuit_value())
+            .unwrap();
+        let gov_null_0 = gov_null_hash(nk_val, dom, real_nf.circuit_value());
 
         let slot_0 = make_note_slot(&real_note, &auth_path_0, 0u32, &imt_0, false);
 
@@ -2136,7 +2132,7 @@ mod tests {
         let mut note_slots = vec![slot_0];
         let mut cmx_values = vec![cmx_real];
         let mut gov_nulls = vec![gov_null_0];
-        let mut note_nullifiers = vec![real_nf.inner()];
+        let mut note_nullifiers = vec![real_nf.circuit_value()];
 
         for i in 1..5u32 {
             let padding = crate::delegation::builder::build_padding_slot_for_testing(
@@ -2172,9 +2168,7 @@ mod tests {
             .coordinates()
             .unwrap()
             .x();
-        let pk_d_new_x = *output_recipient
-            .pk_d()
-            .inner()
+        let pk_d_new_x = *voting_crypto_deps::transmission_point(output_recipient.pk_d())
             .to_affine()
             .coordinates()
             .unwrap()
@@ -2200,24 +2194,24 @@ mod tests {
 
         // Create the signed note with this rho.
         let sender_address = fvk.address_at(0u32, Scope::External);
-        let signed_note = Note::new(
+        let signed_note = voting_crypto_deps::new_note(
             sender_address,
             signed_value,
-            Rho::from_nf_old(Nullifier::from_inner(rho)),
+            voting_crypto_deps::rho_from_nullifier(Nullifier::from_bytes(&rho.to_repr()).unwrap()),
             NoteVersion::V3,
             &mut rng,
         );
         let nf_signed = signed_note.nullifier(&fvk);
 
         // Create output note with rho = nf_signed.
-        let output_note = Note::new(
+        let output_note = voting_crypto_deps::new_note(
             output_recipient,
             NoteValue::ZERO,
-            Rho::from_nf_old(nf_signed),
+            voting_crypto_deps::rho_from_nullifier(nf_signed),
             NoteVersion::V3,
             &mut rng,
         );
-        let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
+        let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).circuit_value();
 
         let alpha = alpha_override.unwrap_or_else(|| pallas::Scalar::random(&mut rng));
         let rk = ak.randomize(&voting_crypto_deps::spend_auth_randomizer(&alpha));
@@ -2326,7 +2320,8 @@ mod tests {
     fn wrong_nf_fails() {
         let t = make_test_data();
         let mut instance = t.instance.clone();
-        instance.nf_signed = Nullifier::from_inner(pallas::Base::random(&mut OsRng));
+        instance.nf_signed =
+            Nullifier::from_bytes(&pallas::Base::random(&mut OsRng).to_repr()).unwrap();
 
         let pi = instance.to_halo2_instance();
         let prover = MockProver::run(K, &t.circuit, vec![pi]).unwrap();
@@ -2339,7 +2334,7 @@ mod tests {
         let mut rng = OsRng;
         let t = make_test_data();
 
-        let sk2 = SpendingKey::random(&mut rng);
+        let sk2 = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let ak2: SpendValidatingKey = fvk2.into();
         let wrong_rk = ak2.randomize(&voting_crypto_deps::spend_auth_randomizer(
@@ -2455,13 +2450,13 @@ mod tests {
         let mut circuit = t.circuit;
         let pi = t.instance.to_halo2_instance();
 
-        let attacker_sk = SpendingKey::random(&mut rng);
+        let attacker_sk = voting_crypto_deps::random_spending_key(&mut rng);
         let attacker_fvk: FullViewingKey = (&attacker_sk).into();
         let attacker_recipient = attacker_fvk.address_at(0u32, Scope::External);
-        let attacker_output = Note::new(
+        let attacker_output = voting_crypto_deps::new_note(
             attacker_recipient,
             NoteValue::ZERO,
-            Rho::from_nf_old(t.instance.nf_signed),
+            voting_crypto_deps::rho_from_nullifier(t.instance.nf_signed),
             NoteVersion::V3,
             &mut rng,
         );
@@ -2516,11 +2511,11 @@ mod tests {
         let mut circuit = t.circuit;
         let pi = t.instance.to_halo2_instance();
 
-        let replacement_sk = SpendingKey::random(&mut rng);
+        let replacement_sk = voting_crypto_deps::random_spending_key(&mut rng);
         let replacement_fvk = FullViewingKey::from(&replacement_sk);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
-        let rho = Rho::from_nf_old(dummy_parent.nullifier(&replacement_fvk));
-        let replacement_note = Note::new(
+        let (_, _, dummy_parent) = voting_crypto_deps::dummy_note(&mut rng, None, NoteVersion::V3);
+        let rho = voting_crypto_deps::rho_from_nullifier(dummy_parent.nullifier(&replacement_fvk));
+        let replacement_note = voting_crypto_deps::new_note(
             replacement_fvk.address_at(0u32, Scope::External),
             NoteValue::ZERO,
             rho,
@@ -2556,7 +2551,10 @@ mod tests {
         let t = make_test_data();
         let pi = t.instance.to_halo2_instance();
         assert_eq!(pi.len(), 14, "Expected exactly 14 public inputs");
-        assert_eq!(pi[NF_SIGNED_PUBLIC_OFFSET], t.instance.nf_signed.inner());
+        assert_eq!(
+            pi[NF_SIGNED_PUBLIC_OFFSET],
+            t.instance.nf_signed.circuit_value()
+        );
         assert_eq!(pi[RK_X_PUBLIC_OFFSET], t.instance.rk_x);
         assert_eq!(pi[RK_Y_PUBLIC_OFFSET], t.instance.rk_y);
         assert_eq!(pi[CMX_NEW_PUBLIC_OFFSET], t.instance.cmx_new);
@@ -2616,21 +2614,23 @@ mod tests {
 
         // Build a note with v > 0 using a fresh key; it is NOT in the commitment
         // tree that make_test_data() built (nc_root only covers slot 0's real note).
-        let sk2 = SpendingKey::random(&mut rng);
+        let sk2 = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let addr2 = fvk2.address_at(0u32, Scope::External);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
-        let fake_note = Note::new(
+        let (_, _, dummy_parent) = voting_crypto_deps::dummy_note(&mut rng, None, NoteVersion::V3);
+        let fake_note = voting_crypto_deps::new_note(
             addr2,
             NoteValue::from_raw(100), // v > 0: not a zero-value padded note
-            Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
+            voting_crypto_deps::rho_from_nullifier(dummy_parent.nullifier(&fvk2)),
             NoteVersion::V3,
             &mut rng,
         );
 
         let imt_provider = SpacedLeafImtProvider::new();
         let fake_nf = fake_note.nullifier(&fvk2);
-        let fake_imt = imt_provider.non_membership_proof(fake_nf.inner()).unwrap();
+        let fake_imt = imt_provider
+            .non_membership_proof(fake_nf.circuit_value())
+            .unwrap();
 
         // All empty siblings — this auth path does not open to nc_root.
         let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];
@@ -2662,14 +2662,14 @@ mod tests {
         // condition 5 (from fvk1, the signed note's key) and the copy constraint
         // propagates ivk1 into every condition 11 per-note ownership check.
         // For this foreign slot: [ivk1] * g_d_fvk2 ≠ pk_d_fvk2, so condition 11 fails.
-        let sk2 = SpendingKey::random(&mut rng);
+        let sk2 = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk2: FullViewingKey = (&sk2).into();
         let addr2 = fvk2.address_at(100u32, Scope::External);
-        let (_, _, dummy_parent) = Note::dummy(&mut rng, None, NoteVersion::V3);
-        let foreign_note = Note::new(
+        let (_, _, dummy_parent) = voting_crypto_deps::dummy_note(&mut rng, None, NoteVersion::V3);
+        let foreign_note = voting_crypto_deps::new_note(
             addr2,
             NoteValue::ZERO,
-            Rho::from_nf_old(dummy_parent.nullifier(&fvk2)),
+            voting_crypto_deps::rho_from_nullifier(dummy_parent.nullifier(&fvk2)),
             NoteVersion::V3,
             &mut rng,
         );
@@ -2677,7 +2677,7 @@ mod tests {
         let imt_provider = SpacedLeafImtProvider::new();
         let foreign_nf = foreign_note.nullifier(&fvk2);
         let foreign_imt = imt_provider
-            .non_membership_proof(foreign_nf.inner())
+            .non_membership_proof(foreign_nf.circuit_value())
             .unwrap();
 
         let dummy_auth_path = [MerkleHashOrchard::empty_leaf(); MERKLE_DEPTH_ORCHARD];

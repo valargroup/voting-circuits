@@ -7,28 +7,25 @@
 //! valid IMT non-membership proofs against the real tree root.
 
 use std::{iter, vec::Vec};
+use voting_crypto_deps::CircuitValue as _;
 
 use crate::ff::{Field, PrimeField, PrimeFieldBits};
 use crate::group::{Curve, GroupEncoding};
 use crate::rand::{CryptoRng, Rng};
 use voting_crypto_deps::halo2_proofs::circuit::Value;
 use voting_crypto_deps::orchard::{
-    constants::{
-        fixed_bases::{COMMIT_IVK_PERSONALIZATION, NOTE_COMMITMENT_PERSONALIZATION},
-        L_ORCHARD_BASE, L_VALUE,
-    },
     keys::{FullViewingKey, Scope, SpendValidatingKey},
-    note::{
-        commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, NoteVersion, RandomSeed,
-        Rho,
-    },
-    spec::NonIdentityPallasPoint,
+    note::{ExtractedNoteCommitment, Note, NoteVersion, Nullifier, RandomSeed, Rho},
     tree::MerklePath,
     value::NoteValue,
 };
 use voting_crypto_deps::pasta_curves::{
     arithmetic::{CurveAffine, CurveExt},
     pallas,
+};
+use voting_crypto_deps::voting::{
+    NonIdentityPallasPoint, COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE, L_VALUE,
+    NOTE_COMMITMENT_PERSONALIZATION,
 };
 
 use super::{
@@ -155,9 +152,9 @@ fn u64_bits(value: u64) -> impl Iterator<Item = bool> {
 // Note: Orchard's `FullViewingKey::to_ivk` does not expose the inner Ivk scalar;
 // if it did (e.g. `fvk.ivk_scalar(scope)`), we could drop this re-implementation.
 fn external_ivk_scalar(fvk: &FullViewingKey, ak: &SpendValidatingKey) -> pallas::Scalar {
-    let ak_point: pallas::Point = ak.into();
+    let ak_point = ak.circuit_value();
     let ak_x = point_x(&ak_point);
-    let rivk = fvk.rivk(Scope::External).inner();
+    let rivk = fvk.rivk(Scope::External).circuit_value();
     let domain = voting_crypto_deps::sinsemilla::CommitDomain::new(COMMIT_IVK_PERSONALIZATION);
     let ivk = domain
         .short_commit(
@@ -165,7 +162,7 @@ fn external_ivk_scalar(fvk: &FullViewingKey, ak: &SpendValidatingKey) -> pallas:
                 .chain(ak_x.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
                 .chain(
                     fvk.nk()
-                        .inner()
+                        .circuit_value()
                         .to_le_bits()
                         .iter()
                         .by_vals()
@@ -332,7 +329,7 @@ fn derive_synthetic_padding_note(
     // Padding uses synthetic address components bound to the external IVK; the
     // rho-scoped seed then supplies the Orchard commitment randomness.
     let (g_d_pad, pk_d_pad) = padding_points(slot_index, ivk)?;
-    let psi = rseed.psi(&rho);
+    let psi = voting_crypto_deps::note_psi(&rseed, &rho);
     let rcm = rcm_scalar_for_note_parts(
         DELEGATION_NOTE_VERSION,
         &rseed,
@@ -349,7 +346,7 @@ fn derive_synthetic_padding_note(
         *g_d_pad,
         *pk_d_pad,
         NoteValue::ZERO,
-        rho.into_inner(),
+        rho.circuit_value(),
         psi,
         rcm,
     )
@@ -360,7 +357,7 @@ fn derive_synthetic_padding_note(
         .into_option()
         .ok_or(DelegationBuildError::InvalidPaddingNoteCommitment { location })?
         .x();
-    let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm)
+    let real_nf = derive_note_nullifier(nk, rho.circuit_value(), psi, cm)
         .ok_or(DelegationBuildError::InvalidPaddingNullifier { location })?;
 
     Ok(SyntheticPaddingDerivation {
@@ -406,8 +403,14 @@ pub fn synthetic_padding_note_parts(
     let ak: SpendValidatingKey = fvk.clone().into();
     let ivk = external_ivk_scalar(fvk, &ak);
     let location = PrecomputedRandomnessLocation::PaddedNote(slot_index);
-    let padding =
-        derive_synthetic_padding_note(fvk.nk().inner(), ivk, slot_index, rho, rseed, location)?;
+    let padding = derive_synthetic_padding_note(
+        fvk.nk().circuit_value(),
+        ivk,
+        slot_index,
+        rho,
+        rseed,
+        location,
+    )?;
 
     Ok(SyntheticPaddingNoteParts {
         cmx: padding.cmx.to_repr(),
@@ -454,7 +457,9 @@ fn build_padding_slot(
             .ok_or(DelegationBuildError::InvalidPrecomputedRseed { location })?;
         (rho, rseed)
     } else {
-        let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
+        let rho = voting_crypto_deps::rho_from_nullifier(
+            Nullifier::from_bytes(&pallas::Base::random(&mut *rng).to_repr()).unwrap(),
+        );
         let rseed = random_seed_for_rho(&rho, &mut *rng);
         (rho, rseed)
     };
@@ -465,12 +470,12 @@ fn build_padding_slot(
 
     // Merkle path is unconstrained for zero-value padding because condition 10
     // is gated by v=0; IMT non-membership and address ownership still run.
-    let merkle_path = MerklePath::dummy(&mut *rng);
+    let merkle_path = voting_crypto_deps::dummy_merkle_path(&mut *rng);
     let witness = NoteSlotWitness {
         g_d: Value::known(padding.g_d_pad),
         pk_d: Value::known(padding.pk_d_pad),
         v: Value::known(NoteValue::ZERO),
-        rho: Value::known(rho.into_inner()),
+        rho: Value::known(rho.circuit_value()),
         psi: Value::known(padding.psi),
         rcm: Value::known(padding.rcm),
         cm: Value::known(padding.cm),
@@ -513,7 +518,7 @@ pub(super) fn build_padding_slot_for_testing(
     let padding = build_padding_slot(
         slot_index,
         pad_idx,
-        fvk.nk().inner(),
+        fvk.nk().circuit_value(),
         dom,
         external_ivk_scalar(fvk, ak),
         imt_provider,
@@ -745,7 +750,7 @@ pub fn build_delegation_bundle(
     let nf_imt_root = imt_provider.root();
 
     // Derive key material.
-    let nk_val = fvk.nk().inner();
+    let nk_val = fvk.nk().circuit_value();
     let ak: SpendValidatingKey = fvk.clone().into();
     let ivk = external_ivk_scalar(fvk, &ak);
 
@@ -763,26 +768,26 @@ pub fn build_delegation_bundle(
     for input in &real_notes {
         let note = &input.note;
         let rho = note.rho();
-        let psi = note.rseed().psi(&rho);
+        let psi = voting_crypto_deps::note_psi(note.rseed(), &rho);
         let rcm = note_rcm_scalar(note);
         let cm = note.commitment();
-        let cmx = ExtractedNoteCommitment::from(cm.clone()).inner();
+        let cmx = ExtractedNoteCommitment::from(cm.clone()).circuit_value();
         let v_raw = note.value().inner();
         let recipient = note.recipient();
 
         // Condition 12: real nullifier for IMT non-membership.
         let real_nf = note.nullifier(fvk);
         // Condition 14: alternate nullifier = Poseidon(nk, dom, real_nf).
-        let gov_null = gov_null_hash(nk_val, dom, real_nf.inner());
+        let gov_null = gov_null_hash(nk_val, dom, real_nf.circuit_value());
 
         let slot = NoteSlotWitness {
             g_d: Value::known(recipient.g_d()),
-            pk_d: Value::known(recipient.pk_d().inner()),
+            pk_d: Value::known(voting_crypto_deps::transmission_point(recipient.pk_d())),
             v: Value::known(note.value()),
-            rho: Value::known(rho.into_inner()),
+            rho: Value::known(rho.circuit_value()),
             psi: Value::known(psi),
             rcm: Value::known(rcm),
-            cm: Value::known(cm.inner().to_affine()),
+            cm: Value::known(cm.circuit_value().to_affine()),
             path: Value::known(input.merkle_path.auth_path()),
             pos: Value::known(input.merkle_path.position()),
             imt_nf_bounds: Value::known(input.imt_proof.nf_bounds),
@@ -832,9 +837,7 @@ pub fn build_delegation_bundle(
         .coordinates()
         .unwrap()
         .x();
-    let pk_d_new_x = *output_recipient
-        .pk_d()
-        .inner()
+    let pk_d_new_x = *voting_crypto_deps::transmission_point(output_recipient.pk_d())
         .to_affine()
         .coordinates()
         .unwrap()
@@ -865,7 +868,8 @@ pub fn build_delegation_bundle(
     // Value is 1 so that hardware wallets (Keystone) render the transaction.
     // The rho is bound to the delegation via condition 3.
     let sender_address = fvk.address_at(0u32, Scope::External);
-    let signed_rho = Rho::from_nf_old(Nullifier::from_inner(rho));
+    let signed_rho =
+        voting_crypto_deps::rho_from_nullifier(Nullifier::from_bytes(&rho.to_repr()).unwrap());
     let signed_note = if let Some(pre) = precomputed {
         let location = PrecomputedRandomnessLocation::SignedNote;
         let rseed = RandomSeed::from_bytes(pre.rseed_signed, &signed_rho)
@@ -881,7 +885,7 @@ pub fn build_delegation_bundle(
         .into_option()
         .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
     } else {
-        Note::new(
+        voting_crypto_deps::new_note(
             sender_address,
             NoteValue::from_raw(KEYSTONE_NOTE_VALUE),
             signed_rho,
@@ -895,7 +899,7 @@ pub fn build_delegation_bundle(
 
     // Condition 6: output note commitment integrity.
     // The output note is sent to the voting hotkey address with rho = nf_signed.
-    let output_rho = Rho::from_nf_old(nf_signed);
+    let output_rho = voting_crypto_deps::rho_from_nullifier(nf_signed);
     let output_note = if let Some(pre) = precomputed {
         let location = PrecomputedRandomnessLocation::OutputNote;
         let rseed = RandomSeed::from_bytes(pre.rseed_output, &output_rho)
@@ -911,7 +915,7 @@ pub fn build_delegation_bundle(
         .into_option()
         .ok_or(DelegationBuildError::InvalidPrecomputedNote { location })?
     } else {
-        Note::new(
+        voting_crypto_deps::new_note(
             output_recipient,
             NoteValue::ZERO,
             output_rho,
@@ -919,7 +923,7 @@ pub fn build_delegation_bundle(
             &mut *rng,
         )
     };
-    let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).inner();
+    let cmx_new = ExtractedNoteCommitment::from(output_note.commitment()).circuit_value();
 
     // Condition 4: spend authority — rk is the randomized spend key.
     let rk = ak.randomize(&voting_crypto_deps::spend_auth_randomizer(&alpha));
@@ -972,13 +976,13 @@ mod tests {
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
     use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
     use voting_crypto_deps::orchard::{
-        constants::MERKLE_DEPTH_ORCHARD,
         keys::{FullViewingKey, Scope, SpendingKey},
-        note::{commitment::ExtractedNoteCommitment, Note, Rho},
+        note::{ExtractedNoteCommitment, Note, Rho},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
     use voting_crypto_deps::pasta_curves::pallas;
+    use voting_crypto_deps::voting::MERKLE_DEPTH_ORCHARD;
 
     /// Merged circuit K value.
     const K: u32 = circuit::K;
@@ -1036,7 +1040,9 @@ mod tests {
     }
 
     fn precomputed_padding_note(rng: &mut impl Rng) -> (PaddedNoteData, Rho, RandomSeed) {
-        let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
+        let rho = voting_crypto_deps::rho_from_nullifier(
+            Nullifier::from_bytes(&pallas::Base::random(&mut *rng).to_repr()).unwrap(),
+        );
         let rseed = random_seed_for_rho(&rho, &mut *rng);
         (
             PaddedNoteData {
@@ -1070,7 +1076,7 @@ mod tests {
     ) {
         let (g_d_pad, pk_d_pad) =
             padding_points(slot_index, ivk).expect("test padding points should be valid");
-        let psi = rseed.psi(&rho);
+        let psi = voting_crypto_deps::note_psi(&rseed, &rho);
         let rcm = rcm_scalar_for_note_parts(
             DELEGATION_NOTE_VERSION,
             &rseed,
@@ -1084,13 +1090,13 @@ mod tests {
             *g_d_pad,
             *pk_d_pad,
             NoteValue::ZERO,
-            rho.into_inner(),
+            rho.circuit_value(),
             psi,
             rcm,
         )
         .expect("test padding commitment should be valid")
         .to_affine();
-        let real_nf = derive_note_nullifier(nk, rho.into_inner(), psi, cm)
+        let real_nf = derive_note_nullifier(nk, rho.circuit_value(), psi, cm)
             .expect("test padding nullifier should be valid");
 
         assert_eq!(padding.cmx, *cm.coordinates().unwrap().x());
@@ -1101,7 +1107,9 @@ mod tests {
         assert_known(&padding.witness.g_d, |actual| *actual == g_d_pad);
         assert_known(&padding.witness.pk_d, |actual| *actual == pk_d_pad);
         assert_known(&padding.witness.v, |actual| *actual == NoteValue::ZERO);
-        assert_known(&padding.witness.rho, |actual| *actual == rho.into_inner());
+        assert_known(&padding.witness.rho, |actual| {
+            *actual == rho.circuit_value()
+        });
         assert_known(&padding.witness.psi, |actual| *actual == psi);
         assert_known(&padding.witness.rcm, |actual| *actual == rcm);
         assert_known(&padding.witness.cm, |actual| *actual == cm);
@@ -1140,11 +1148,12 @@ mod tests {
         for (idx, &v) in values.iter().enumerate() {
             let recipient = fvk.address_at(0u32, scopes[idx]);
             let note_value = NoteValue::from_raw(v);
-            let (_, _, dummy_parent) = Note::dummy(&mut *rng, None, note_version);
-            let note = Note::new(
+            let (_, _, dummy_parent) =
+                voting_crypto_deps::dummy_note(&mut *rng, None, note_version);
+            let note = voting_crypto_deps::new_note(
                 recipient,
                 note_value,
-                Rho::from_nf_old(dummy_parent.nullifier(fvk)),
+                voting_crypto_deps::rho_from_nullifier(dummy_parent.nullifier(fvk)),
                 note_version,
                 &mut *rng,
             );
@@ -1174,7 +1183,7 @@ mod tests {
             let sibling = MerkleHashOrchard::empty_root(Level::from(level as u8));
             current = MerkleHashOrchard::combine(Level::from(level as u8), &current, &sibling);
         }
-        let nc_root = current.inner();
+        let nc_root = current.circuit_value();
 
         // Build Merkle paths and RealNoteInputs.
         let l1 = [l1_0, l1_1, l1_2, l1_3];
@@ -1191,7 +1200,9 @@ mod tests {
             let merkle_path = MerklePath::from_parts(i as u32, auth_path);
 
             let real_nf = note.nullifier(fvk);
-            let imt_proof = imt_provider.non_membership_proof(real_nf.inner()).unwrap();
+            let imt_proof = imt_provider
+                .non_membership_proof(real_nf.circuit_value())
+                .unwrap();
 
             inputs.push(RealNoteInput {
                 note,
@@ -1226,7 +1237,7 @@ mod tests {
     fn build_bundle(values: &[u64], scopes: &[Scope]) -> DelegationBundle {
         assert_eq!(values.len(), scopes.len());
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let output_recipient = fvk.address_at(1u32, Scope::External);
         let vote_round_id = pallas::Base::random(&mut rng);
@@ -1258,7 +1269,7 @@ mod tests {
         precomputed: &PrecomputedRandomness,
     ) -> Result<DelegationBundle, DelegationBuildError> {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
 
         build_single_note_bundle_with_fvk_and_precomputed(&fvk, precomputed, &mut rng)
@@ -1293,7 +1304,9 @@ mod tests {
     }
 
     fn make_valid_padded_note_data(rng: &mut impl Rng) -> PaddedNoteData {
-        let rho = Rho::from_nf_old(Nullifier::from_inner(pallas::Base::random(&mut *rng)));
+        let rho = voting_crypto_deps::rho_from_nullifier(
+            Nullifier::from_bytes(&pallas::Base::random(&mut *rng).to_repr()).unwrap(),
+        );
         let rseed = random_seed_for_rho(&rho, rng);
 
         PaddedNoteData {
@@ -1306,7 +1319,7 @@ mod tests {
         let pi = bundle.instance.to_halo2_instance();
         assert_eq!(pi.len(), 14, "delegation public input shape changed");
         assert_eq!(bundle.instance.gov_null.len(), 5);
-        assert_eq!(pi[0], bundle.instance.nf_signed.inner());
+        assert_eq!(pi[0], bundle.instance.nf_signed.circuit_value());
         assert_eq!(pi[3], bundle.instance.cmx_new);
         assert_eq!(pi[4], bundle.instance.van_comm);
         assert_eq!(pi[5], bundle.instance.vote_round_id);
@@ -1338,7 +1351,7 @@ mod tests {
         scopes: &[Scope],
     ) -> (DelegationBundle, FullViewingKey, SpendValidatingKey) {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
         let output_recipient = fvk.address_at(1u32, Scope::External);
@@ -1410,7 +1423,7 @@ mod tests {
     #[test]
     fn test_padding_points_are_synthetic_and_ivk_bound() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
         let ivk = external_ivk_scalar(&fvk, &ak);
@@ -1425,14 +1438,17 @@ mod tests {
             // at construction (`padding_points` -> `assert_non_identity`).
             assert_eq!(*pk_d_pad, *g_d_pad * ivk);
             assert_ne!(*g_d_pad, *real_orchard_addr.g_d());
-            assert_ne!(*pk_d_pad, *real_orchard_addr.pk_d().inner());
+            assert_ne!(
+                *pk_d_pad,
+                *voting_crypto_deps::transmission_point(real_orchard_addr.pk_d())
+            );
         }
     }
 
     #[test]
     fn test_padding_points_reject_impossible_slot_indices() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
         let ivk = external_ivk_scalar(&fvk, &ak);
@@ -1462,14 +1478,14 @@ mod tests {
     /// personalization) rather than claiming a formal no-collision invariant.
     #[test]
     fn test_padding_personalization_is_domain_separated_from_orchard() {
-        use voting_crypto_deps::orchard::constants::KEY_DIVERSIFICATION_PERSONALIZATION;
-
-        assert_ne!(
-            PADDING_PERSONALIZATION, KEY_DIVERSIFICATION_PERSONALIZATION,
-            "padding personalization must be domain-separated from Orchard's \
-             DiversifyHash personalization; otherwise synthetic padding `g_d_pad` \
-             can collide with real diversified bases and ZCA-450's fix regresses"
-        );
+        let mut rng = OsRng;
+        let (_, _, note) = fixture_real_note(Scope::External, &mut rng);
+        let address = note.recipient();
+        let bytes = address.to_raw_address_bytes();
+        // Exercise the owner's diversification rather than importing its private domain.
+        let padding_domain_point =
+            pallas::Point::hash_to_curve(PADDING_PERSONALIZATION)(&bytes[..11]);
+        assert_ne!(padding_domain_point.to_bytes(), address.g_d().to_bytes());
     }
 
     // ---- Orchard drift tests ----
@@ -1489,15 +1505,16 @@ mod tests {
         scope: Scope,
         rng: &mut impl Rng,
     ) -> (FullViewingKey, SpendValidatingKey, Note) {
-        let sk = SpendingKey::random(rng);
+        let sk = voting_crypto_deps::random_spending_key(rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
         let recipient = fvk.address_at(0u32, scope);
-        let (_, _, dummy_parent) = Note::dummy(rng, None, DELEGATION_NOTE_VERSION);
-        let note = Note::new(
+        let (_, _, dummy_parent) =
+            voting_crypto_deps::dummy_note(rng, None, DELEGATION_NOTE_VERSION);
+        let note = voting_crypto_deps::new_note(
             recipient,
             NoteValue::from_raw(12_500_000),
-            Rho::from_nf_old(dummy_parent.nullifier(&fvk)),
+            voting_crypto_deps::rho_from_nullifier(dummy_parent.nullifier(&fvk)),
             DELEGATION_NOTE_VERSION,
             rng,
         );
@@ -1515,18 +1532,18 @@ mod tests {
             let (_fvk, _ak, note) = fixture_real_note(scope, &mut rng);
             let recipient = note.recipient();
             let rho = note.rho();
-            let psi = note.rseed().psi(&rho);
+            let psi = voting_crypto_deps::note_psi(note.rseed(), &rho);
             let rcm = note_rcm_scalar(&note);
 
             let mirrored = note_commitment_point(
                 *recipient.g_d(),
-                *recipient.pk_d().inner(),
+                *voting_crypto_deps::transmission_point(recipient.pk_d()),
                 note.value(),
-                rho.into_inner(),
+                rho.circuit_value(),
                 psi,
                 rcm,
             );
-            let orchard = note.commitment().inner();
+            let orchard = note.commitment().circuit_value();
 
             assert_eq!(
                 mirrored,
@@ -1545,13 +1562,13 @@ mod tests {
         let mut rng = OsRng;
         for scope in [Scope::External, Scope::Internal] {
             let (fvk, _ak, note) = fixture_real_note(scope, &mut rng);
-            let nk = fvk.nk().inner();
+            let nk = fvk.nk().circuit_value();
             let rho = note.rho();
-            let psi = note.rseed().psi(&rho);
-            let cm = note.commitment().inner().to_affine();
+            let psi = voting_crypto_deps::note_psi(note.rseed(), &rho);
+            let cm = note.commitment().circuit_value().to_affine();
 
-            let mirrored = derive_note_nullifier(nk, rho.into_inner(), psi, cm);
-            let orchard = note.nullifier(&fvk).inner();
+            let mirrored = derive_note_nullifier(nk, rho.circuit_value(), psi, cm);
+            let orchard = note.nullifier(&fvk).circuit_value();
 
             assert_eq!(
                 mirrored,
@@ -1570,7 +1587,7 @@ mod tests {
         // wrong bit-take, wrong rivk scope, missing base_to_scalar), this
         // equation will fail and so will in-circuit condition 11 for padding.
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
         let ivk = external_ivk_scalar(&fvk, &ak);
@@ -1581,7 +1598,7 @@ mod tests {
             let addr = fvk.address_at(idx, Scope::External);
             assert_eq!(
                 *addr.g_d() * ivk,
-                *addr.pk_d().inner(),
+                *voting_crypto_deps::transmission_point(addr.pk_d()),
                 "external_ivk_scalar drifted: [ivk] * g_d != pk_d at diversifier index {idx}"
             );
         }
@@ -1592,7 +1609,7 @@ mod tests {
         let internal_addr = fvk.address_at(0u32, Scope::Internal);
         assert_ne!(
             *internal_addr.g_d() * ivk,
-            *internal_addr.pk_d().inner(),
+            *voting_crypto_deps::transmission_point(internal_addr.pk_d()),
             "external_ivk_scalar incorrectly validates an internal-scope address"
         );
     }
@@ -1600,10 +1617,10 @@ mod tests {
     #[test]
     fn test_build_padding_slot_fresh_randomness_populates_strict_witnesses() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
-        let nk = fvk.nk().inner();
+        let nk = fvk.nk().circuit_value();
         let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
         let ivk = external_ivk_scalar(&fvk, &ak);
         let imt_proof = test_imt_proof();
@@ -1663,10 +1680,10 @@ mod tests {
     #[test]
     fn test_build_padding_slot_reuses_selected_precomputed_randomness() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
-        let nk = fvk.nk().inner();
+        let nk = fvk.nk().circuit_value();
         let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
         let ivk = external_ivk_scalar(&fvk, &ak);
         let imt_proof = test_imt_proof();
@@ -1700,10 +1717,10 @@ mod tests {
     #[test]
     fn test_derive_synthetic_padding_note_matches_manual_derivation() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
-        let nk = fvk.nk().inner();
+        let nk = fvk.nk().circuit_value();
         let ivk = external_ivk_scalar(&fvk, &ak);
         let slot_index = 3;
         let (_padded_note, rho, rseed) = precomputed_padding_note(&mut rng);
@@ -1720,7 +1737,7 @@ mod tests {
 
         let (expected_g_d, expected_pk_d) =
             padding_points(slot_index, ivk).expect("test padding points should be valid");
-        let expected_psi = rseed.psi(&rho);
+        let expected_psi = voting_crypto_deps::note_psi(&rseed, &rho);
         let expected_rcm = rcm_scalar_for_note_parts(
             DELEGATION_NOTE_VERSION,
             &rseed,
@@ -1734,13 +1751,13 @@ mod tests {
             *expected_g_d,
             *expected_pk_d,
             NoteValue::ZERO,
-            rho.into_inner(),
+            rho.circuit_value(),
             expected_psi,
             expected_rcm,
         )
         .expect("test padding commitment should be valid")
         .to_affine();
-        let expected_nf = derive_note_nullifier(nk, rho.into_inner(), expected_psi, expected_cm)
+        let expected_nf = derive_note_nullifier(nk, rho.circuit_value(), expected_psi, expected_cm)
             .expect("test padding nullifier should be valid");
 
         assert_eq!(derived.g_d_pad, expected_g_d);
@@ -1755,10 +1772,10 @@ mod tests {
     #[test]
     fn test_synthetic_padding_note_parts_matches_padding_slot_derivation() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
-        let nk = fvk.nk().inner();
+        let nk = fvk.nk().circuit_value();
         let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
         let ivk = external_ivk_scalar(&fvk, &ak);
         let imt = RecordingImtProvider::returning(test_imt_proof());
@@ -1787,7 +1804,7 @@ mod tests {
     #[test]
     fn test_synthetic_padding_note_parts_rejects_impossible_slot_indices() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let (_padded_note, rho, rseed) = precomputed_padding_note(&mut rng);
 
@@ -1803,7 +1820,7 @@ mod tests {
     #[test]
     fn test_build_padding_slot_propagates_imt_errors() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
         let imt = RecordingImtProvider::failing(ImtError("fixture failure".to_string()));
@@ -1811,7 +1828,7 @@ mod tests {
         let result = build_padding_slot(
             2,
             0,
-            fvk.nk().inner(),
+            fvk.nk().circuit_value(),
             derive_nullifier_domain(pallas::Base::random(&mut rng)),
             external_ivk_scalar(&fvk, &ak),
             &imt,
@@ -1830,7 +1847,7 @@ mod tests {
     #[test]
     fn test_build_padding_slot_rejects_missing_precomputed_padding_entry() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
         let imt = RecordingImtProvider::returning(test_imt_proof());
@@ -1843,7 +1860,7 @@ mod tests {
         let result = build_padding_slot(
             1,
             0,
-            fvk.nk().inner(),
+            fvk.nk().circuit_value(),
             derive_nullifier_domain(pallas::Base::random(&mut rng)),
             external_ivk_scalar(&fvk, &ak),
             &imt,
@@ -1891,7 +1908,7 @@ mod tests {
         // v_total = 12,499,999 → num_ballots = 0. Circuit should fail
         // (non-zero check on num_ballots causes nb_minus_one to wrap).
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let output_recipient = fvk.address_at(1u32, Scope::External);
         let vote_round_id = pallas::Base::random(&mut rng);
@@ -1933,7 +1950,7 @@ mod tests {
     #[test]
     fn test_zero_notes_error() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let output_recipient = fvk.address_at(1u32, Scope::External);
         let imt = SpacedLeafImtProvider::new();
@@ -1960,7 +1977,7 @@ mod tests {
     #[test]
     fn test_v2_notes_are_rejected() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let output_recipient = fvk.address_at(1u32, Scope::External);
         let imt = SpacedLeafImtProvider::new();
@@ -2022,7 +2039,7 @@ mod tests {
     #[test]
     fn test_six_notes_error() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let output_recipient = fvk.address_at(1u32, Scope::External);
         let imt = SpacedLeafImtProvider::new();
@@ -2087,7 +2104,7 @@ mod tests {
     #[test]
     fn test_partial_precomputed_padded_notes_returns_later_missing_error() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let precomputed = PrecomputedRandomness {
             padded_notes: vec![
@@ -2132,7 +2149,7 @@ mod tests {
     #[test]
     fn test_precomputed_delegation_notes_are_v3() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
         let output_recipient = fvk.address_at(1u32, Scope::External);
@@ -2144,13 +2161,13 @@ mod tests {
             make_real_note_inputs(&fvk, &[13_000_000], &[Scope::External], &imt, &mut rng);
 
         let mut cmx_values =
-            vec![ExtractedNoteCommitment::from(inputs[0].note.commitment()).inner()];
+            vec![ExtractedNoteCommitment::from(inputs[0].note.commitment()).circuit_value()];
         let mut padded_notes = Vec::with_capacity(circuit::MAX_REAL_NOTES - 1);
         let ivk = external_ivk_scalar(&fvk, &ak);
         for (pad_idx, slot_index) in (1..circuit::MAX_REAL_NOTES).enumerate() {
             let (padded_note, rho, rseed) = precomputed_padding_note(&mut rng);
             let padding = derive_synthetic_padding_note(
-                fvk.nk().inner(),
+                fvk.nk().circuit_value(),
                 ivk,
                 slot_index,
                 rho,
@@ -2168,9 +2185,7 @@ mod tests {
             .coordinates()
             .unwrap()
             .x();
-        let pk_d_new_x = *output_recipient
-            .pk_d()
-            .inner()
+        let pk_d_new_x = *voting_crypto_deps::transmission_point(output_recipient.pk_d())
             .to_affine()
             .coordinates()
             .unwrap()
@@ -2193,7 +2208,8 @@ mod tests {
         );
 
         let sender_address = fvk.address_at(0u32, Scope::External);
-        let signed_rho = Rho::from_nf_old(Nullifier::from_inner(rho));
+        let signed_rho =
+            voting_crypto_deps::rho_from_nullifier(Nullifier::from_bytes(&rho.to_repr()).unwrap());
         let rseed_signed = random_seed_for_rho(&signed_rho, &mut rng);
         let expected_signed_note = Note::from_parts(
             sender_address,
@@ -2206,7 +2222,7 @@ mod tests {
         .unwrap();
         let nf_signed = expected_signed_note.nullifier(&fvk);
 
-        let output_rho = Rho::from_nf_old(nf_signed);
+        let output_rho = voting_crypto_deps::rho_from_nullifier(nf_signed);
         let rseed_output = random_seed_for_rho(&output_rho, &mut rng);
         let expected_output_note = Note::from_parts(
             output_recipient,
@@ -2217,7 +2233,8 @@ mod tests {
         )
         .into_option()
         .unwrap();
-        let cmx_new = ExtractedNoteCommitment::from(expected_output_note.commitment()).inner();
+        let cmx_new =
+            ExtractedNoteCommitment::from(expected_output_note.commitment()).circuit_value();
 
         assert_eq!(expected_signed_note.version(), NoteVersion::V3);
         assert_eq!(expected_output_note.version(), NoteVersion::V3);

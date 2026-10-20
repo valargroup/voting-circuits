@@ -26,10 +26,8 @@ use voting_crypto_deps::halo2_proofs::{
     plonk::{self, Advice, Column, Constraints, Expression, Selector},
     poly::Rotation,
 };
-use voting_crypto_deps::orchard::{
-    circuit::gadget::assign_free_advice, constants::OrchardFixedBases,
-};
 use voting_crypto_deps::pasta_curves::pallas;
+use voting_crypto_deps::voting::{assign_free_advice, OrchardFixedBases};
 
 use crate::{
     delegation::imt::IMT_DEPTH,

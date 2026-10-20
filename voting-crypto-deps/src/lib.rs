@@ -187,3 +187,134 @@ pub fn note_value_witness(value: orchard::value::NoteValue) -> NoteValueWitness 
         value
     }
 }
+
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+mod voting_witness;
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub use voting_witness::{note_psi, note_trapdoor, spend_authorizing_scalar, CircuitValue};
+
+#[cfg(feature = "orchard")]
+pub use orchard::circuit::voting;
+#[cfg(feature = "lrz-orchard")]
+pub use orchard::note::commitment::NoteCommitTrapdoor as VotingNoteTrapdoor;
+#[cfg(feature = "orchard")]
+pub use orchard::note::NoteCommitTrapdoor as VotingNoteTrapdoor;
+#[cfg(feature = "lrz-orchard")]
+pub mod voting {
+    pub use super::orchard::{
+        circuit::{
+            commit_ivk::{gadgets::commit_ivk, CommitIvkChip, CommitIvkConfig},
+            gadget::{
+                add_chip::{AddChip, AddConfig},
+                assign_free_advice, derive_nullifier, AddInstruction,
+            },
+            note_commit::{gadgets::note_commit, NoteCommitChip, NoteCommitConfig},
+        },
+        constants::{
+            fixed_bases::{
+                spend_auth_g::{
+                    generator as spend_auth_generator, U as SPEND_AUTH_U, Z as SPEND_AUTH_Z,
+                },
+                COMMIT_IVK_PERSONALIZATION, NOTE_COMMITMENT_PERSONALIZATION,
+            },
+            OrchardBaseFieldBases, OrchardCommitDomains, OrchardFixedBases, OrchardFixedBasesFull,
+            OrchardHashDomains, L_ORCHARD_BASE, L_VALUE, MERKLE_DEPTH_ORCHARD,
+        },
+        spec::NonIdentityPallasPoint,
+    };
+}
+
+pub fn transmission_point(
+    key: &orchard::keys::DiversifiedTransmissionKey,
+) -> voting::NonIdentityPallasPoint {
+    #[cfg(feature = "orchard")]
+    {
+        voting::NonIdentityPallasPoint::from_bytes(&key.to_bytes()).unwrap()
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        key.inner()
+    }
+}
+pub fn rho_from_nullifier(nf: orchard::note::Nullifier) -> orchard::note::Rho {
+    orchard::note::Rho::from_bytes(&nf.to_bytes()).unwrap()
+}
+pub fn random_spending_key(rng: &mut impl rand::Rng) -> orchard::keys::SpendingKey {
+    loop {
+        let mut bytes = [0; 32];
+        rng.fill_bytes(&mut bytes);
+        if let Some(key) = orchard::keys::SpendingKey::from_bytes(bytes).into_option() {
+            return key;
+        }
+    }
+}
+pub fn dummy_merkle_path(rng: &mut impl rand::Rng) -> orchard::tree::MerklePath {
+    use pasta_curves::{
+        group::ff::{Field, PrimeField},
+        pallas,
+    };
+    orchard::tree::MerklePath::from_parts(
+        rng.next_u32(),
+        core::array::from_fn(|_| {
+            orchard::tree::MerkleHashOrchard::from_bytes(&pallas::Base::random(&mut *rng).to_repr())
+                .unwrap()
+        }),
+    )
+}
+pub fn dummy_note(
+    rng: &mut impl rand::Rng,
+    rho: Option<orchard::note::Rho>,
+    version: orchard::note::NoteVersion,
+) -> (
+    orchard::keys::SpendingKey,
+    orchard::keys::FullViewingKey,
+    orchard::note::Note,
+) {
+    use pasta_curves::{
+        group::ff::{Field, PrimeField},
+        pallas,
+    };
+    let sk = random_spending_key(rng);
+    let fvk = orchard::keys::FullViewingKey::from(&sk);
+    let recipient = fvk.address_at(0u32, orchard::keys::Scope::External);
+    let rho = rho.unwrap_or_else(|| {
+        orchard::note::Rho::from_bytes(&pallas::Base::random(&mut *rng).to_repr()).unwrap()
+    });
+    loop {
+        let mut bytes = [0; 32];
+        rng.fill_bytes(&mut bytes);
+        if let Some(seed) = orchard::note::RandomSeed::from_bytes(bytes, &rho).into_option() {
+            if let Some(note) = orchard::note::Note::from_parts(
+                recipient,
+                orchard::value::NoteValue::ZERO,
+                rho,
+                seed,
+                version,
+            )
+            .into_option()
+            {
+                return (sk, fvk, note);
+            }
+        }
+    }
+}
+
+pub fn new_note(
+    recipient: orchard::Address,
+    value: orchard::value::NoteValue,
+    rho: orchard::note::Rho,
+    version: orchard::note::NoteVersion,
+    rng: &mut impl rand::Rng,
+) -> orchard::note::Note {
+    loop {
+        let mut bytes = [0; 32];
+        rng.fill_bytes(&mut bytes);
+        if let Some(seed) = orchard::note::RandomSeed::from_bytes(bytes, &rho).into_option() {
+            if let Some(note) =
+                orchard::note::Note::from_parts(recipient, value, rho, seed, version).into_option()
+            {
+                return note;
+            }
+        }
+    }
+}
