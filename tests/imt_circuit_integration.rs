@@ -23,7 +23,7 @@ use voting_crypto_deps::halo2_proofs::dev::MockProver;
 use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
 use voting_crypto_deps::orchard::{
     keys::{FullViewingKey, Scope, SpendingKey},
-    note::{ExtractedNoteCommitment, Note, NoteVersion, Rho},
+    note::{ExtractedNoteCommitment, NoteVersion},
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
     NOTE_COMMITMENT_TREE_DEPTH,
@@ -48,7 +48,7 @@ fn make_real_note_inputs(
         let recipient = fvk.address_at(0u32, scopes[idx]);
         let note_value = NoteValue::from_raw(v);
         let (_, _, dummy_parent) = voting_crypto_deps::dummy_note(&mut *rng, None, NoteVersion::V3);
-        let note = Note::from_parts(
+        let note = voting_crypto_deps::new_note(
             recipient,
             note_value,
             voting_crypto_deps::rho_from_nullifier(dummy_parent.nullifier(fvk)),
