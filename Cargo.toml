@@ -26,6 +26,7 @@ legacy-pasta-curves = { package = "pasta_curves", version = "0.5", optional = tr
 legacy-halo2-proofs = { package = "halo2_proofs", version = "0.3", features = ["multicore"], optional = true }
 
 [dev-dependencies]
+voting-crypto-deps = { path = "voting-crypto-deps", version = "=0.3.0", default-features = false, features = ["test-support"] }
 criterion = "0.8"
 # Benches only: lets `benches/delegation.rs` drive the prover from a
 # deterministic RNG, so prepared and unprepared proving can be compared

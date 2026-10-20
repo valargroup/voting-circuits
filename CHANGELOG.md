@@ -8,10 +8,12 @@
   upstream crates are published. Registry package checks remain mandatory when
   the PR is ready for review and on main.
 
-- Updated the default backend to Common 4's Orchard facade with opt-in
-  circuit-composition witness adapters and Halo2 component access. Adapted spend randomizers and
-  note-value witnesses while retaining the independent LRZ backend and the
-  existing circuit constraints.
+- Moved the default backend's legacy Orchard composition implementation into
+  this workspace so Common no longer needs to expose its private payment backend.
+  Canonical wallet encodings are adapted at the circuit boundary. Existing
+  circuit constraints and the independent LRZ backend are retained.
+- Restricted fixture-only key/note constructors to `test-support`, and require
+  secure RNGs for production note sampling.
 
 ## v0.13.0
 

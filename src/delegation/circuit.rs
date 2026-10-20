@@ -32,6 +32,7 @@ use std::vec::Vec;
 use voting_crypto_deps::CircuitValue as _;
 use voting_crypto_deps::{CommitIvkRandomness, DiversifiedTransmissionKey, NullifierDerivingKey};
 
+#[cfg(test)]
 use crate::ff::PrimeField as _;
 use crate::group::{Curve, GroupEncoding};
 use voting_crypto_deps::composition::{
@@ -67,7 +68,7 @@ use voting_crypto_deps::halo2_proofs::{
 };
 use voting_crypto_deps::orchard::{
     keys::{FullViewingKey, Scope, SpendValidatingKey},
-    note::{Note, NoteCommitment, NoteVersion, Nullifier, RandomSeed, Rho},
+    note::{Note, NoteVersion, Nullifier, RandomSeed, Rho},
     primitives::redpallas::{SpendAuth, VerificationKey},
     tree::MerkleHashOrchard,
     value::NoteValue,
@@ -264,7 +265,7 @@ pub struct Config {
     mul_config: MulConfig,
     // Configuration for the ECCChip which provides elliptic curve operations
     // (point addition, scalar multiplication) on the Pallas curve with Orchard's fixes bases.
-    // We use it to convert cm_signed from NoteCommitment to a Field point for the DeriveNullifier function.
+    // It loads the full commitment point used by nullifier derivation.
     ecc_config: EccConfig<OrchardFixedBases>,
     // Poseidon chip config. Used in the DeriveNullifier.
     poseidon_config: PoseidonConfig<pallas::Base, 3, 2>,
@@ -400,7 +401,7 @@ pub struct Circuit {
     nk: Value<NullifierDerivingKey>,
     rho_signed: Value<pallas::Base>,
     psi_signed: Value<pallas::Base>,
-    cm_signed: Value<NoteCommitment>,
+    cm_signed: Value<pallas::Point>,
     ak: Value<SpendValidatingKey>,
     alpha: Value<pallas::Scalar>,
     rivk: Value<CommitIvkRandomness>,
@@ -441,7 +442,7 @@ impl Circuit {
             nk: Value::known(voting_crypto_deps::nullifier_key(&fvk)),
             rho_signed: Value::known(rho_signed.circuit_value()),
             psi_signed: Value::known(psi_signed),
-            cm_signed: Value::known(note.commitment()),
+            cm_signed: Value::known(voting_crypto_deps::note_commitment(note)),
             ak: Value::known(fvk.clone().into()),
             alpha: Value::known(alpha),
             rivk: Value::known(voting_crypto_deps::viewing_randomness(
@@ -851,9 +852,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         let cm_signed = Point::new(
             ecc_chip.clone(),
             layouter.namespace(|| "witness cm_signed"),
-            self.cm_signed
-                .as_ref()
-                .map(|cm| cm.circuit_value().to_affine()),
+            self.cm_signed.as_ref().map(|cm| cm.to_affine()),
         )?;
 
         // ---------------------------------------------------------------
@@ -2035,7 +2034,6 @@ mod tests {
         let rho = note.rho();
         let psi = voting_crypto_deps::note_psi(note.rseed(), &rho);
         let rcm = note_rcm_scalar(note);
-        let cm = note.commitment();
         let recipient = note.recipient();
 
         NoteSlotWitness {
@@ -2047,7 +2045,7 @@ mod tests {
             rho: Value::known(rho.circuit_value()),
             psi: Value::known(psi),
             rcm: Value::known(rcm),
-            cm: Value::known(cm.circuit_value().to_affine()),
+            cm: Value::known(voting_crypto_deps::note_commitment(note).to_affine()),
             path: Value::known(*auth_path),
             pos: Value::known(pos),
             imt_nf_bounds: Value::known(imt.nf_bounds),

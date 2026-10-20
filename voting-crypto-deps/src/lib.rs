@@ -191,17 +191,27 @@ pub fn note_value_witness(value: orchard::value::NoteValue) -> NoteValueWitness 
 #[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
 mod composition_witness;
 #[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
-pub use composition_witness::{note_psi, note_trapdoor, spend_authorizing_scalar, CircuitValue};
+pub use composition_witness::{
+    note_commitment, note_commitment_point, note_psi, note_trapdoor, spend_authorizing_scalar,
+    CircuitValue,
+};
+
+#[cfg(feature = "orchard")]
+mod legacy;
 
 #[cfg(feature = "orchard")]
 pub mod composition {
-    pub use super::orchard::circuit::composition::*;
     pub use super::NonIdentityPallasPoint;
+    pub use crate::legacy::{
+        assign_free_advice, commit_ivk, derive_nullifier, note_commit, spend_auth_generator,
+        AddChip, AddConfig, AddInstruction, CommitIvkChip, CommitIvkConfig, NoteCommitChip,
+        NoteCommitConfig, OrchardBaseFieldBases, OrchardCommitDomains, OrchardFixedBases,
+        OrchardFixedBasesFull, OrchardHashDomains, COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE,
+        L_VALUE, MERKLE_DEPTH_ORCHARD, NOTE_COMMITMENT_PERSONALIZATION, SPEND_AUTH_U, SPEND_AUTH_Z,
+    };
 }
-#[cfg(feature = "orchard")]
-pub use orchard::circuit::composition::witness::NoteCommitTrapdoor as NoteTrapdoor;
 #[cfg(feature = "lrz-orchard")]
-pub use orchard::note::commitment::NoteCommitTrapdoor as NoteTrapdoor;
+use orchard::note::commitment::NoteCommitTrapdoor as NoteTrapdoor;
 #[cfg(feature = "lrz-orchard")]
 pub mod composition {
     pub use super::orchard::{
@@ -248,8 +258,9 @@ pub fn rho_from_nullifier(nf: orchard::note::Nullifier) -> orchard::note::Rho {
     any(feature = "orchard", feature = "lrz-orchard"),
     any(feature = "rand", feature = "lrz-rand")
 ))]
+#[cfg(feature = "test-support")]
 /// Samples a valid spending key. Production callers must supply a secure RNG.
-pub fn random_spending_key(rng: &mut impl rand::Rng) -> orchard::keys::SpendingKey {
+pub fn random_spending_key(rng: &mut impl rand::CryptoRng) -> orchard::keys::SpendingKey {
     loop {
         let mut bytes = [0; 32];
         rng.fill_bytes(&mut bytes);
@@ -280,9 +291,10 @@ pub fn dummy_merkle_path(rng: &mut impl rand::Rng) -> orchard::tree::MerklePath 
     any(feature = "orchard", feature = "lrz-orchard"),
     any(feature = "rand", feature = "lrz-rand")
 ))]
+#[cfg(feature = "test-support")]
 /// Constructs a zero-value padding note. Production callers must supply a secure RNG.
 pub fn dummy_note(
-    rng: &mut impl rand::Rng,
+    rng: &mut impl rand::CryptoRng,
     rho: Option<orchard::note::Rho>,
     version: orchard::note::NoteVersion,
 ) -> (
@@ -329,7 +341,7 @@ pub fn new_note(
     value: orchard::value::NoteValue,
     rho: orchard::note::Rho,
     version: orchard::note::NoteVersion,
-    rng: &mut impl rand::Rng,
+    rng: &mut impl rand::CryptoRng,
 ) -> orchard::note::Note {
     loop {
         let mut bytes = [0; 32];
@@ -347,7 +359,7 @@ pub fn new_note(
 #[cfg(feature = "orchard")]
 pub use composition_witness::NonIdentityPallasPoint;
 #[cfg(feature = "orchard")]
-pub use orchard::circuit::composition::witness::{CommitIvkRandomness, NullifierDerivingKey};
+pub use legacy::witness::{CommitIvkRandomness, NullifierDerivingKey};
 #[cfg(feature = "lrz-orchard")]
 pub use orchard::keys::{CommitIvkRandomness, DiversifiedTransmissionKey, NullifierDerivingKey};
 #[cfg(feature = "orchard")]
@@ -358,7 +370,7 @@ pub type DiversifiedTransmissionKey = NonIdentityPallasPoint;
 pub fn nullifier_key(key: &orchard::keys::FullViewingKey) -> NullifierDerivingKey {
     #[cfg(feature = "orchard")]
     {
-        NullifierDerivingKey::from(key)
+        legacy::witness::nullifier_key(key)
     }
     #[cfg(feature = "lrz-orchard")]
     {
@@ -373,7 +385,7 @@ pub fn viewing_randomness(
 ) -> CommitIvkRandomness {
     #[cfg(feature = "orchard")]
     {
-        CommitIvkRandomness::from_viewing_key(key, scope)
+        legacy::witness::viewing_randomness(key, scope)
     }
     #[cfg(feature = "lrz-orchard")]
     {
@@ -385,11 +397,7 @@ pub fn viewing_randomness(
 pub fn diversified_base(address: &orchard::Address) -> composition::NonIdentityPallasPoint {
     #[cfg(feature = "orchard")]
     {
-        NonIdentityPallasPoint::from_witness(
-            orchard::circuit::composition::witness::NonIdentityPallasPoint::diversified_base(
-                address,
-            ),
-        )
+        legacy::witness::diversified_base(address)
     }
     #[cfg(feature = "lrz-orchard")]
     {
@@ -401,11 +409,7 @@ pub fn diversified_base(address: &orchard::Address) -> composition::NonIdentityP
 pub fn transmission_key(address: &orchard::Address) -> DiversifiedTransmissionKey {
     #[cfg(feature = "orchard")]
     {
-        NonIdentityPallasPoint::from_witness(
-            orchard::circuit::composition::witness::NonIdentityPallasPoint::transmission_key(
-                address,
-            ),
-        )
+        legacy::witness::transmission_key(address)
     }
     #[cfg(feature = "lrz-orchard")]
     {

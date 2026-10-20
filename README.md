@@ -113,16 +113,16 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 ## Dependency on Orchard
 
-The default backend uses Zakura Common 4's Orchard package with its opt-in
-`circuit-composition` feature. The dependency facade reexports the curated gadgets through
-`voting_crypto_deps::composition` and converts Orchard-owned canonical encodings to
-field and group witnesses at the circuit boundary. Note randomness and
-sign-corrected spending-key derivations stay owned by Orchard.
+The default backend consumes Common's public Orchard payment types and canonical
+encodings. Its Halo2 composition gadgets, fixed-base tables, and private circuit
+witness adaptation are owned by this workspace. Common's temporary
+`circuit-composition` exports are not required. Source provenance and the bridge
+removal contract are documented in `voting-crypto-deps/src/legacy/README.md`.
 
-Until Common RC3 is published, all Common dependencies are pinned to the same
-revision from [Common #613](https://github.com/zakura-core/common/pull/613).
-Ordinary builds need no local patches. Publishing this workspace requires
-switching those pins to the published RC3 packages.
+The prototype pins all Common dependencies to one revision of the paired
+[Common bridge removal](https://github.com/zakura-core/common/pull/615), stacked
+on [Common #613](https://github.com/zakura-core/common/pull/613). Ordinary builds
+need no local patches. Publication remains separate from this source migration.
 
 The opt-in LRZ backend uses the crates.io `orchard 0.16` release and retains
 its existing `circuit` and `unstable-voting-circuits` features. The facade

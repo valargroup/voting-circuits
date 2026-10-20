@@ -9,6 +9,7 @@ repository = "https://github.com/valargroup/voting-circuits"
 readme = "README.md"
 
 [features]
+test-support = []
 default = [
     "vct",
     "poseidon",
@@ -21,7 +22,7 @@ pasta = ["dep:pasta-curves"]
 gadgets = ["dep:halo2-gadgets"]
 poseidon = ["dep:halo2-poseidon"]
 proofs = ["dep:halo2-proofs"]
-orchard = ["pasta", "dep:orchard", "dep:incrementalmerkletree", "dep:zip32", "dep:zcash-note-encryption"]
+orchard = ["pasta", "gadgets", "proofs", "sinsemilla", "dep:zcash_spec", "dep:blake2b_simd", "dep:subtle", "dep:orchard", "dep:incrementalmerkletree", "dep:zip32", "dep:zcash-note-encryption"]
 sinsemilla = ["dep:sinsemilla"]
 rand = ["dep:rand"]
 vct = [
@@ -68,20 +69,25 @@ lrz-reddsa = { package = "reddsa", version = "0.6", optional = true, default-fea
 lrz-sinsemilla = { package = "sinsemilla", version = "0.2", optional = true }
 lrz-zcash-primitives = { package = "zcash_primitives", version = "0.31.0-pre.0", optional = true, default-features = false, features = ["std"] }
 
-halo2-gadgets = { package = "zakura-halo2-gadgets", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "e018495880249a37c804920b0b0da09d572a4591", optional = true, default-features = false }
-halo2-poseidon = { package = "zakura-halo2-poseidon", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "e018495880249a37c804920b0b0da09d572a4591", optional = true }
-halo2-proofs = { package = "zakura-halo2-proofs", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "e018495880249a37c804920b0b0da09d572a4591", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
-orchard = { package = "zakura-orchard", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "e018495880249a37c804920b0b0da09d572a4591", optional = true, features = ["backend-halo2", "circuit", "circuit-composition", "zip32-addresses"] }
-pasta-curves = { package = "zakura-pasta-curves", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "e018495880249a37c804920b0b0da09d572a4591", optional = true }
+halo2-gadgets = { package = "zakura-halo2-gadgets", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "f4abcb30294759fa495488716a1dd247f413a266", optional = true, default-features = false }
+halo2-poseidon = { package = "zakura-halo2-poseidon", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "f4abcb30294759fa495488716a1dd247f413a266", optional = true }
+halo2-proofs = { package = "zakura-halo2-proofs", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "f4abcb30294759fa495488716a1dd247f413a266", optional = true, default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
+orchard = { package = "zakura-orchard", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "f4abcb30294759fa495488716a1dd247f413a266", optional = true, features = ["backend-halo2", "circuit", "zip32-addresses"] }
+pasta-curves = { package = "zakura-pasta-curves", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "f4abcb30294759fa495488716a1dd247f413a266", optional = true }
 rand = { package = "rand", version = "0.10", optional = true, default-features = false, features = ["sys_rng"] }
-reddsa = { package = "zakura-reddsa", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "e018495880249a37c804920b0b0da09d572a4591", optional = true, default-features = false, features = ["std"] }
-sinsemilla = { package = "zakura-sinsemilla", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "e018495880249a37c804920b0b0da09d572a4591", optional = true }
-zcash-primitives = { package = "zakura-primitives", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "e018495880249a37c804920b0b0da09d572a4591", optional = true, default-features = false, features = ["std"] }
+reddsa = { package = "zakura-reddsa", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "f4abcb30294759fa495488716a1dd247f413a266", optional = true, default-features = false, features = ["std"] }
+sinsemilla = { package = "zakura-sinsemilla", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "f4abcb30294759fa495488716a1dd247f413a266", optional = true }
+zcash-primitives = { package = "zakura-primitives", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "f4abcb30294759fa495488716a1dd247f413a266", optional = true, default-features = false, features = ["std"] }
 
 # Note, address, and witness APIs must use the selected Orchard family.
 incrementalmerkletree = { version = "0.8", optional = true }
 lrz-incrementalmerkletree = { package = "incrementalmerkletree", version = "0.9", optional = true }
 zip32 = { version = "0.2", optional = true }
 lrz-zip32 = { package = "zip32", version = "0.3", optional = true }
-zcash-note-encryption = { package = "zakura-note-encryption", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "e018495880249a37c804920b0b0da09d572a4591", optional = true }
+zcash-note-encryption = { package = "zakura-note-encryption", version = "=4.0.0-rc3", git = "https://github.com/zakura-core/common", rev = "f4abcb30294759fa495488716a1dd247f413a266", optional = true }
 lrz-zcash-note-encryption = { package = "zcash_note_encryption", version = "0.5", optional = true }
+
+# Circuit compatibility derivations use the same audited primitives as Orchard.
+zcash_spec = { version = "0.2.1", optional = true }
+blake2b_simd = { version = "1", optional = true }
+subtle = { version = "2.6", optional = true }

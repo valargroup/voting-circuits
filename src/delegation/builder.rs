@@ -13,8 +13,7 @@ use crate::ff::{Field, PrimeField, PrimeFieldBits};
 use crate::group::{Curve, GroupEncoding};
 use crate::rand::{CryptoRng, Rng};
 use voting_crypto_deps::composition::{
-    NonIdentityPallasPoint, COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE, L_VALUE,
-    NOTE_COMMITMENT_PERSONALIZATION,
+    NonIdentityPallasPoint, COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE,
 };
 use voting_crypto_deps::halo2_proofs::circuit::Value;
 use voting_crypto_deps::orchard::{
@@ -126,29 +125,6 @@ fn point_x_opt(point: &pallas::Point) -> Option<pallas::Base> {
         .map(|coords| *coords.x())
 }
 
-// Expands a 32-byte compressed encoding into a stream of little-endian bits.
-// Orchard’s note commitment hashes `g_d` and `pk_d` as
-// little-endian bits of their 32-byte compressed encodings.
-fn byte_bits(bytes: [u8; 32]) -> impl Iterator<Item = bool> {
-    bytes
-        .into_iter()
-        .flat_map(|byte| (0..8).map(move |bit| ((byte >> bit) & 1) == 1))
-}
-
-// Expands a 64-bit little-endian integer into a stream of little-endian bits.
-// Orchard’s note commitment hashes `value` as a 64-bit little-endian integer.
-fn u64_bits(value: u64) -> impl Iterator<Item = bool> {
-    value
-        .to_le_bytes()
-        .into_iter()
-        .flat_map(|byte| (0..8).map(move |bit| ((byte >> bit) & 1) == 1))
-}
-
-// Derives the external IVK scalar from the full viewing key and spend validating key.
-// Used to construct padding `(g_d_pad, pk_d_pad)` pairs such that the in-circuit
-// `pk_d = [selected_ivk] * g_d` check (condition 11) holds against the same ivk
-// the circuit derives in condition 5. Padding always uses `is_internal = false`,
-// so the external rivk is the correct scope.
 // Note: Orchard's `FullViewingKey::to_ivk` does not expose the inner Ivk scalar;
 // if it did (e.g. `fvk.ivk_scalar(scope)`), we could drop this re-implementation.
 fn external_ivk_scalar(fvk: &FullViewingKey, ak: &SpendValidatingKey) -> pallas::Scalar {
@@ -255,19 +231,7 @@ fn note_commitment_point(
     psi: pallas::Base,
     rcm: pallas::Scalar,
 ) -> Option<pallas::Point> {
-    let domain = voting_crypto_deps::sinsemilla::CommitDomain::new(NOTE_COMMITMENT_PERSONALIZATION);
-    // Mirrors Orchard NoteCommit while allowing synthetic padding points.
-    domain
-        .commit(
-            iter::empty()
-                .chain(byte_bits(g_d.to_bytes()))
-                .chain(byte_bits(pk_d.to_bytes()))
-                .chain(u64_bits(value.inner()).take(L_VALUE))
-                .chain(rho.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
-                .chain(psi.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE)),
-            &rcm,
-        )
-        .into_option()
+    voting_crypto_deps::note_commitment_point(g_d, pk_d, value, rho, psi, rcm)
 }
 
 // Derives the note nullifier for a given note.
@@ -788,7 +752,7 @@ pub fn build_delegation_bundle(
             rho: Value::known(rho.circuit_value()),
             psi: Value::known(psi),
             rcm: Value::known(rcm),
-            cm: Value::known(cm.circuit_value().to_affine()),
+            cm: Value::known(voting_crypto_deps::note_commitment(note).to_affine()),
             path: Value::known(input.merkle_path.auth_path()),
             pos: Value::known(input.merkle_path.position()),
             imt_nf_bounds: Value::known(input.imt_proof.nf_bounds),
@@ -1041,7 +1005,9 @@ mod tests {
         }
     }
 
-    fn precomputed_padding_note(rng: &mut impl Rng) -> (PaddedNoteData, Rho, RandomSeed) {
+    fn precomputed_padding_note(
+        rng: &mut (impl Rng + CryptoRng),
+    ) -> (PaddedNoteData, Rho, RandomSeed) {
         let rho = voting_crypto_deps::rho_from_nullifier(
             Nullifier::from_bytes(&pallas::Base::random(&mut *rng).to_repr()).unwrap(),
         );
@@ -1139,7 +1105,7 @@ mod tests {
         scopes: &[Scope],
         note_version: NoteVersion,
         imt_provider: &impl ImtProvider,
-        rng: &mut impl Rng,
+        rng: &mut (impl Rng + CryptoRng),
     ) -> (Vec<RealNoteInput>, pallas::Base) {
         let n = values.len();
         assert!((1..=circuit::MAX_REAL_NOTES).contains(&n));
@@ -1223,7 +1189,7 @@ mod tests {
         values: &[u64],
         scopes: &[Scope],
         imt_provider: &impl ImtProvider,
-        rng: &mut impl Rng,
+        rng: &mut (impl Rng + CryptoRng),
     ) -> (Vec<RealNoteInput>, pallas::Base) {
         make_real_note_inputs_with_version(
             fvk,
@@ -1305,7 +1271,7 @@ mod tests {
         )
     }
 
-    fn make_valid_padded_note_data(rng: &mut impl Rng) -> PaddedNoteData {
+    fn make_valid_padded_note_data(rng: &mut (impl Rng + CryptoRng)) -> PaddedNoteData {
         let rho = voting_crypto_deps::rho_from_nullifier(
             Nullifier::from_bytes(&pallas::Base::random(&mut *rng).to_repr()).unwrap(),
         );
@@ -1513,7 +1479,7 @@ mod tests {
     /// Builds a real Orchard `Note` for use as ground truth in drift tests.
     fn fixture_real_note(
         scope: Scope,
-        rng: &mut impl Rng,
+        rng: &mut (impl Rng + CryptoRng),
     ) -> (FullViewingKey, SpendValidatingKey, Note) {
         let sk = voting_crypto_deps::random_spending_key(rng);
         let fvk: FullViewingKey = (&sk).into();
@@ -1555,7 +1521,7 @@ mod tests {
                 psi,
                 rcm,
             );
-            let orchard = note.commitment().circuit_value();
+            let orchard = voting_crypto_deps::note_commitment(&note);
 
             assert_eq!(
                 mirrored,
@@ -1577,7 +1543,7 @@ mod tests {
             let nk = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
             let rho = note.rho();
             let psi = voting_crypto_deps::note_psi(note.rseed(), &rho);
-            let cm = note.commitment().circuit_value().to_affine();
+            let cm = voting_crypto_deps::note_commitment(&note).to_affine();
 
             let mirrored = derive_note_nullifier(nk, rho.circuit_value(), psi, cm);
             let orchard = note.nullifier(&fvk).circuit_value();
