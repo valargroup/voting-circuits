@@ -148,3 +148,257 @@ mod tests {
         let _: Option<orchard::Action<()>> = parsed.ok();
     }
 }
+
+/// Canonical spend-authorization randomizer for the selected Orchard backend.
+#[cfg(feature = "orchard")]
+pub use orchard::primitives::redpallas::SpendAuthRandomizer;
+#[cfg(feature = "lrz-orchard")]
+pub type SpendAuthRandomizer = pasta_curves::pallas::Scalar;
+
+/// Converts a circuit witness scalar to the selected backend's signing randomizer.
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub fn spend_auth_randomizer(scalar: &pasta_curves::pallas::Scalar) -> SpendAuthRandomizer {
+    #[cfg(feature = "orchard")]
+    {
+        use pasta_curves::group::ff::PrimeField;
+        SpendAuthRandomizer::from_bytes(scalar.to_repr()).unwrap()
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        *scalar
+    }
+}
+
+/// Value representation consumed by the selected Orchard commitment gadget.
+#[cfg(feature = "orchard")]
+pub type NoteValueWitness = pasta_curves::pallas::Base;
+#[cfg(feature = "lrz-orchard")]
+pub type NoteValueWitness = orchard::value::NoteValue;
+
+/// Preserves the note value while adapting the selected gadget's witness type.
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub fn note_value_witness(value: orchard::value::NoteValue) -> NoteValueWitness {
+    #[cfg(feature = "orchard")]
+    {
+        pasta_curves::pallas::Base::from(value.inner())
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        value
+    }
+}
+
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+mod composition_witness;
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub use composition_witness::{note_psi, note_trapdoor, spend_authorizing_scalar, CircuitValue};
+
+#[cfg(feature = "orchard")]
+pub mod composition {
+    pub use super::orchard::circuit::composition::*;
+    pub use super::NonIdentityPallasPoint;
+}
+#[cfg(feature = "orchard")]
+pub use orchard::circuit::composition::witness::NoteCommitTrapdoor as NoteTrapdoor;
+#[cfg(feature = "lrz-orchard")]
+pub use orchard::note::commitment::NoteCommitTrapdoor as NoteTrapdoor;
+#[cfg(feature = "lrz-orchard")]
+pub mod composition {
+    pub use super::orchard::{
+        circuit::{
+            commit_ivk::{gadgets::commit_ivk, CommitIvkChip, CommitIvkConfig},
+            gadget::{
+                add_chip::{AddChip, AddConfig},
+                assign_free_advice, derive_nullifier, AddInstruction,
+            },
+            note_commit::{gadgets::note_commit, NoteCommitChip, NoteCommitConfig},
+        },
+        constants::{
+            fixed_bases::{
+                spend_auth_g::{
+                    generator as spend_auth_generator, U as SPEND_AUTH_U, Z as SPEND_AUTH_Z,
+                },
+                COMMIT_IVK_PERSONALIZATION, NOTE_COMMITMENT_PERSONALIZATION,
+            },
+            OrchardBaseFieldBases, OrchardCommitDomains, OrchardFixedBases, OrchardFixedBasesFull,
+            OrchardHashDomains, L_ORCHARD_BASE, L_VALUE, MERKLE_DEPTH_ORCHARD,
+        },
+        spec::NonIdentityPallasPoint,
+    };
+}
+
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub fn transmission_point(key: &DiversifiedTransmissionKey) -> composition::NonIdentityPallasPoint {
+    #[cfg(feature = "orchard")]
+    {
+        *key
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        key.inner()
+    }
+}
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub fn rho_from_nullifier(nf: orchard::note::Nullifier) -> orchard::note::Rho {
+    orchard::note::Rho::from_bytes(&nf.to_bytes()).unwrap()
+}
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand"),
+))]
+pub fn random_spending_key(rng: &mut impl rand::Rng) -> orchard::keys::SpendingKey {
+    loop {
+        let mut bytes = [0; 32];
+        rng.fill_bytes(&mut bytes);
+        if let Some(key) = orchard::keys::SpendingKey::from_bytes(bytes).into_option() {
+            return key;
+        }
+    }
+}
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand"),
+))]
+pub fn dummy_merkle_path(rng: &mut impl rand::Rng) -> orchard::tree::MerklePath {
+    use pasta_curves::{
+        group::ff::{Field, PrimeField},
+        pallas,
+    };
+    orchard::tree::MerklePath::from_parts(
+        rng.next_u32(),
+        core::array::from_fn(|_| {
+            orchard::tree::MerkleHashOrchard::from_bytes(&pallas::Base::random(&mut *rng).to_repr())
+                .unwrap()
+        }),
+    )
+}
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand"),
+))]
+pub fn dummy_note(
+    rng: &mut impl rand::Rng,
+    rho: Option<orchard::note::Rho>,
+    version: orchard::note::NoteVersion,
+) -> (
+    orchard::keys::SpendingKey,
+    orchard::keys::FullViewingKey,
+    orchard::note::Note,
+) {
+    use pasta_curves::{
+        group::ff::{Field, PrimeField},
+        pallas,
+    };
+    let sk = random_spending_key(rng);
+    let fvk = orchard::keys::FullViewingKey::from(&sk);
+    let recipient = fvk.address_at(0u32, orchard::keys::Scope::External);
+    let rho = rho.unwrap_or_else(|| {
+        orchard::note::Rho::from_bytes(&pallas::Base::random(&mut *rng).to_repr()).unwrap()
+    });
+    loop {
+        let mut bytes = [0; 32];
+        rng.fill_bytes(&mut bytes);
+        if let Some(seed) = orchard::note::RandomSeed::from_bytes(bytes, &rho).into_option() {
+            if let Some(note) = orchard::note::Note::from_parts(
+                recipient,
+                orchard::value::NoteValue::ZERO,
+                rho,
+                seed,
+                version,
+            )
+            .into_option()
+            {
+                return (sk, fvk, note);
+            }
+        }
+    }
+}
+
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand"),
+))]
+pub fn new_note(
+    recipient: orchard::Address,
+    value: orchard::value::NoteValue,
+    rho: orchard::note::Rho,
+    version: orchard::note::NoteVersion,
+    rng: &mut impl rand::Rng,
+) -> orchard::note::Note {
+    loop {
+        let mut bytes = [0; 32];
+        rng.fill_bytes(&mut bytes);
+        if let Some(seed) = orchard::note::RandomSeed::from_bytes(bytes, &rho).into_option() {
+            if let Some(note) =
+                orchard::note::Note::from_parts(recipient, value, rho, seed, version).into_option()
+            {
+                return note;
+            }
+        }
+    }
+}
+
+#[cfg(feature = "orchard")]
+pub use composition_witness::NonIdentityPallasPoint;
+#[cfg(feature = "orchard")]
+pub use orchard::circuit::composition::witness::{CommitIvkRandomness, NullifierDerivingKey};
+#[cfg(feature = "lrz-orchard")]
+pub use orchard::keys::{CommitIvkRandomness, DiversifiedTransmissionKey, NullifierDerivingKey};
+#[cfg(feature = "orchard")]
+pub type DiversifiedTransmissionKey = NonIdentityPallasPoint;
+
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub fn nullifier_key(key: &orchard::keys::FullViewingKey) -> NullifierDerivingKey {
+    #[cfg(feature = "orchard")]
+    {
+        NullifierDerivingKey::from(key)
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        *key.nk()
+    }
+}
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub fn viewing_randomness(
+    key: &orchard::keys::FullViewingKey,
+    scope: orchard::keys::Scope,
+) -> CommitIvkRandomness {
+    #[cfg(feature = "orchard")]
+    {
+        CommitIvkRandomness::from_viewing_key(key, scope)
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        key.rivk(scope)
+    }
+}
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub fn diversified_base(address: &orchard::Address) -> composition::NonIdentityPallasPoint {
+    #[cfg(feature = "orchard")]
+    {
+        NonIdentityPallasPoint::from_witness(
+            orchard::circuit::composition::witness::NonIdentityPallasPoint::diversified_base(
+                address,
+            ),
+        )
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        address.g_d()
+    }
+}
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+pub fn transmission_key(address: &orchard::Address) -> DiversifiedTransmissionKey {
+    #[cfg(feature = "orchard")]
+    {
+        NonIdentityPallasPoint::from_witness(
+            orchard::circuit::composition::witness::NonIdentityPallasPoint::transmission_key(
+                address,
+            ),
+        )
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        *address.pk_d()
+    }
+}

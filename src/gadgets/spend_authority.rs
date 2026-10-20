@@ -21,12 +21,12 @@
 //! voting delegation and vote-proof circuits can share the exact same
 //! constraint code as the upstream Orchard action circuit.
 
+use voting_crypto_deps::composition::{OrchardFixedBases, OrchardFixedBasesFull};
 use voting_crypto_deps::halo2_gadgets::ecc::{chip::EccChip, FixedPoint, Point, ScalarFixed};
 use voting_crypto_deps::halo2_proofs::{
     circuit::{Layouter, Value},
     plonk::{Column, Error, Instance as InstanceColumn},
 };
-use voting_crypto_deps::orchard::constants::{OrchardFixedBases, OrchardFixedBasesFull};
 use voting_crypto_deps::pasta_curves::pallas;
 
 /// Proves spend authority: `rk = [alpha] * SpendAuthG + ak_P`, then constrains

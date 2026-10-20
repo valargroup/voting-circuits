@@ -16,6 +16,7 @@
 //! [`crate::gadgets::poseidon_merkle`].
 
 use crate::ff::Field;
+use voting_crypto_deps::composition::{assign_free_advice, OrchardFixedBases};
 use voting_crypto_deps::halo2_gadgets::{
     ecc::chip::EccConfig,
     poseidon::{Pow5Chip as PoseidonChip, Pow5Config as PoseidonConfig},
@@ -25,9 +26,6 @@ use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
     plonk::{self, Advice, Column, Constraints, Expression, Selector},
     poly::Rotation,
-};
-use voting_crypto_deps::orchard::{
-    circuit::gadget::assign_free_advice, constants::OrchardFixedBases,
 };
 use voting_crypto_deps::pasta_curves::pallas;
 

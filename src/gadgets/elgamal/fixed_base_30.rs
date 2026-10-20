@@ -9,6 +9,9 @@
 use crate::ff::{Field, PrimeField};
 use crate::group::Curve;
 use lazy_static::lazy_static;
+use voting_crypto_deps::composition::{
+    spend_auth_generator as generator, SPEND_AUTH_U, SPEND_AUTH_Z,
+};
 use voting_crypto_deps::halo2_gadgets::{
     ecc::chip::{compute_lagrange_coeffs, H},
     utilities::decompose_running_sum::RunningSumConfig,
@@ -18,7 +21,6 @@ use voting_crypto_deps::halo2_proofs::{
     plonk::{Advice, Column, ConstraintSystem, Constraints, Error, Expression, Fixed, Selector},
     poly::Rotation,
 };
-use voting_crypto_deps::orchard::constants::fixed_bases::spend_auth_g;
 use voting_crypto_deps::pasta_curves::{arithmetic::CurveAffine, pallas};
 
 use crate::params::{RANGE_CHECK_WORD_BITS, SHARE_VALUE_BITS};
@@ -35,7 +37,7 @@ const _: () = assert!(NUM_WINDOWS == PRECOMPUTED_NUM_WINDOWS);
 // The first nine windows use the full SpendAuthG table. The final window is
 // different because it cancels the offset accumulated by those nine windows.
 // These final-window constants are the last entry produced by
-// `find_zs_and_us(spend_auth_g::generator(), NUM_WINDOWS)`.
+// `find_zs_and_us(generator(), NUM_WINDOWS)`.
 const FINAL_WINDOW_Z: u64 = 149_621;
 const FINAL_WINDOW_U: [[u8; 32]; H] = [
     [
@@ -74,7 +76,7 @@ const FINAL_WINDOW_U: [[u8; 32]; H] = [
 
 lazy_static! {
     static ref LAGRANGE_COEFFS: Vec<[pallas::Base; H]> =
-        compute_lagrange_coeffs(spend_auth_g::generator(), NUM_WINDOWS);
+        compute_lagrange_coeffs(generator(), NUM_WINDOWS);
 }
 
 #[derive(Clone, Debug)]
@@ -369,7 +371,7 @@ impl SpendAuthGFixedBase30Config {
         let z = if window == NUM_WINDOWS - 1 {
             FINAL_WINDOW_Z
         } else {
-            spend_auth_g::Z[window]
+            SPEND_AUTH_Z[window]
         };
         region.assign_fixed(
             || format!("window {window} z"),
@@ -388,7 +390,7 @@ impl SpendAuthGFixedBase30Config {
     ) -> Result<AssignedPoint, Error> {
         let scalar = digit.map(|digit| window_scalar(window, digit));
         let coordinates = scalar.map(|scalar| {
-            let point = (spend_auth_g::generator() * scalar).to_affine();
+            let point = (generator() * scalar).to_affine();
             let coordinates = point.coordinates().unwrap();
             (*coordinates.x(), *coordinates.y())
         });
@@ -409,7 +411,7 @@ impl SpendAuthGFixedBase30Config {
             let repr = if window == NUM_WINDOWS - 1 {
                 FINAL_WINDOW_U[digit]
             } else {
-                spend_auth_g::U[window][digit]
+                SPEND_AUTH_U[window][digit]
             };
             pallas::Base::from_repr(repr).unwrap()
         });
@@ -696,12 +698,12 @@ mod tests {
         ) -> Result<(), Error> {
             let window = 0;
             let digit = 5;
-            let point = (spend_auth_g::generator() * window_scalar(window, digit)).to_affine();
+            let point = (generator() * window_scalar(window, digit)).to_affine();
             let (x, mut y) = point_coordinates(point);
             if self.tamper == Tamper::SelectedY {
                 y = -y;
             }
-            let mut u = pallas::Base::from_repr(spend_auth_g::U[window][digit]).unwrap();
+            let mut u = pallas::Base::from_repr(SPEND_AUTH_U[window][digit]).unwrap();
             if self.tamper == Tamper::SelectedU {
                 u += pallas::Base::one();
             }
@@ -727,7 +729,7 @@ mod tests {
                         || "z",
                         config.fixed_base_30.fixed_z,
                         0,
-                        || Value::known(pallas::Base::from(spend_auth_g::Z[window])),
+                        || Value::known(pallas::Base::from(SPEND_AUTH_Z[window])),
                     )?;
                     for (name, column, row, value) in [
                         ("x", config.fixed_base_30.advices[0], 0, x),
@@ -758,7 +760,7 @@ mod tests {
             config: &TamperConfig,
             mut layouter: impl Layouter<pallas::Base>,
         ) -> Result<(), Error> {
-            let generator = spend_auth_g::generator();
+            let generator = generator();
             let p = generator * pallas::Scalar::from(5);
             let q = generator * pallas::Scalar::from(7);
             let (x_p, y_p) = point_coordinates(p.to_affine());
@@ -793,7 +795,7 @@ mod tests {
             config: &TamperConfig,
             mut layouter: impl Layouter<pallas::Base>,
         ) -> Result<(), Error> {
-            let generator = spend_auth_g::generator();
+            let generator = generator();
             let p = generator * pallas::Scalar::from(5);
             let q = generator * pallas::Scalar::from(7);
             let (x_p, y_p) = point_coordinates(p.to_affine());
@@ -938,7 +940,7 @@ mod tests {
     }
 
     fn test_mul_add(share: u64, should_succeed: bool) {
-        let generator = spend_auth_g::generator();
+        let generator = generator();
         let addend = (generator * pallas::Scalar::from(13)).to_affine();
         let expected = (generator * pallas::Scalar::from(share) + addend).to_affine();
         let prover = run_mul_add(share, addend, expected);
@@ -977,8 +979,7 @@ mod tests {
     #[test]
     fn final_window_constants_select_positive_y() {
         for (digit, u_repr) in FINAL_WINDOW_U.iter().enumerate() {
-            let point =
-                (spend_auth_g::generator() * window_scalar(NUM_WINDOWS - 1, digit)).to_affine();
+            let point = (generator() * window_scalar(NUM_WINDOWS - 1, digit)).to_affine();
             let y = *point.coordinates().unwrap().y();
             let u = pallas::Base::from_repr(*u_repr).unwrap();
             let z = pallas::Base::from(FINAL_WINDOW_Z);
@@ -1001,7 +1002,7 @@ mod tests {
 
     #[test]
     fn mul_add_accepts_doubling() {
-        let generator = spend_auth_g::generator();
+        let generator = generator();
         let magnitude = generator * pallas::Scalar::from(TEST_SHARE);
         let prover = run_mul_add(
             TEST_SHARE,
@@ -1014,7 +1015,7 @@ mod tests {
 
     #[test]
     fn mul_add_accepts_inverse_points() {
-        let generator = spend_auth_g::generator();
+        let generator = generator();
         let magnitude = generator * pallas::Scalar::from(TEST_SHARE);
         let prover = run_mul_add(
             TEST_SHARE,
@@ -1027,7 +1028,7 @@ mod tests {
 
     #[test]
     fn mul_add_accepts_identity_addend() {
-        let generator = spend_auth_g::generator();
+        let generator = generator();
         let magnitude = generator * pallas::Scalar::from(TEST_SHARE);
         let prover = run_mul_add(
             TEST_SHARE,

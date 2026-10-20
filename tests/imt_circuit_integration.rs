@@ -23,7 +23,7 @@ use voting_crypto_deps::halo2_proofs::dev::MockProver;
 use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
 use voting_crypto_deps::orchard::{
     keys::{FullViewingKey, Scope, SpendingKey},
-    note::{ExtractedNoteCommitment, Note, NoteVersion, Rho},
+    note::{ExtractedNoteCommitment, NoteVersion},
     tree::{MerkleHashOrchard, MerklePath},
     value::NoteValue,
     NOTE_COMMITMENT_TREE_DEPTH,
@@ -47,11 +47,11 @@ fn make_real_note_inputs(
     for (idx, &v) in values.iter().enumerate() {
         let recipient = fvk.address_at(0u32, scopes[idx]);
         let note_value = NoteValue::from_raw(v);
-        let (_, _, dummy_parent) = Note::dummy(&mut *rng, None, NoteVersion::V3);
-        let note = Note::new(
+        let (_, _, dummy_parent) = voting_crypto_deps::dummy_note(&mut *rng, None, NoteVersion::V3);
+        let note = voting_crypto_deps::new_note(
             recipient,
             note_value,
-            Rho::from_nf_old(dummy_parent.nullifier(fvk)),
+            voting_crypto_deps::rho_from_nullifier(dummy_parent.nullifier(fvk)),
             NoteVersion::V3,
             &mut *rng,
         );
@@ -119,7 +119,7 @@ fn k2_punctured_range_single_note_verifies_in_circuit() {
     let mut rng = OsRng;
     let imt = SpacedLeafImtProvider::new();
 
-    let sk = SpendingKey::random(&mut rng);
+    let sk = voting_crypto_deps::random_spending_key(&mut rng);
     let fvk: FullViewingKey = (&sk).into();
     let output_recipient = fvk.address_at(1u32, Scope::External);
     let vote_round_id = pallas::Base::random(&mut rng);
@@ -160,7 +160,7 @@ fn k2_punctured_range_four_notes_verify_in_circuit() {
     let mut rng = OsRng;
     let imt = SpacedLeafImtProvider::new();
 
-    let sk = SpendingKey::random(&mut rng);
+    let sk = voting_crypto_deps::random_spending_key(&mut rng);
     let fvk: FullViewingKey = (&sk).into();
     let output_recipient = fvk.address_at(1u32, Scope::External);
     let vote_round_id = pallas::Base::random(&mut rng);
@@ -347,7 +347,7 @@ fn production_sentinel_path_verifies_in_circuit() {
     let extra_nfs = [pallas::Base::from(12345u64), pallas::Base::from(67890u64)];
     let imt = ProductionSentinelImtAdapter::new(&extra_nfs);
 
-    let sk = SpendingKey::random(&mut rng);
+    let sk = voting_crypto_deps::random_spending_key(&mut rng);
     let fvk: FullViewingKey = (&sk).into();
     let output_recipient = fvk.address_at(1u32, Scope::External);
     let vote_round_id = pallas::Base::random(&mut rng);
@@ -474,7 +474,7 @@ impl ImtProvider for PoisonedNfMidProvider {
 fn circuit_rejects_nf_mid_equal_to_real_nf() {
     let mut rng = OsRng;
 
-    let sk = SpendingKey::random(&mut rng);
+    let sk = voting_crypto_deps::random_spending_key(&mut rng);
     let fvk: FullViewingKey = (&sk).into();
 
     let normal_imt = SpacedLeafImtProvider::new();
