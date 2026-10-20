@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Updated the default backend to Common 4's Orchard facade with opt-in
+- Updated the default backend to published Common `4.0.0-rc3`'s Orchard facade with opt-in
   circuit-composition witness adapters and Halo2 component access. Adapted spend randomizers and
   note-value witnesses while retaining the independent LRZ backend and the
   existing circuit constraints.
