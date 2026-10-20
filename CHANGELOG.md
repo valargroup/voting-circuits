@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Draft PRs with Git dependencies now run compilation and tests before their
+  upstream crates are published. Registry package checks remain mandatory when
+  the PR is ready for review and on main.
+
 - Updated the default backend to Common 4's Orchard facade with opt-in
   circuit-composition witness adapters and Halo2 component access. Adapted spend randomizers and
   note-value witnesses while retaining the independent LRZ backend and the

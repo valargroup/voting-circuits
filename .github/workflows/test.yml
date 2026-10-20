@@ -2,6 +2,7 @@ name: Test
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches:
       - main
@@ -43,8 +44,24 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+      - name: Detect Git dependencies in workspace packages
+        id: dependency_sources
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 |
+            python3 -c 'import json,sys; print("has_git=" + str(any((d.get("source") or "").startswith("git+") for p in json.load(sys.stdin)["packages"] for d in p["dependencies"])).lower())' >> "$GITHUB_OUTPUT"
+
       - name: Verify packaged workspace dependencies
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft || steps.dependency_sources.outputs.has_git != 'true'
         run: cargo package --workspace --locked
+
+      - name: Report deferred registry package verification
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft && steps.dependency_sources.outputs.has_git == 'true'
+        run: |
+          echo "::notice::Registry packaging is deferred for this draft with Git dependencies; it runs when the PR is marked ready and on main."
+          echo "Registry packaging is deferred for this draft with Git dependencies. Workspace compilation and tests still run. Marking the PR ready runs the published-dependency check." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check workspace targets
+        run: cargo check --workspace --all-targets --locked
 
       - name: Run short tests
         run: cargo test --locked
@@ -124,8 +141,24 @@ jobs:
       - name: Cache Cargo build artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Detect Git dependencies in workspace packages
+        id: dependency_sources
+        run: |
+          cargo metadata --locked --no-deps --format-version 1 |
+            python3 -c 'import json,sys; print("has_git=" + str(any((d.get("source") or "").startswith("git+") for p in json.load(sys.stdin)["packages"] for d in p["dependencies"])).lower())' >> "$GITHUB_OUTPUT"
+
       - name: Verify LRZ package against published dependencies
+        if: github.event_name != 'pull_request' || !github.event.pull_request.draft || steps.dependency_sources.outputs.has_git != 'true'
         run: cargo package --workspace --locked --no-default-features --features lrz
+
+      - name: Report deferred registry package verification
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft && steps.dependency_sources.outputs.has_git == 'true'
+        run: |
+          echo "::notice::Registry packaging is deferred for this draft with Git dependencies; it runs when the PR is marked ready and on main."
+          echo "Registry packaging is deferred for this draft with Git dependencies. Workspace compilation and tests still run. Marking the PR ready runs the published-dependency check." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check workspace targets
+        run: cargo check --workspace --all-targets --locked --no-default-features --features lrz
 
       - name: Run short tests
         run: cargo test --locked --no-default-features --features lrz
@@ -176,6 +209,9 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --all --check
+
+      - name: Verify packaged workspace dependencies
+        run: cargo package --workspace --locked
 
       - name: Run short tests
         run: cargo test --locked

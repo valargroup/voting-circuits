@@ -146,6 +146,11 @@ cargo build --no-default-features --features lrz
 
 ## Testing
 
+Draft pull requests with Git dependencies compile and test the pinned sources on
+both backends. Registry package verification is deferred until the PR is marked
+ready, then runs again on `main`; ordinary PRs without Git dependencies still
+verify their packages. Passing draft CI does not establish publication readiness.
+
 Short-running tests are the default:
 
 ```bash
