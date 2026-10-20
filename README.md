@@ -113,12 +113,21 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 ## Dependency on Orchard
 
-The default backend uses the Zakura Orchard package. The opt-in LRZ backend
-uses the crates.io `orchard 0.16` release. Both enable the `circuit` and
-`unstable-voting-circuits` features required by the governance proofs. The
-default backend uses an unpublished Common revision restoring that opt-in
-voting API; consuming workspaces must retain the matching Common replacements. The
-delegation bundle builder requires Ironwood V3 notes and constructs its
+The default backend uses Zakura Common 4's Orchard package with its opt-in
+`voting` feature. The dependency facade reexports the curated gadgets through
+`voting_crypto_deps::voting` and converts Orchard-owned canonical encodings to
+field and group witnesses at the circuit boundary. Note randomness and
+sign-corrected spending-key derivations stay owned by Orchard.
+
+Until Common RC3 is published, all Common dependencies are pinned to the same
+revision from [Common #613](https://github.com/zakura-core/common/pull/613).
+Ordinary builds need no local patches. Publishing this workspace requires
+switching those pins to the published RC3 packages.
+
+The opt-in LRZ backend uses the crates.io `orchard 0.16` release and retains
+its existing `circuit` and `unstable-voting-circuits` features. The facade
+provides matching imports without changing that backend's derivations.
+The delegation bundle builder requires Ironwood V3 notes and constructs its
 synthetic signed and output notes as V3.
 
 The V3 check is a bundle-construction policy, not a note-version bit in the

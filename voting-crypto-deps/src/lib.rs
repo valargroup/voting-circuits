@@ -224,6 +224,8 @@ pub mod voting {
     };
 }
 
+/// Decodes a validated recipient key as the selected backend's nonidentity point.
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
 pub fn transmission_point(
     key: &orchard::keys::DiversifiedTransmissionKey,
 ) -> voting::NonIdentityPallasPoint {
@@ -236,9 +238,18 @@ pub fn transmission_point(
         key.inner()
     }
 }
+/// Preserves a nullifier's canonical field encoding when using it as a note rho.
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
 pub fn rho_from_nullifier(nf: orchard::note::Nullifier) -> orchard::note::Rho {
     orchard::note::Rho::from_bytes(&nf.to_bytes()).unwrap()
 }
+/// Samples a valid spending key for governance fixtures and padding notes.
+///
+/// The caller must supply a cryptographically secure RNG for production use.
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand")
+))]
 pub fn random_spending_key(rng: &mut impl rand::Rng) -> orchard::keys::SpendingKey {
     loop {
         let mut bytes = [0; 32];
@@ -248,6 +259,11 @@ pub fn random_spending_key(rng: &mut impl rand::Rng) -> orchard::keys::SpendingK
         }
     }
 }
+/// Constructs a random padding path; it does not prove membership in a real tree.
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand")
+))]
 pub fn dummy_merkle_path(rng: &mut impl rand::Rng) -> orchard::tree::MerklePath {
     use pasta_curves::{
         group::ff::{Field, PrimeField},
@@ -261,6 +277,13 @@ pub fn dummy_merkle_path(rng: &mut impl rand::Rng) -> orchard::tree::MerklePath 
         }),
     )
 }
+/// Constructs a zero-value fixture or padding note with optional predetermined rho.
+///
+/// This does not establish chain membership. Production callers must use a secure RNG.
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand")
+))]
 pub fn dummy_note(
     rng: &mut impl rand::Rng,
     rho: Option<orchard::note::Rho>,
@@ -299,6 +322,13 @@ pub fn dummy_note(
     }
 }
 
+/// Samples valid note randomness and constructs a note through Orchard's parser.
+///
+/// The caller must supply a cryptographically secure RNG for production use.
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand")
+))]
 pub fn new_note(
     recipient: orchard::Address,
     value: orchard::value::NoteValue,

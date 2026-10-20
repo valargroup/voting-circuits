@@ -42,3 +42,16 @@ Selecting `orchard` or `lrz-orchard` also exposes the matching
 `incrementalmerkletree`, `zip32`, and `zcash_note_encryption` APIs. Use these
 exports when passing witnesses, address indexes, or encrypted notes to Orchard
 so those types belong to the selected backend.
+
+### Voting circuit composition
+
+Selecting `orchard` exposes Common's opt-in `voting` interface through
+`voting_crypto_deps::voting`; `lrz-orchard` supplies the corresponding existing
+LRZ exports at the same path. `CircuitValue` decodes protocol-owned canonical
+encodings only at the Halo2 witness boundary. It does not replace Orchard's
+protocol codecs. The note helpers delegate commitment randomness and
+sign-corrected spending-key derivations to the selected Orchard backend.
+Spending and viewing witnesses remain secret material and must not be logged.
+
+Helpers that sample keys, notes, or padding paths additionally require `rand`
+or `lrz-rand`. Padding data does not establish membership in an on-chain tree.
