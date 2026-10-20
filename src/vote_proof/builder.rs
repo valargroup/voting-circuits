@@ -10,11 +10,12 @@
 //! by share layout to prevent nonce reuse across standard and single-share votes.
 
 use std::{string::String, vec::Vec};
+use voting_crypto_deps::CircuitValue as _;
 
 use crate::ff::{Field, FromUniformBytes, PrimeField};
 use crate::group::{Curve, GroupEncoding};
 use voting_crypto_deps::halo2_proofs::circuit::Value;
-use voting_crypto_deps::orchard::keys::{FullViewingKey, Scope, SpendAuthorizingKey, SpendingKey};
+use voting_crypto_deps::orchard::keys::{FullViewingKey, Scope, SpendingKey};
 use voting_crypto_deps::pasta_curves::{
     arithmetic::{Coordinates, CurveAffine},
     pallas,
@@ -384,16 +385,7 @@ fn encrypted_share_coordinates(
 /// This replicates the sign-correction logic from `SpendAuthorizingKey::from`:
 /// `ask = PRF_expand(sk)`, then negate if the resulting ak has ỹ = 1.
 fn extract_vsk(sk: &SpendingKey) -> pallas::Scalar {
-    let ask_raw = SpendAuthorizingKey::derive_inner(sk);
-    let ak_point = (spend_auth_g_affine() * ask_raw).to_affine();
-    let ak_bytes = ak_point.to_bytes();
-
-    // If the sign bit of ak is 1, the real ask was negated.
-    if (ak_bytes[31] >> 7) == 1 {
-        -ask_raw
-    } else {
-        ask_raw
-    }
+    voting_crypto_deps::spend_authorizing_scalar(sk)
 }
 
 fn next_proposal_authority(
@@ -476,7 +468,7 @@ pub fn derive_vote_authority_transition(
     let fvk: FullViewingKey = sk.into();
     let address = fvk.address_at(address_index, Scope::External);
     let g_d = address.g_d().to_affine();
-    let pk_d = address.pk_d().inner().to_affine();
+    let pk_d = voting_crypto_deps::transmission_point(address.pk_d()).to_affine();
     let g_d_x = *pallas_coordinates(g_d)
         .expect("Orchard address g_d is non-identity by construction")
         .x();
@@ -713,12 +705,12 @@ pub fn build_vote_proof_from_delegation(
 
     let vsk = extract_vsk(sk);
     let fvk: FullViewingKey = sk.into();
-    let vsk_nk = fvk.nk().inner();
-    let rivk_v = fvk.rivk(Scope::External).inner();
+    let vsk_nk = fvk.nk().circuit_value();
+    let rivk_v = fvk.rivk(Scope::External).circuit_value();
 
     let address = fvk.address_at(address_index, Scope::External);
     let vpk_g_d = address.g_d();
-    let vpk_pk_d = address.pk_d().inner();
+    let vpk_pk_d = voting_crypto_deps::transmission_point(address.pk_d());
     let vpk_g_d_affine = vpk_g_d.to_affine();
     let vpk_pk_d_affine = vpk_pk_d.to_affine();
 
@@ -734,9 +726,7 @@ pub fn build_vote_proof_from_delegation(
         use crate::ff::PrimeFieldBits;
         use core::iter;
         use voting_crypto_deps::halo2_gadgets::sinsemilla::primitives::CommitDomain;
-        use voting_crypto_deps::orchard::constants::{
-            fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE,
-        };
+        use voting_crypto_deps::voting::{COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
 
         // Check 1: [vsk] * SpendAuthG must match the ak from the FullViewingKey.
         let ak_from_vsk = (spend_auth_g_affine() * vsk).to_affine();
@@ -1225,7 +1215,7 @@ mod tests {
         let fvk: FullViewingKey = (&sk).into();
         let address = fvk.address_at(1u32, Scope::External);
         let vpk_g_d_affine = address.g_d().to_affine();
-        let vpk_pk_d_affine = address.pk_d().inner().to_affine();
+        let vpk_pk_d_affine = voting_crypto_deps::transmission_point(address.pk_d()).to_affine();
         let vpk_g_d_x = *vpk_g_d_affine.coordinates().unwrap().x();
         let vpk_pk_d_x = *vpk_pk_d_affine.coordinates().unwrap().x();
 

@@ -215,28 +215,31 @@ mod prove_tests {
     use super::*;
     use crate::delegation::builder::{build_delegation_bundle, RealNoteInput};
     use crate::delegation::imt::{ImtProvider, SpacedLeafImtProvider};
-    use crate::ff::Field;
+    use crate::ff::{Field, PrimeField};
     use crate::rand::rngs::OsRng;
     use crate::ProveError;
     use voting_crypto_deps::halo2_proofs::plonk;
     use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
     use voting_crypto_deps::orchard::{
         keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
-        note::{commitment::ExtractedNoteCommitment, nullifier::Nullifier, Note, NoteVersion, Rho},
+        note::{ExtractedNoteCommitment, Note, NoteVersion, Nullifier, Rho},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
     use voting_crypto_deps::pasta_curves::pallas;
+    use voting_crypto_deps::CircuitValue as _;
 
     fn minimal_instance() -> Instance {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.into();
-        let rk = ak.randomize(&pallas::Scalar::from(1));
+        let rk = ak.randomize(&voting_crypto_deps::spend_auth_randomizer(
+            &pallas::Scalar::from(1),
+        ));
 
         Instance::from_parts(
-            Nullifier::from_inner(pallas::Base::from(1)),
+            Nullifier::from_bytes(&pallas::Base::from(1).to_repr()).unwrap(),
             rk,
             pallas::Base::from(2),
             pallas::Base::from(3),
@@ -295,7 +298,7 @@ mod prove_tests {
     #[ignore = "long-running real proof roundtrip; run with `cargo test -- --ignored`"]
     fn real_proof_roundtrip() {
         let mut rng = OsRng;
-        let sk = SpendingKey::random(&mut rng);
+        let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let output_recipient = fvk.address_at(1u32, Scope::External);
         let vote_round_id = pallas::Base::random(&mut rng);
@@ -304,11 +307,11 @@ mod prove_tests {
 
         // Create a single real note
         let recipient = fvk.address_at(0u32, Scope::External);
-        let (_, _, dummy) = Note::dummy(&mut rng, None, NoteVersion::V3);
-        let note = Note::new(
+        let (_, _, dummy) = voting_crypto_deps::dummy_note(&mut rng, None, NoteVersion::V3);
+        let note = voting_crypto_deps::new_note(
             recipient,
             NoteValue::from_raw(13_000_000),
-            Rho::from_nf_old(dummy.nullifier(&fvk)),
+            voting_crypto_deps::rho_from_nullifier(dummy.nullifier(&fvk)),
             NoteVersion::V3,
             &mut rng,
         );
@@ -326,7 +329,7 @@ mod prove_tests {
                 &MerkleHashOrchard::empty_root(Level::from(level)),
             );
         }
-        let nc_root = current.inner();
+        let nc_root = current.circuit_value();
         let mut auth_path = [empty; 32];
         auth_path[0] = leaves[1];
         for level in 1..32u8 {
@@ -335,7 +338,7 @@ mod prove_tests {
         let merkle_path = MerklePath::from_parts(0u32, auth_path);
         let imt = SpacedLeafImtProvider::new();
         let real_nf = note.nullifier(&fvk);
-        let imt_proof = imt.non_membership_proof(real_nf.inner()).unwrap();
+        let imt_proof = imt.non_membership_proof(real_nf.circuit_value()).unwrap();
 
         let input = RealNoteInput {
             note,

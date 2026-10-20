@@ -19,13 +19,11 @@ use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk::Error,
 };
-use voting_crypto_deps::orchard::{
-    circuit::commit_ivk::CommitIvkChip,
-    constants::{
-        OrchardCommitDomains, OrchardFixedBases, OrchardFixedBasesFull, OrchardHashDomains,
-    },
-};
 use voting_crypto_deps::pasta_curves::pallas;
+use voting_crypto_deps::voting::{
+    CommitIvkChip, OrchardCommitDomains, OrchardFixedBases, OrchardFixedBasesFull,
+    OrchardHashDomains,
+};
 
 // ================================================================
 // SpendAuthG fixed-base multiplication
@@ -94,7 +92,7 @@ pub(crate) fn prove_address_ownership(
     g_d: &NonIdentityPoint<pallas::Affine, EccChip<OrchardFixedBases>>,
     pk_d_claimed: &NonIdentityPoint<pallas::Affine, EccChip<OrchardFixedBases>>,
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, Error> {
-    use voting_crypto_deps::orchard::circuit::commit_ivk::gadgets::commit_ivk;
+    use voting_crypto_deps::voting::commit_ivk;
 
     let ivk = commit_ivk(
         sinsemilla_chip,

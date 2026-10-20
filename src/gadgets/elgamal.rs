@@ -24,10 +24,10 @@ use voting_crypto_deps::halo2_proofs::{
     circuit::{AssignedCell, Layouter},
     plonk::{Column, Error, Instance as InstanceColumn},
 };
-use voting_crypto_deps::orchard::constants::{OrchardBaseFieldBases, OrchardFixedBases};
 #[cfg(test)]
 use voting_crypto_deps::pasta_curves::arithmetic::CurveAffine;
 use voting_crypto_deps::pasta_curves::pallas;
+use voting_crypto_deps::voting::{OrchardBaseFieldBases, OrchardFixedBases};
 
 use super::nonzero::NonZeroConfig;
 
@@ -65,7 +65,7 @@ pub(crate) struct EaPkInstanceLoc {
 /// introducing a second generator point; the custom 30-bit table shares the
 /// same generator as the full-scalar SpendAuthG.
 pub fn spend_auth_g_affine() -> pallas::Affine {
-    voting_crypto_deps::orchard::constants::fixed_bases::spend_auth_g::generator()
+    voting_crypto_deps::voting::spend_auth_generator()
 }
 
 /// Converts a `pallas::Base` field element to a `pallas::Scalar`.

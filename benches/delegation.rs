@@ -2,6 +2,7 @@ use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::atomic::{AtomicUsize, Ordering},
 };
+use voting_crypto_deps::voting::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use voting_circuits::delegation::{
@@ -15,7 +16,6 @@ use voting_crypto_deps::halo2_proofs::{
 };
 use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
 use voting_crypto_deps::orchard::{
-    constants::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH,
     keys::{FullViewingKey, Scope, SpendingKey},
     note::{ExtractedNoteCommitment, Note, NoteVersion, RandomSeed, Rho},
     tree::{MerkleHashOrchard, MerklePath},

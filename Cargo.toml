@@ -67,3 +67,16 @@ required-features = ["unstable-internal-api"]
 [workspace]
 resolver = "2"
 members = ["voting-crypto-deps"]
+
+# Zakura 4.0.0-rc3 is not on crates.io yet. Resolve every Zakura crate from one
+# exact Common commit so the cryptography family stays a single source.
+[patch.crates-io]
+zakura-halo2-gadgets = { git = "https://github.com/zakura-core/common", rev = "762611fad84b22f0a9ad5fbf088dd7a655af6b31" }
+zakura-halo2-poseidon = { git = "https://github.com/zakura-core/common", rev = "762611fad84b22f0a9ad5fbf088dd7a655af6b31" }
+zakura-halo2-proofs = { git = "https://github.com/zakura-core/common", rev = "762611fad84b22f0a9ad5fbf088dd7a655af6b31" }
+zakura-note-encryption = { git = "https://github.com/zakura-core/common", rev = "762611fad84b22f0a9ad5fbf088dd7a655af6b31" }
+zakura-orchard = { git = "https://github.com/zakura-core/common", rev = "762611fad84b22f0a9ad5fbf088dd7a655af6b31" }
+zakura-pasta-curves = { git = "https://github.com/zakura-core/common", rev = "762611fad84b22f0a9ad5fbf088dd7a655af6b31" }
+zakura-primitives = { git = "https://github.com/zakura-core/common", rev = "762611fad84b22f0a9ad5fbf088dd7a655af6b31" }
+zakura-reddsa = { git = "https://github.com/zakura-core/common", rev = "762611fad84b22f0a9ad5fbf088dd7a655af6b31" }
+zakura-sinsemilla = { git = "https://github.com/zakura-core/common", rev = "762611fad84b22f0a9ad5fbf088dd7a655af6b31" }
