@@ -221,8 +221,8 @@ mod prove_tests {
     use voting_crypto_deps::halo2_proofs::plonk;
     use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
     use voting_crypto_deps::orchard::{
-        keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
-        note::{ExtractedNoteCommitment, Note, NoteVersion, Nullifier, Rho},
+        keys::{FullViewingKey, Scope, SpendValidatingKey},
+        note::{ExtractedNoteCommitment, NoteVersion, Nullifier},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };

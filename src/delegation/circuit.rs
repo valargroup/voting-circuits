@@ -30,9 +30,15 @@
 
 use std::vec::Vec;
 use voting_crypto_deps::CircuitValue as _;
+use voting_crypto_deps::{CommitIvkRandomness, DiversifiedTransmissionKey, NullifierDerivingKey};
 
 use crate::ff::PrimeField as _;
 use crate::group::{Curve, GroupEncoding};
+use voting_crypto_deps::composition::{
+    assign_free_advice, derive_nullifier, note_commit, AddChip, AddConfig, AddInstruction,
+    CommitIvkChip, CommitIvkConfig, NonIdentityPallasPoint, NoteCommitChip, NoteCommitConfig,
+    OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains, MERKLE_DEPTH_ORCHARD,
+};
 use voting_crypto_deps::halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
@@ -60,21 +66,13 @@ use voting_crypto_deps::halo2_proofs::{
     poly::Rotation,
 };
 use voting_crypto_deps::orchard::{
-    keys::{
-        CommitIvkRandomness, DiversifiedTransmissionKey, FullViewingKey, NullifierDerivingKey,
-        Scope, SpendValidatingKey,
-    },
+    keys::{FullViewingKey, Scope, SpendValidatingKey},
     note::{Note, NoteCommitment, NoteVersion, Nullifier, RandomSeed, Rho},
     primitives::redpallas::{SpendAuth, VerificationKey},
     tree::MerkleHashOrchard,
     value::NoteValue,
 };
 use voting_crypto_deps::pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
-use voting_crypto_deps::voting::{
-    assign_free_advice, derive_nullifier, note_commit, AddChip, AddConfig, AddInstruction,
-    CommitIvkChip, CommitIvkConfig, NonIdentityPallasPoint, NoteCommitChip, NoteCommitConfig,
-    OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains, MERKLE_DEPTH_ORCHARD,
-};
 
 use super::{
     gadgets::{
@@ -130,8 +128,9 @@ pub(super) fn note_rcm_scalar(note: &Note) -> pallas::Scalar {
     let rho = note.rho();
     let psi = voting_crypto_deps::note_psi(note.rseed(), &rho);
     let recipient = note.recipient();
-    let g_d = recipient.g_d();
-    let pk_d = voting_crypto_deps::transmission_point(recipient.pk_d());
+    let g_d = voting_crypto_deps::diversified_base(&recipient);
+    let pk_d =
+        voting_crypto_deps::transmission_point(&voting_crypto_deps::transmission_key(&recipient));
 
     rcm_scalar_for_note_parts(
         note.version(),
@@ -439,17 +438,23 @@ impl Circuit {
         let psi_signed = voting_crypto_deps::note_psi(note.rseed(), &rho_signed);
         let rcm_signed = note_rcm_scalar(note);
         Circuit {
-            nk: Value::known(*fvk.nk()),
+            nk: Value::known(voting_crypto_deps::nullifier_key(&fvk)),
             rho_signed: Value::known(rho_signed.circuit_value()),
             psi_signed: Value::known(psi_signed),
             cm_signed: Value::known(note.commitment()),
             ak: Value::known(fvk.clone().into()),
             alpha: Value::known(alpha),
-            rivk: Value::known(fvk.rivk(Scope::External)),
-            rivk_internal: Value::known(fvk.rivk(Scope::Internal)),
+            rivk: Value::known(voting_crypto_deps::viewing_randomness(
+                &fvk,
+                Scope::External,
+            )),
+            rivk_internal: Value::known(voting_crypto_deps::viewing_randomness(
+                &fvk,
+                Scope::Internal,
+            )),
             rcm_signed: Value::known(rcm_signed),
-            g_d_signed: Value::known(sender_address.g_d()),
-            pk_d_signed: Value::known(*sender_address.pk_d()),
+            g_d_signed: Value::known(voting_crypto_deps::diversified_base(&sender_address)),
+            pk_d_signed: Value::known(voting_crypto_deps::transmission_key(&sender_address)),
             ..Default::default()
         }
     }
@@ -459,8 +464,12 @@ impl Circuit {
         let rho_new = output_note.rho();
         let psi_new = voting_crypto_deps::note_psi(output_note.rseed(), &rho_new);
         let rcm_new = note_rcm_scalar(output_note);
-        self.g_d_new = Value::known(output_note.recipient().g_d());
-        self.pk_d_new = Value::known(*output_note.recipient().pk_d());
+        self.g_d_new = Value::known(voting_crypto_deps::diversified_base(
+            &output_note.recipient(),
+        ));
+        self.pk_d_new = Value::known(voting_crypto_deps::transmission_key(
+            &output_note.recipient(),
+        ));
         self.psi_new = Value::known(psi_new);
         self.rcm_new = Value::known(rcm_new);
         self
@@ -933,7 +942,7 @@ impl plonk::Circuit<pallas::Base> for Circuit {
         // Used by Condition 11 for notes with internal (change) scope.
         // ---------------------------------------------------------------
         let ivk_internal_cell = {
-            use voting_crypto_deps::voting::commit_ivk;
+            use voting_crypto_deps::composition::commit_ivk;
             let rivk_internal = ScalarFixed::new(
                 ecc_chip.clone(),
                 layouter.namespace(|| "rivk_internal"),
@@ -2007,8 +2016,8 @@ mod tests {
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
     use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
     use voting_crypto_deps::orchard::{
-        keys::{FullViewingKey, Scope, SpendValidatingKey, SpendingKey},
-        note::{ExtractedNoteCommitment, Note, NoteVersion, Rho},
+        keys::{FullViewingKey, Scope, SpendValidatingKey},
+        note::{ExtractedNoteCommitment, Note, NoteVersion},
     };
     use voting_crypto_deps::pasta_curves::{arithmetic::CurveAffine, pallas};
 
@@ -2030,8 +2039,10 @@ mod tests {
         let recipient = note.recipient();
 
         NoteSlotWitness {
-            g_d: Value::known(recipient.g_d()),
-            pk_d: Value::known(voting_crypto_deps::transmission_point(recipient.pk_d())),
+            g_d: Value::known(voting_crypto_deps::diversified_base(&recipient)),
+            pk_d: Value::known(voting_crypto_deps::transmission_point(
+                &voting_crypto_deps::transmission_key(&recipient),
+            )),
             v: Value::known(note.value()),
             rho: Value::known(rho.circuit_value()),
             psi: Value::known(psi),
@@ -2066,7 +2077,7 @@ mod tests {
         let output_recipient = fvk.address_at(1u32, Scope::External);
 
         // Key material.
-        let nk_val = fvk.nk().circuit_value();
+        let nk_val = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
         let ak: SpendValidatingKey = fvk.clone().into();
 
         let vote_round_id = pallas::Base::random(&mut rng);
@@ -2162,17 +2173,18 @@ mod tests {
         let num_ballots_field = pallas::Base::from(num_ballots_u64);
 
         // Compute van_comm.
-        let g_d_new_x = *output_recipient
-            .g_d()
+        let g_d_new_x = *voting_crypto_deps::diversified_base(&output_recipient)
             .to_affine()
             .coordinates()
             .unwrap()
             .x();
-        let pk_d_new_x = *voting_crypto_deps::transmission_point(output_recipient.pk_d())
-            .to_affine()
-            .coordinates()
-            .unwrap()
-            .x();
+        let pk_d_new_x = *voting_crypto_deps::transmission_point(
+            &voting_crypto_deps::transmission_key(&output_recipient),
+        )
+        .to_affine()
+        .coordinates()
+        .unwrap()
+        .x();
         let van_comm = van_commitment_hash(
             g_d_new_x,
             pk_d_new_x,

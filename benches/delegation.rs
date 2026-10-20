@@ -2,7 +2,7 @@ use std::{
     alloc::{GlobalAlloc, Layout, System},
     sync::atomic::{AtomicUsize, Ordering},
 };
-use voting_crypto_deps::voting::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH;
+use voting_crypto_deps::composition::MERKLE_DEPTH_ORCHARD as MERKLE_DEPTH;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use voting_circuits::delegation::{

@@ -42,3 +42,9 @@ Selecting `orchard` or `lrz-orchard` also exposes the matching
 `incrementalmerkletree`, `zip32`, and `zcash_note_encryption` APIs. Use these
 exports when passing witnesses, address indexes, or encrypted notes to Orchard
 so those types belong to the selected backend.
+
+The default Orchard adapter uses `orchard::circuit::composition` for shared
+components and `orchard::circuit::composition::witness` for canonical private
+witness encodings. This facade decodes those encodings at the circuit boundary;
+application voting policy remains in voting-circuits. LRZ retains its own native
+accessors behind the same facade functions.

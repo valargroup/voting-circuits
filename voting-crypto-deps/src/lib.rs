@@ -189,18 +189,21 @@ pub fn note_value_witness(value: orchard::value::NoteValue) -> NoteValueWitness 
 }
 
 #[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
-mod voting_witness;
+mod composition_witness;
 #[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
-pub use voting_witness::{note_psi, note_trapdoor, spend_authorizing_scalar, CircuitValue};
+pub use composition_witness::{note_psi, note_trapdoor, spend_authorizing_scalar, CircuitValue};
 
 #[cfg(feature = "orchard")]
-pub use orchard::circuit::voting;
-#[cfg(feature = "lrz-orchard")]
-pub use orchard::note::commitment::NoteCommitTrapdoor as VotingNoteTrapdoor;
+pub mod composition {
+    pub use super::orchard::circuit::composition::*;
+    pub use super::NonIdentityPallasPoint;
+}
 #[cfg(feature = "orchard")]
-pub use orchard::note::NoteCommitTrapdoor as VotingNoteTrapdoor;
+pub use orchard::circuit::composition::witness::NoteCommitTrapdoor as NoteTrapdoor;
 #[cfg(feature = "lrz-orchard")]
-pub mod voting {
+pub use orchard::note::commitment::NoteCommitTrapdoor as NoteTrapdoor;
+#[cfg(feature = "lrz-orchard")]
+pub mod composition {
     pub use super::orchard::{
         circuit::{
             commit_ivk::{gadgets::commit_ivk, CommitIvkChip, CommitIvkConfig},
@@ -224,12 +227,10 @@ pub mod voting {
     };
 }
 
-pub fn transmission_point(
-    key: &orchard::keys::DiversifiedTransmissionKey,
-) -> voting::NonIdentityPallasPoint {
+pub fn transmission_point(key: &DiversifiedTransmissionKey) -> composition::NonIdentityPallasPoint {
     #[cfg(feature = "orchard")]
     {
-        voting::NonIdentityPallasPoint::from_bytes(&key.to_bytes()).unwrap()
+        *key
     }
     #[cfg(feature = "lrz-orchard")]
     {
@@ -316,5 +317,66 @@ pub fn new_note(
                 return note;
             }
         }
+    }
+}
+
+#[cfg(feature = "orchard")]
+pub use composition_witness::NonIdentityPallasPoint;
+#[cfg(feature = "orchard")]
+pub use orchard::circuit::composition::witness::{CommitIvkRandomness, NullifierDerivingKey};
+#[cfg(feature = "lrz-orchard")]
+pub use orchard::keys::{CommitIvkRandomness, DiversifiedTransmissionKey, NullifierDerivingKey};
+#[cfg(feature = "orchard")]
+pub type DiversifiedTransmissionKey = NonIdentityPallasPoint;
+
+pub fn nullifier_key(key: &orchard::keys::FullViewingKey) -> NullifierDerivingKey {
+    #[cfg(feature = "orchard")]
+    {
+        NullifierDerivingKey::from(key)
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        *key.nk()
+    }
+}
+pub fn viewing_randomness(
+    key: &orchard::keys::FullViewingKey,
+    scope: orchard::keys::Scope,
+) -> CommitIvkRandomness {
+    #[cfg(feature = "orchard")]
+    {
+        CommitIvkRandomness::from_viewing_key(key, scope)
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        key.rivk(scope)
+    }
+}
+pub fn diversified_base(address: &orchard::Address) -> composition::NonIdentityPallasPoint {
+    #[cfg(feature = "orchard")]
+    {
+        NonIdentityPallasPoint::from_witness(
+            orchard::circuit::composition::witness::NonIdentityPallasPoint::diversified_base(
+                address,
+            ),
+        )
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        address.g_d()
+    }
+}
+pub fn transmission_key(address: &orchard::Address) -> DiversifiedTransmissionKey {
+    #[cfg(feature = "orchard")]
+    {
+        NonIdentityPallasPoint::from_witness(
+            orchard::circuit::composition::witness::NonIdentityPallasPoint::transmission_key(
+                address,
+            ),
+        )
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        *address.pk_d()
     }
 }

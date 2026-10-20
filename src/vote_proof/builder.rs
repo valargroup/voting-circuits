@@ -467,8 +467,10 @@ pub fn derive_vote_authority_transition(
 ) -> Result<VoteAuthorityTransition, VoteProofBuildError> {
     let fvk: FullViewingKey = sk.into();
     let address = fvk.address_at(address_index, Scope::External);
-    let g_d = address.g_d().to_affine();
-    let pk_d = voting_crypto_deps::transmission_point(address.pk_d()).to_affine();
+    let g_d = voting_crypto_deps::diversified_base(&address).to_affine();
+    let pk_d =
+        voting_crypto_deps::transmission_point(&voting_crypto_deps::transmission_key(&address))
+            .to_affine();
     let g_d_x = *pallas_coordinates(g_d)
         .expect("Orchard address g_d is non-identity by construction")
         .x();
@@ -705,12 +707,13 @@ pub fn build_vote_proof_from_delegation(
 
     let vsk = extract_vsk(sk);
     let fvk: FullViewingKey = sk.into();
-    let vsk_nk = fvk.nk().circuit_value();
-    let rivk_v = fvk.rivk(Scope::External).circuit_value();
+    let vsk_nk = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
+    let rivk_v = voting_crypto_deps::viewing_randomness(&fvk, Scope::External).circuit_value();
 
     let address = fvk.address_at(address_index, Scope::External);
-    let vpk_g_d = address.g_d();
-    let vpk_pk_d = voting_crypto_deps::transmission_point(address.pk_d());
+    let vpk_g_d = voting_crypto_deps::diversified_base(&address);
+    let vpk_pk_d =
+        voting_crypto_deps::transmission_point(&voting_crypto_deps::transmission_key(&address));
     let vpk_g_d_affine = vpk_g_d.to_affine();
     let vpk_pk_d_affine = vpk_pk_d.to_affine();
 
@@ -725,8 +728,8 @@ pub fn build_vote_proof_from_delegation(
     {
         use crate::ff::PrimeFieldBits;
         use core::iter;
+        use voting_crypto_deps::composition::{COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
         use voting_crypto_deps::halo2_gadgets::sinsemilla::primitives::CommitDomain;
-        use voting_crypto_deps::voting::{COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
 
         // Check 1: [vsk] * SpendAuthG must match the ak from the FullViewingKey.
         let ak_from_vsk = (spend_auth_g_affine() * vsk).to_affine();
@@ -1214,8 +1217,10 @@ mod tests {
 
         let fvk: FullViewingKey = (&sk).into();
         let address = fvk.address_at(1u32, Scope::External);
-        let vpk_g_d_affine = address.g_d().to_affine();
-        let vpk_pk_d_affine = voting_crypto_deps::transmission_point(address.pk_d()).to_affine();
+        let vpk_g_d_affine = voting_crypto_deps::diversified_base(&address).to_affine();
+        let vpk_pk_d_affine =
+            voting_crypto_deps::transmission_point(&voting_crypto_deps::transmission_key(&address))
+                .to_affine();
         let vpk_g_d_x = *vpk_g_d_affine.coordinates().unwrap().x();
         let vpk_pk_d_x = *vpk_pk_d_affine.coordinates().unwrap().x();
 

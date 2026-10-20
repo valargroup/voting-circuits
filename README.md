@@ -113,11 +113,11 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 ## Dependency on Orchard
 
-The default backend uses the Zakura Orchard package. The opt-in LRZ backend
-uses the crates.io `orchard 0.16` release. Both enable the `circuit` and
-`unstable-voting-circuits` features required by the governance proofs. The
-default backend uses an unpublished Common revision restoring that opt-in
-voting API; consuming workspaces must retain the matching Common replacements. The
+The default backend uses Zakura Orchard's `circuit-composition` interface,
+including typed witness adapters and selected Halo2 components. Its Common
+packages are pinned together to one source revision until that interface is
+published. The opt-in LRZ backend uses crates.io `orchard 0.16` with its
+`circuit` and `unstable-voting-circuits` features. The
 delegation bundle builder requires Ironwood V3 notes and constructs its
 synthetic signed and output notes as V3.
 
