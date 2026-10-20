@@ -45,13 +45,14 @@ so those types belong to the selected backend.
 
 ### Voting circuit composition
 
-Selecting `orchard` exposes Common's opt-in `circuit-composition` interface through
-`voting_crypto_deps::composition`; `lrz-orchard` supplies the corresponding existing
-LRZ exports at the same path. `CircuitValue` decodes protocol-owned canonical
-encodings only at the Halo2 witness boundary. It does not replace Orchard's
-protocol codecs. The note helpers delegate commitment randomness and
-sign-corrected spending-key derivations to the selected Orchard backend.
-Spending and viewing witnesses remain secret material and must not be logged.
+The composition implementation is owned by this workspace in the private
+`src/legacy` module. Selecting `orchard` does not enable or require Common's
+retired `circuit-composition` bridge. The LRZ backend retains its existing
+implementation behind the same explicit compatibility interface.
 
-Helpers that sample keys, notes, or padding paths additionally require `rand`
-or `lrz-rand`. Padding data does not establish membership in an on-chain tree.
+`CircuitValue` converts protocol encodings only at the circuit witness boundary.
+It does not replace protocol codecs. Private viewing and spending witnesses
+must not be logged; spending scalars permit spending and must remain in the
+trusted signer/prover. Native agreement and immutable verification-key fixtures
+protect the inherited implementation. See `src/legacy/README.md` for source
+provenance and the Common bridge removal contract.

@@ -31,6 +31,7 @@ macro_rules! field_value {
 }
 field_value!(crate::NullifierDerivingKey, pallas::Base);
 field_value!(crate::CommitIvkRandomness, pallas::Scalar);
+#[cfg(feature = "lrz-orchard")]
 field_value!(crate::NoteTrapdoor, pallas::Scalar);
 field_value!(orchard::note::ExtractedNoteCommitment, pallas::Base);
 field_value!(orchard::note::Nullifier, pallas::Base);
@@ -42,31 +43,14 @@ impl CircuitValue for orchard::note::Rho {
         pallas::Base::from_repr(self.to_bytes()).unwrap()
     }
 }
-impl CircuitValue for orchard::note::NoteCommitment {
-    type Value = pallas::Point;
-    fn circuit_value(&self) -> Self::Value {
-        #[cfg(feature = "orchard")]
-        {
-            pallas::Point::from_bytes(
-                &orchard::circuit::composition::witness::NoteCommitment::from(self).to_bytes(),
-            )
-            .unwrap()
-        }
-        #[cfg(feature = "lrz-orchard")]
-        {
-            self.inner()
-        }
-    }
-}
 impl CircuitValue for orchard::keys::SpendValidatingKey {
     type Value = pallas::Point;
     fn circuit_value(&self) -> Self::Value {
         #[cfg(feature = "orchard")]
         {
-            pallas::Point::from_bytes(
-                &orchard::circuit::composition::witness::SpendValidatingKey::from(self).to_bytes(),
-            )
-            .unwrap()
+            let zero = crate::spend_auth_randomizer(&pallas::Scalar::from(0));
+            let bytes: [u8; 32] = self.randomize(&zero).into();
+            pallas::Point::from_bytes(&bytes).unwrap()
         }
         #[cfg(feature = "lrz-orchard")]
         {
@@ -79,10 +63,7 @@ impl CircuitValue for orchard::keys::SpendValidatingKey {
 pub fn note_psi(seed: &orchard::note::RandomSeed, rho: &orchard::note::Rho) -> pallas::Base {
     #[cfg(feature = "orchard")]
     {
-        pallas::Base::from_repr(
-            orchard::circuit::composition::witness::NotePsi::derive(seed, rho).to_bytes(),
-        )
-        .unwrap()
+        crate::legacy::witness::note_psi(seed, rho)
     }
     #[cfg(feature = "lrz-orchard")]
     {
@@ -100,42 +81,15 @@ pub fn note_trapdoor(
     value: orchard::value::NoteValue,
     psi: pallas::Base,
 ) -> pallas::Scalar {
-    match version {
-        orchard::note::NoteVersion::V2 => {
-            #[cfg(feature = "orchard")]
-            {
-                orchard::circuit::composition::witness::NoteCommitTrapdoor::derive_v2(seed, rho)
-                    .circuit_value()
-            }
-            #[cfg(feature = "lrz-orchard")]
-            {
-                seed.rcm_v2(rho).inner()
-            }
-        }
-        orchard::note::NoteVersion::V3 => {
-            #[cfg(feature = "orchard")]
-            {
-                let psi =
-                    orchard::circuit::composition::witness::NotePsi::from_bytes(psi.to_repr())
-                        .unwrap();
-                orchard::circuit::composition::witness::NoteCommitTrapdoor::derive_v3(
-                    seed,
-                    rho,
-                    &orchard::circuit::composition::witness::NonIdentityPallasPoint::from_bytes(
-                        &g_d.to_bytes(),
-                    )
-                    .unwrap(),
-                    &orchard::circuit::composition::witness::NonIdentityPallasPoint::from_bytes(
-                        &pk_d.to_bytes(),
-                    )
-                    .unwrap(),
-                    value,
-                    &psi,
-                )
-                .circuit_value()
-            }
-            #[cfg(feature = "lrz-orchard")]
-            {
+    #[cfg(feature = "orchard")]
+    {
+        crate::legacy::witness::note_trapdoor(version, seed, rho, g_d, pk_d, value, psi)
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        match version {
+            orchard::note::NoteVersion::V2 => seed.rcm_v2(rho).inner(),
+            orchard::note::NoteVersion::V3 => {
                 seed.rcm_v3(rho, g_d, pk_d, value.inner(), &psi).inner()
             }
         }
@@ -143,14 +97,16 @@ pub fn note_trapdoor(
 }
 
 /// Returns the sign-corrected spending scalar used by the governance witness.
+///
+/// This is spend-capable secret material. Keep it in the trusted signing/proving
+/// boundary; never log it or send it to an untrusted helper or public instance.
 pub fn spend_authorizing_scalar(sk: &orchard::keys::SpendingKey) -> pallas::Scalar {
     #[cfg(feature = "orchard")]
     {
         let ask = orchard::keys::SpendAuthorizingKey::from(sk);
-        pallas::Scalar::from_repr(
-            orchard::circuit::composition::witness::SpendAuthorizingKey::from(&ask).to_bytes(),
-        )
-        .unwrap()
+        let zero = crate::spend_auth_randomizer(&pallas::Scalar::from(0));
+        let bytes: [u8; 32] = (&ask.randomize(&zero)).into();
+        pallas::Scalar::from_repr(bytes).unwrap()
     }
     #[cfg(feature = "lrz-orchard")]
     {
@@ -171,15 +127,13 @@ pub fn spend_authorizing_scalar(sk: &orchard::keys::SpendingKey) -> pallas::Scal
 pub struct NonIdentityPallasPoint(pallas::Point);
 #[cfg(feature = "orchard")]
 impl NonIdentityPallasPoint {
-    pub(crate) fn from_witness(
-        point: orchard::circuit::composition::witness::NonIdentityPallasPoint,
-    ) -> Self {
-        Self(pallas::Point::from_bytes(&point.to_bytes()).unwrap())
-    }
+    /// Rejects invalid, noncanonical, and identity point encodings.
     pub fn from_bytes(bytes: &[u8; 32]) -> Option<Self> {
-        orchard::circuit::composition::witness::NonIdentityPallasPoint::from_bytes(bytes)
+        use crate::pasta_curves::group::Group;
+        pallas::Point::from_bytes(bytes)
             .into_option()
-            .map(Self::from_witness)
+            .filter(|p| !bool::from(p.is_identity()))
+            .map(Self)
     }
 }
 #[cfg(feature = "orchard")]
@@ -188,4 +142,48 @@ impl core::ops::Deref for NonIdentityPallasPoint {
     fn deref(&self) -> &Self::Target {
         &self.0
     }
+}
+
+/// Complete commitment point for a validated protocol note at the circuit boundary.
+pub fn note_commitment(note: &orchard::note::Note) -> pallas::Point {
+    #[cfg(feature = "orchard")]
+    {
+        crate::legacy::witness::note_commitment(note)
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        note.commitment().inner()
+    }
+}
+
+/// Native NoteCommit at the circuit boundary, including synthetic governance components.
+///
+/// Inherited from Orchard NoteCommit and the existing voting padding derivation.
+/// Caller must enforce nonidentity components, ownership, and membership where
+/// required. This operation alone establishes none of those properties.
+pub fn note_commitment_point(
+    g_d: pallas::Point,
+    pk_d: pallas::Point,
+    value: orchard::value::NoteValue,
+    rho: pallas::Base,
+    psi: pallas::Base,
+    rcm: pallas::Scalar,
+) -> Option<pallas::Point> {
+    use crate::composition::{L_ORCHARD_BASE, L_VALUE, NOTE_COMMITMENT_PERSONALIZATION};
+    use crate::pasta_curves::group::ff::PrimeFieldBits;
+    let bits = |bytes: [u8; 32]| {
+        bytes
+            .into_iter()
+            .flat_map(|byte| (0..8).map(move |i| (byte >> i) & 1 == 1))
+    };
+    crate::sinsemilla::CommitDomain::new(NOTE_COMMITMENT_PERSONALIZATION)
+        .commit(
+            bits(g_d.to_bytes())
+                .chain(bits(pk_d.to_bytes()))
+                .chain((0..L_VALUE).map(|i| (value.inner() >> i) & 1 == 1))
+                .chain(rho.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
+                .chain(psi.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE)),
+            &rcm,
+        )
+        .into_option()
 }
