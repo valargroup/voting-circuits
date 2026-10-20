@@ -1930,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-address"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "bech32",
  "blake2b_simd",
@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-bls12-381"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "ff 0.14.0",
  "group 0.14.0",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-equihash"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "blake2b_simd",
  "corez",
@@ -1959,7 +1959,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-halo2-gadgets"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "arrayvec",
  "ff 0.14.0",
@@ -1972,11 +1972,11 @@ dependencies = [
 
 [[package]]
 name = "zakura-halo2-legacy-pdqsort"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 
 [[package]]
 name = "zakura-halo2-poseidon"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "bitvec",
  "ff 0.14.0",
@@ -1986,7 +1986,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-halo2-proofs"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "blake2b_simd",
  "ff 0.14.0",
@@ -2001,7 +2001,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-jubjub"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "bitvec",
  "ff 0.14.0",
@@ -2013,7 +2013,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-note-encryption"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "chacha20",
  "chacha20poly1305",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-orchard"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "aes",
  "bitvec",
@@ -2050,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-orchard-legacy"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "ff 0.14.0",
  "group 0.14.0",
@@ -2064,7 +2064,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-pasta-curves"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "blake2b_simd",
  "cc",
@@ -2079,7 +2079,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-primitives"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "blake2b_simd",
  "corez",
@@ -2102,7 +2102,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-protocol"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "corez",
  "hex",
@@ -2111,7 +2111,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-reddsa"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "blake2b_simd",
  "group 0.14.0",
@@ -2124,7 +2124,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-redjubjub"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "rand_core 0.10.1",
  "thiserror",
@@ -2133,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-sapling-crypto"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "bitvec",
  "blake2b_simd",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-sinsemilla"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "group 0.14.0",
  "once_cell",
@@ -2168,7 +2168,7 @@ dependencies = [
 
 [[package]]
 name = "zakura-transparent"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 dependencies = [
  "bs58",
  "corez",
@@ -2390,24 +2390,24 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[patch.unused]]
 name = "zakura-bellman"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 
 [[patch.unused]]
 name = "zakura-keys"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 
 [[patch.unused]]
 name = "zakura-pairing"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 
 [[patch.unused]]
 name = "zakura-proofs"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 
 [[patch.unused]]
 name = "zakura-reddsa-frost"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
 
 [[patch.unused]]
 name = "zakura-zip321"
-version = "4.0.0-rc2"
+version = "4.0.0-rc3"
