@@ -45,8 +45,8 @@ so those types belong to the selected backend.
 
 ### Voting circuit composition
 
-Selecting `orchard` exposes Common's opt-in `voting` interface through
-`voting_crypto_deps::voting`; `lrz-orchard` supplies the corresponding existing
+Selecting `orchard` exposes Common's opt-in `circuit-composition` interface through
+`voting_crypto_deps::composition`; `lrz-orchard` supplies the corresponding existing
 LRZ exports at the same path. `CircuitValue` decodes protocol-owned canonical
 encodings only at the Halo2 witness boundary. It does not replace Orchard's
 protocol codecs. The note helpers delegate commitment randomness and

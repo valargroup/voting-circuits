@@ -5,7 +5,7 @@
 ### Changed
 
 - Updated the default backend to Common 4's Orchard facade with opt-in
-  governance witness and Halo2 gadget access. Adapted spend randomizers and
+  circuit-composition witness adapters and Halo2 component access. Adapted spend randomizers and
   note-value witnesses while retaining the independent LRZ backend and the
   existing circuit constraints.
 

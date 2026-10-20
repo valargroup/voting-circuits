@@ -189,18 +189,21 @@ pub fn note_value_witness(value: orchard::value::NoteValue) -> NoteValueWitness 
 }
 
 #[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
-mod voting_witness;
+mod composition_witness;
 #[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
-pub use voting_witness::{note_psi, note_trapdoor, spend_authorizing_scalar, CircuitValue};
+pub use composition_witness::{note_psi, note_trapdoor, spend_authorizing_scalar, CircuitValue};
 
 #[cfg(feature = "orchard")]
-pub use orchard::circuit::voting;
-#[cfg(feature = "lrz-orchard")]
-pub use orchard::note::commitment::NoteCommitTrapdoor as VotingNoteTrapdoor;
+pub mod composition {
+    pub use super::orchard::circuit::composition::*;
+    pub use super::NonIdentityPallasPoint;
+}
 #[cfg(feature = "orchard")]
-pub use orchard::note::NoteCommitTrapdoor as VotingNoteTrapdoor;
+pub use orchard::circuit::composition::witness::NoteCommitTrapdoor as NoteTrapdoor;
 #[cfg(feature = "lrz-orchard")]
-pub mod voting {
+pub use orchard::note::commitment::NoteCommitTrapdoor as NoteTrapdoor;
+#[cfg(feature = "lrz-orchard")]
+pub mod composition {
     pub use super::orchard::{
         circuit::{
             commit_ivk::{gadgets::commit_ivk, CommitIvkChip, CommitIvkConfig},
@@ -224,32 +227,28 @@ pub mod voting {
     };
 }
 
-/// Decodes a validated recipient key as the selected backend's nonidentity point.
 #[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
-pub fn transmission_point(
-    key: &orchard::keys::DiversifiedTransmissionKey,
-) -> voting::NonIdentityPallasPoint {
+/// Decodes a validated recipient key as the selected backend's nonidentity point.
+pub fn transmission_point(key: &DiversifiedTransmissionKey) -> composition::NonIdentityPallasPoint {
     #[cfg(feature = "orchard")]
     {
-        voting::NonIdentityPallasPoint::from_bytes(&key.to_bytes()).unwrap()
+        *key
     }
     #[cfg(feature = "lrz-orchard")]
     {
         key.inner()
     }
 }
-/// Preserves a nullifier's canonical field encoding when using it as a note rho.
 #[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+/// Preserves a nullifier's canonical field encoding when using it as a note rho.
 pub fn rho_from_nullifier(nf: orchard::note::Nullifier) -> orchard::note::Rho {
     orchard::note::Rho::from_bytes(&nf.to_bytes()).unwrap()
 }
-/// Samples a valid spending key for governance fixtures and padding notes.
-///
-/// The caller must supply a cryptographically secure RNG for production use.
 #[cfg(all(
     any(feature = "orchard", feature = "lrz-orchard"),
     any(feature = "rand", feature = "lrz-rand")
 ))]
+/// Samples a valid spending key. Production callers must supply a secure RNG.
 pub fn random_spending_key(rng: &mut impl rand::Rng) -> orchard::keys::SpendingKey {
     loop {
         let mut bytes = [0; 32];
@@ -259,11 +258,11 @@ pub fn random_spending_key(rng: &mut impl rand::Rng) -> orchard::keys::SpendingK
         }
     }
 }
-/// Constructs a random padding path; it does not prove membership in a real tree.
 #[cfg(all(
     any(feature = "orchard", feature = "lrz-orchard"),
     any(feature = "rand", feature = "lrz-rand")
 ))]
+/// Constructs a random padding path without establishing membership in a real tree.
 pub fn dummy_merkle_path(rng: &mut impl rand::Rng) -> orchard::tree::MerklePath {
     use pasta_curves::{
         group::ff::{Field, PrimeField},
@@ -277,13 +276,11 @@ pub fn dummy_merkle_path(rng: &mut impl rand::Rng) -> orchard::tree::MerklePath 
         }),
     )
 }
-/// Constructs a zero-value fixture or padding note with optional predetermined rho.
-///
-/// This does not establish chain membership. Production callers must use a secure RNG.
 #[cfg(all(
     any(feature = "orchard", feature = "lrz-orchard"),
     any(feature = "rand", feature = "lrz-rand")
 ))]
+/// Constructs a zero-value padding note. Production callers must supply a secure RNG.
 pub fn dummy_note(
     rng: &mut impl rand::Rng,
     rho: Option<orchard::note::Rho>,
@@ -322,13 +319,11 @@ pub fn dummy_note(
     }
 }
 
-/// Samples valid note randomness and constructs a note through Orchard's parser.
-///
-/// The caller must supply a cryptographically secure RNG for production use.
 #[cfg(all(
     any(feature = "orchard", feature = "lrz-orchard"),
     any(feature = "rand", feature = "lrz-rand")
 ))]
+/// Samples valid note randomness. Production callers must supply a secure RNG.
 pub fn new_note(
     recipient: orchard::Address,
     value: orchard::value::NoteValue,
@@ -346,5 +341,74 @@ pub fn new_note(
                 return note;
             }
         }
+    }
+}
+
+#[cfg(feature = "orchard")]
+pub use composition_witness::NonIdentityPallasPoint;
+#[cfg(feature = "orchard")]
+pub use orchard::circuit::composition::witness::{CommitIvkRandomness, NullifierDerivingKey};
+#[cfg(feature = "lrz-orchard")]
+pub use orchard::keys::{CommitIvkRandomness, DiversifiedTransmissionKey, NullifierDerivingKey};
+#[cfg(feature = "orchard")]
+pub type DiversifiedTransmissionKey = NonIdentityPallasPoint;
+
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+/// Extracts private nullifier-derivation material through the selected Orchard adapter.
+pub fn nullifier_key(key: &orchard::keys::FullViewingKey) -> NullifierDerivingKey {
+    #[cfg(feature = "orchard")]
+    {
+        NullifierDerivingKey::from(key)
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        *key.nk()
+    }
+}
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+/// Extracts private viewing randomness for the requested address scope.
+pub fn viewing_randomness(
+    key: &orchard::keys::FullViewingKey,
+    scope: orchard::keys::Scope,
+) -> CommitIvkRandomness {
+    #[cfg(feature = "orchard")]
+    {
+        CommitIvkRandomness::from_viewing_key(key, scope)
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        key.rivk(scope)
+    }
+}
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+/// Obtains the validated diversified base of an Orchard address.
+pub fn diversified_base(address: &orchard::Address) -> composition::NonIdentityPallasPoint {
+    #[cfg(feature = "orchard")]
+    {
+        NonIdentityPallasPoint::from_witness(
+            orchard::circuit::composition::witness::NonIdentityPallasPoint::diversified_base(
+                address,
+            ),
+        )
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        address.g_d()
+    }
+}
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
+/// Obtains the validated transmission key of an Orchard address.
+pub fn transmission_key(address: &orchard::Address) -> DiversifiedTransmissionKey {
+    #[cfg(feature = "orchard")]
+    {
+        NonIdentityPallasPoint::from_witness(
+            orchard::circuit::composition::witness::NonIdentityPallasPoint::transmission_key(
+                address,
+            ),
+        )
+    }
+    #[cfg(feature = "lrz-orchard")]
+    {
+        *address.pk_d()
     }
 }

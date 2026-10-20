@@ -114,8 +114,8 @@ Reusable halo2 gadgets that appear in more than one circuit:
 ## Dependency on Orchard
 
 The default backend uses Zakura Common 4's Orchard package with its opt-in
-`voting` feature. The dependency facade reexports the curated gadgets through
-`voting_crypto_deps::voting` and converts Orchard-owned canonical encodings to
+`circuit-composition` feature. The dependency facade reexports the curated gadgets through
+`voting_crypto_deps::composition` and converts Orchard-owned canonical encodings to
 field and group witnesses at the circuit boundary. Note randomness and
 sign-corrected spending-key derivations stay owned by Orchard.
 

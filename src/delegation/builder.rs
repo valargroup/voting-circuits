@@ -12,6 +12,10 @@ use voting_crypto_deps::CircuitValue as _;
 use crate::ff::{Field, PrimeField, PrimeFieldBits};
 use crate::group::{Curve, GroupEncoding};
 use crate::rand::{CryptoRng, Rng};
+use voting_crypto_deps::composition::{
+    NonIdentityPallasPoint, COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE, L_VALUE,
+    NOTE_COMMITMENT_PERSONALIZATION,
+};
 use voting_crypto_deps::halo2_proofs::circuit::Value;
 use voting_crypto_deps::orchard::{
     keys::{FullViewingKey, Scope, SpendValidatingKey},
@@ -22,10 +26,6 @@ use voting_crypto_deps::orchard::{
 use voting_crypto_deps::pasta_curves::{
     arithmetic::{CurveAffine, CurveExt},
     pallas,
-};
-use voting_crypto_deps::voting::{
-    NonIdentityPallasPoint, COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE, L_VALUE,
-    NOTE_COMMITMENT_PERSONALIZATION,
 };
 
 use super::{
@@ -154,14 +154,14 @@ fn u64_bits(value: u64) -> impl Iterator<Item = bool> {
 fn external_ivk_scalar(fvk: &FullViewingKey, ak: &SpendValidatingKey) -> pallas::Scalar {
     let ak_point = ak.circuit_value();
     let ak_x = point_x(&ak_point);
-    let rivk = fvk.rivk(Scope::External).circuit_value();
+    let rivk = voting_crypto_deps::viewing_randomness(&fvk, Scope::External).circuit_value();
     let domain = voting_crypto_deps::sinsemilla::CommitDomain::new(COMMIT_IVK_PERSONALIZATION);
     let ivk = domain
         .short_commit(
             iter::empty()
                 .chain(ak_x.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
                 .chain(
-                    fvk.nk()
+                    voting_crypto_deps::nullifier_key(&fvk)
                         .circuit_value()
                         .to_le_bits()
                         .iter()
@@ -187,8 +187,7 @@ fn non_identity_padding_point(
     slot_index: usize,
     component: &'static str,
 ) -> Result<NonIdentityPallasPoint, DelegationBuildError> {
-    NonIdentityPallasPoint::from_bytes(&point.to_bytes())
-        .into_option()
+    Option::<NonIdentityPallasPoint>::from(NonIdentityPallasPoint::from_bytes(&point.to_bytes()))
         .ok_or(DelegationBuildError::InvalidPaddingPoint {
             slot_index,
             component,
@@ -404,7 +403,7 @@ pub fn synthetic_padding_note_parts(
     let ivk = external_ivk_scalar(fvk, &ak);
     let location = PrecomputedRandomnessLocation::PaddedNote(slot_index);
     let padding = derive_synthetic_padding_note(
-        fvk.nk().circuit_value(),
+        voting_crypto_deps::nullifier_key(&fvk).circuit_value(),
         ivk,
         slot_index,
         rho,
@@ -518,7 +517,7 @@ pub(super) fn build_padding_slot_for_testing(
     let padding = build_padding_slot(
         slot_index,
         pad_idx,
-        fvk.nk().circuit_value(),
+        voting_crypto_deps::nullifier_key(&fvk).circuit_value(),
         dom,
         external_ivk_scalar(fvk, ak),
         imt_provider,
@@ -750,7 +749,7 @@ pub fn build_delegation_bundle(
     let nf_imt_root = imt_provider.root();
 
     // Derive key material.
-    let nk_val = fvk.nk().circuit_value();
+    let nk_val = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
     let ak: SpendValidatingKey = fvk.clone().into();
     let ivk = external_ivk_scalar(fvk, &ak);
 
@@ -781,8 +780,10 @@ pub fn build_delegation_bundle(
         let gov_null = gov_null_hash(nk_val, dom, real_nf.circuit_value());
 
         let slot = NoteSlotWitness {
-            g_d: Value::known(recipient.g_d()),
-            pk_d: Value::known(voting_crypto_deps::transmission_point(recipient.pk_d())),
+            g_d: Value::known(voting_crypto_deps::diversified_base(&recipient)),
+            pk_d: Value::known(voting_crypto_deps::transmission_point(
+                &voting_crypto_deps::transmission_key(&recipient),
+            )),
             v: Value::known(note.value()),
             rho: Value::known(rho.circuit_value()),
             psi: Value::known(psi),
@@ -831,17 +832,18 @@ pub fn build_delegation_bundle(
     //                     vote_round_id, MAX_PROPOSAL_AUTHORITY, van_comm_rand)
     // Extract the output address as two x-coordinates (vpk representation).
 
-    let g_d_new_x = *output_recipient
-        .g_d()
+    let g_d_new_x = *voting_crypto_deps::diversified_base(&output_recipient)
         .to_affine()
         .coordinates()
         .unwrap()
         .x();
-    let pk_d_new_x = *voting_crypto_deps::transmission_point(output_recipient.pk_d())
-        .to_affine()
-        .coordinates()
-        .unwrap()
-        .x();
+    let pk_d_new_x = *voting_crypto_deps::transmission_point(
+        &voting_crypto_deps::transmission_key(&output_recipient),
+    )
+    .to_affine()
+    .coordinates()
+    .unwrap()
+    .x();
 
     let van_comm = van_commitment_hash(
         g_d_new_x,
@@ -973,16 +975,16 @@ mod tests {
     use crate::ff::Field;
     use crate::rand::rngs::OsRng;
     use std::cell::{Cell, RefCell};
+    use voting_crypto_deps::composition::MERKLE_DEPTH_ORCHARD;
     use voting_crypto_deps::halo2_proofs::dev::MockProver;
     use voting_crypto_deps::incrementalmerkletree::{Hashable, Level};
     use voting_crypto_deps::orchard::{
-        keys::{FullViewingKey, Scope, SpendingKey},
+        keys::{FullViewingKey, Scope},
         note::{ExtractedNoteCommitment, Note, Rho},
         tree::{MerkleHashOrchard, MerklePath},
         value::NoteValue,
     };
     use voting_crypto_deps::pasta_curves::pallas;
-    use voting_crypto_deps::voting::MERKLE_DEPTH_ORCHARD;
 
     /// Merged circuit K value.
     const K: u32 = circuit::K;
@@ -1437,10 +1439,15 @@ mod tests {
             // coordinate access; the wrapper enforces the non-identity invariant
             // at construction (`padding_points` -> `assert_non_identity`).
             assert_eq!(*pk_d_pad, *g_d_pad * ivk);
-            assert_ne!(*g_d_pad, *real_orchard_addr.g_d());
+            assert_ne!(
+                *g_d_pad,
+                *voting_crypto_deps::diversified_base(&real_orchard_addr)
+            );
             assert_ne!(
                 *pk_d_pad,
-                *voting_crypto_deps::transmission_point(real_orchard_addr.pk_d())
+                *voting_crypto_deps::transmission_point(&voting_crypto_deps::transmission_key(
+                    &real_orchard_addr
+                ))
             );
         }
     }
@@ -1485,7 +1492,10 @@ mod tests {
         // Exercise the owner's diversification rather than importing its private domain.
         let padding_domain_point =
             pallas::Point::hash_to_curve(PADDING_PERSONALIZATION)(&bytes[..11]);
-        assert_ne!(padding_domain_point.to_bytes(), address.g_d().to_bytes());
+        assert_ne!(
+            padding_domain_point.to_bytes(),
+            voting_crypto_deps::diversified_base(&address).to_bytes()
+        );
     }
 
     // ---- Orchard drift tests ----
@@ -1536,8 +1546,10 @@ mod tests {
             let rcm = note_rcm_scalar(&note);
 
             let mirrored = note_commitment_point(
-                *recipient.g_d(),
-                *voting_crypto_deps::transmission_point(recipient.pk_d()),
+                *voting_crypto_deps::diversified_base(&recipient),
+                *voting_crypto_deps::transmission_point(&voting_crypto_deps::transmission_key(
+                    &recipient,
+                )),
                 note.value(),
                 rho.circuit_value(),
                 psi,
@@ -1562,7 +1574,7 @@ mod tests {
         let mut rng = OsRng;
         for scope in [Scope::External, Scope::Internal] {
             let (fvk, _ak, note) = fixture_real_note(scope, &mut rng);
-            let nk = fvk.nk().circuit_value();
+            let nk = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
             let rho = note.rho();
             let psi = voting_crypto_deps::note_psi(note.rseed(), &rho);
             let cm = note.commitment().circuit_value().to_affine();
@@ -1597,8 +1609,10 @@ mod tests {
         for idx in [0u32, 1, 7, 1234] {
             let addr = fvk.address_at(idx, Scope::External);
             assert_eq!(
-                *addr.g_d() * ivk,
-                *voting_crypto_deps::transmission_point(addr.pk_d()),
+                *voting_crypto_deps::diversified_base(&addr) * ivk,
+                *voting_crypto_deps::transmission_point(&voting_crypto_deps::transmission_key(
+                    &addr
+                )),
                 "external_ivk_scalar drifted: [ivk] * g_d != pk_d at diversifier index {idx}"
             );
         }
@@ -1608,8 +1622,10 @@ mod tests {
         // `rivk(Scope::Internal)`.
         let internal_addr = fvk.address_at(0u32, Scope::Internal);
         assert_ne!(
-            *internal_addr.g_d() * ivk,
-            *voting_crypto_deps::transmission_point(internal_addr.pk_d()),
+            *voting_crypto_deps::diversified_base(&internal_addr) * ivk,
+            *voting_crypto_deps::transmission_point(&voting_crypto_deps::transmission_key(
+                &internal_addr
+            )),
             "external_ivk_scalar incorrectly validates an internal-scope address"
         );
     }
@@ -1620,7 +1636,7 @@ mod tests {
         let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
-        let nk = fvk.nk().circuit_value();
+        let nk = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
         let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
         let ivk = external_ivk_scalar(&fvk, &ak);
         let imt_proof = test_imt_proof();
@@ -1683,7 +1699,7 @@ mod tests {
         let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
-        let nk = fvk.nk().circuit_value();
+        let nk = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
         let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
         let ivk = external_ivk_scalar(&fvk, &ak);
         let imt_proof = test_imt_proof();
@@ -1720,7 +1736,7 @@ mod tests {
         let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
-        let nk = fvk.nk().circuit_value();
+        let nk = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
         let ivk = external_ivk_scalar(&fvk, &ak);
         let slot_index = 3;
         let (_padded_note, rho, rseed) = precomputed_padding_note(&mut rng);
@@ -1775,7 +1791,7 @@ mod tests {
         let sk = voting_crypto_deps::random_spending_key(&mut rng);
         let fvk: FullViewingKey = (&sk).into();
         let ak: SpendValidatingKey = fvk.clone().into();
-        let nk = fvk.nk().circuit_value();
+        let nk = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
         let dom = derive_nullifier_domain(pallas::Base::random(&mut rng));
         let ivk = external_ivk_scalar(&fvk, &ak);
         let imt = RecordingImtProvider::returning(test_imt_proof());
@@ -1828,7 +1844,7 @@ mod tests {
         let result = build_padding_slot(
             2,
             0,
-            fvk.nk().circuit_value(),
+            voting_crypto_deps::nullifier_key(&fvk).circuit_value(),
             derive_nullifier_domain(pallas::Base::random(&mut rng)),
             external_ivk_scalar(&fvk, &ak),
             &imt,
@@ -1860,7 +1876,7 @@ mod tests {
         let result = build_padding_slot(
             1,
             0,
-            fvk.nk().circuit_value(),
+            voting_crypto_deps::nullifier_key(&fvk).circuit_value(),
             derive_nullifier_domain(pallas::Base::random(&mut rng)),
             external_ivk_scalar(&fvk, &ak),
             &imt,
@@ -2167,7 +2183,7 @@ mod tests {
         for (pad_idx, slot_index) in (1..circuit::MAX_REAL_NOTES).enumerate() {
             let (padded_note, rho, rseed) = precomputed_padding_note(&mut rng);
             let padding = derive_synthetic_padding_note(
-                fvk.nk().circuit_value(),
+                voting_crypto_deps::nullifier_key(&fvk).circuit_value(),
                 ivk,
                 slot_index,
                 rho,
@@ -2179,17 +2195,18 @@ mod tests {
             padded_notes.push(padded_note);
         }
 
-        let g_d_new_x = *output_recipient
-            .g_d()
+        let g_d_new_x = *voting_crypto_deps::diversified_base(&output_recipient)
             .to_affine()
             .coordinates()
             .unwrap()
             .x();
-        let pk_d_new_x = *voting_crypto_deps::transmission_point(output_recipient.pk_d())
-            .to_affine()
-            .coordinates()
-            .unwrap()
-            .x();
+        let pk_d_new_x = *voting_crypto_deps::transmission_point(
+            &voting_crypto_deps::transmission_key(&output_recipient),
+        )
+        .to_affine()
+        .coordinates()
+        .unwrap()
+        .x();
         let van_comm = van_commitment_hash(
             g_d_new_x,
             pk_d_new_x,

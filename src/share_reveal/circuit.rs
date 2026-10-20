@@ -60,6 +60,7 @@
 use std::vec::Vec;
 
 use itertools::Itertools;
+use voting_crypto_deps::composition::assign_free_advice;
 use voting_crypto_deps::halo2_gadgets::{
     poseidon::{
         primitives::{self as poseidon, ConstantLength},
@@ -76,7 +77,6 @@ use voting_crypto_deps::halo2_proofs::{
     poly::Rotation,
 };
 use voting_crypto_deps::pasta_curves::{pallas, vesta};
-use voting_crypto_deps::voting::assign_free_advice;
 
 use crate::{
     gadgets::{

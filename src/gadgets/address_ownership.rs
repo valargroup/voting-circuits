@@ -11,6 +11,10 @@
 //! The same CommitIvk + pk_d derivation pattern is used in the main Orchard action
 //! circuit for spend authority and diversified address integrity.
 
+use voting_crypto_deps::composition::{
+    CommitIvkChip, OrchardCommitDomains, OrchardFixedBases, OrchardFixedBasesFull,
+    OrchardHashDomains,
+};
 use voting_crypto_deps::halo2_gadgets::{
     ecc::{chip::EccChip, NonIdentityPoint, Point, ScalarFixed, ScalarVar},
     sinsemilla::chip::SinsemillaChip,
@@ -20,10 +24,6 @@ use voting_crypto_deps::halo2_proofs::{
     plonk::Error,
 };
 use voting_crypto_deps::pasta_curves::pallas;
-use voting_crypto_deps::voting::{
-    CommitIvkChip, OrchardCommitDomains, OrchardFixedBases, OrchardFixedBasesFull,
-    OrchardHashDomains,
-};
 
 // ================================================================
 // SpendAuthG fixed-base multiplication
@@ -92,7 +92,7 @@ pub(crate) fn prove_address_ownership(
     g_d: &NonIdentityPoint<pallas::Affine, EccChip<OrchardFixedBases>>,
     pk_d_claimed: &NonIdentityPoint<pallas::Affine, EccChip<OrchardFixedBases>>,
 ) -> Result<AssignedCell<pallas::Base, pallas::Base>, Error> {
-    use voting_crypto_deps::voting::commit_ivk;
+    use voting_crypto_deps::composition::commit_ivk;
 
     let ivk = commit_ivk(
         sinsemilla_chip,

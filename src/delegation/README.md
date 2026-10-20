@@ -277,8 +277,8 @@ The `ivk = ⊥` case is handled internally by `CommitDomain::short_commit`: inco
 Where:
 - **ak_P** — the spend validating key (shared with condition 4). `ExtractP(ak_P)` extracts its x-coordinate.
 - **nk** — the nullifier deriving key (shared with conditions 2, 12, 14).
-- **rivk** — the CommitIvk randomness for external scope, extracted from the full viewing key via `fvk.rivk(Scope::External)`.
-- **rivk_internal** — the CommitIvk randomness for internal (change) scope, extracted via `fvk.rivk(Scope::Internal)`.
+- **rivk** — the CommitIvk randomness for external scope, extracted from the full viewing key via `voting_crypto_deps::viewing_randomness(&fvk, Scope::External)`.
+- **rivk_internal** — the CommitIvk randomness for internal (change) scope, extracted via `voting_crypto_deps::viewing_randomness(&fvk, Scope::Internal)`.
 - **g_d_signed** — the diversified generator from the note recipient's address.
 - **pk_d_signed** — the diversified transmission key from the note recipient's address.
 

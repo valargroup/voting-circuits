@@ -9,6 +9,9 @@
 use crate::ff::{Field, PrimeField};
 use crate::group::Curve;
 use lazy_static::lazy_static;
+use voting_crypto_deps::composition::{
+    spend_auth_generator as generator, SPEND_AUTH_U, SPEND_AUTH_Z,
+};
 use voting_crypto_deps::halo2_gadgets::{
     ecc::chip::{compute_lagrange_coeffs, H},
     utilities::decompose_running_sum::RunningSumConfig,
@@ -19,7 +22,6 @@ use voting_crypto_deps::halo2_proofs::{
     poly::Rotation,
 };
 use voting_crypto_deps::pasta_curves::{arithmetic::CurveAffine, pallas};
-use voting_crypto_deps::voting::{spend_auth_generator as generator, SPEND_AUTH_U, SPEND_AUTH_Z};
 
 use crate::params::{RANGE_CHECK_WORD_BITS, SHARE_VALUE_BITS};
 
