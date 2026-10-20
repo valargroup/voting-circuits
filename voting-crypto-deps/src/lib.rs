@@ -227,6 +227,7 @@ pub mod composition {
     };
 }
 
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
 pub fn transmission_point(key: &DiversifiedTransmissionKey) -> composition::NonIdentityPallasPoint {
     #[cfg(feature = "orchard")]
     {
@@ -237,9 +238,14 @@ pub fn transmission_point(key: &DiversifiedTransmissionKey) -> composition::NonI
         key.inner()
     }
 }
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
 pub fn rho_from_nullifier(nf: orchard::note::Nullifier) -> orchard::note::Rho {
     orchard::note::Rho::from_bytes(&nf.to_bytes()).unwrap()
 }
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand"),
+))]
 pub fn random_spending_key(rng: &mut impl rand::Rng) -> orchard::keys::SpendingKey {
     loop {
         let mut bytes = [0; 32];
@@ -249,6 +255,10 @@ pub fn random_spending_key(rng: &mut impl rand::Rng) -> orchard::keys::SpendingK
         }
     }
 }
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand"),
+))]
 pub fn dummy_merkle_path(rng: &mut impl rand::Rng) -> orchard::tree::MerklePath {
     use pasta_curves::{
         group::ff::{Field, PrimeField},
@@ -262,6 +272,10 @@ pub fn dummy_merkle_path(rng: &mut impl rand::Rng) -> orchard::tree::MerklePath 
         }),
     )
 }
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand"),
+))]
 pub fn dummy_note(
     rng: &mut impl rand::Rng,
     rho: Option<orchard::note::Rho>,
@@ -300,6 +314,10 @@ pub fn dummy_note(
     }
 }
 
+#[cfg(all(
+    any(feature = "orchard", feature = "lrz-orchard"),
+    any(feature = "rand", feature = "lrz-rand"),
+))]
 pub fn new_note(
     recipient: orchard::Address,
     value: orchard::value::NoteValue,
@@ -329,6 +347,7 @@ pub use orchard::keys::{CommitIvkRandomness, DiversifiedTransmissionKey, Nullifi
 #[cfg(feature = "orchard")]
 pub type DiversifiedTransmissionKey = NonIdentityPallasPoint;
 
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
 pub fn nullifier_key(key: &orchard::keys::FullViewingKey) -> NullifierDerivingKey {
     #[cfg(feature = "orchard")]
     {
@@ -339,6 +358,7 @@ pub fn nullifier_key(key: &orchard::keys::FullViewingKey) -> NullifierDerivingKe
         *key.nk()
     }
 }
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
 pub fn viewing_randomness(
     key: &orchard::keys::FullViewingKey,
     scope: orchard::keys::Scope,
@@ -352,6 +372,7 @@ pub fn viewing_randomness(
         key.rivk(scope)
     }
 }
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
 pub fn diversified_base(address: &orchard::Address) -> composition::NonIdentityPallasPoint {
     #[cfg(feature = "orchard")]
     {
@@ -366,6 +387,7 @@ pub fn diversified_base(address: &orchard::Address) -> composition::NonIdentityP
         address.g_d()
     }
 }
+#[cfg(any(feature = "orchard", feature = "lrz-orchard"))]
 pub fn transmission_key(address: &orchard::Address) -> DiversifiedTransmissionKey {
     #[cfg(feature = "orchard")]
     {
