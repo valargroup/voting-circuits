@@ -64,7 +64,7 @@ jobs:
         run: cargo check --workspace --all-targets --locked
 
       - name: Run short tests
-        run: cargo test --locked
+        run: cargo test --workspace --locked
 
       - name: Check minimal default VCT facade
         run: |
@@ -161,7 +161,7 @@ jobs:
         run: cargo check --workspace --all-targets --locked --no-default-features --features lrz
 
       - name: Run short tests
-        run: cargo test --locked --no-default-features --features lrz
+        run: cargo test --workspace --locked --no-default-features --features lrz
 
       - name: Test LRZ preparation fallback on all circuits
         run: cargo test --locked --no-default-features --features lrz prepared_proving_roundtrip -- --ignored --test-threads=1
@@ -214,7 +214,7 @@ jobs:
         run: cargo package --workspace --locked
 
       - name: Run short tests
-        run: cargo test --locked
+        run: cargo test --workspace --locked
 
       - name: Check default Zakura dependency graph
         run: |
