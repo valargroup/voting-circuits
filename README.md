@@ -43,7 +43,7 @@ packages, so Zakura consumers use a plain dependency declaration.
 LRZ consumers select the crates.io package family explicitly:
 
 ```toml
-voting-circuits = { version = "0.12", default-features = false, features = ["lrz"] }
+voting-circuits = { version = "0.14", default-features = false, features = ["lrz"] }
 ```
 
 The default Zakura features and `lrz` are mutually exclusive. Disabling default
@@ -115,7 +115,9 @@ Reusable halo2 gadgets that appear in more than one circuit:
 
 The default backend uses Zakura Orchard's `circuit-composition` interface,
 including typed witness adapters and selected Halo2 components. Its Common
-packages are pinned together to the published `4.0.0-rc3` release. The opt-in LRZ backend uses crates.io `orchard 0.16` with its
+packages are pinned together to the published `4.0.0` release. Wallet consumers sharing Orchard types can use
+`zakura-wallet-lib 0.1.0-rc9.2` with this Common family. The opt-in LRZ backend
+uses crates.io `orchard 0.16` with its
 `circuit` and `unstable-voting-circuits` features. The
 delegation bundle builder requires Ironwood V3 notes and constructs its
 synthetic signed and output notes as V3.

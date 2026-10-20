@@ -2,12 +2,21 @@
 
 ## Unreleased
 
+## v0.14.0
+
 ### Changed
 
-- Updated the default backend to published Common `4.0.0-rc3`'s Orchard facade with opt-in
-  circuit-composition witness adapters and Halo2 component access. Adapted spend randomizers and
-  note-value witnesses while retaining the independent LRZ backend and the
-  existing circuit constraints.
+- Updated the default backend to published Common 4.0.0 and
+  `voting-crypto-deps 0.4.0`. All Common packages resolve from crates.io;
+  no Git overrides are needed. The independent LRZ backend is retained.
+- Use Orchard's opt-in circuit-composition interface for existing Halo2
+  components and typed witness adapters for canonical private witness encodings.
+  Adapted spend randomizers and note-value witnesses without changing the
+  circuit constraints or verification-key fixtures.
+- The default backend's public Orchard types now belong to Common 4.
+  Consumers sharing notes, keys, or witnesses must use the same family;
+  `zakura-wallet-lib 0.1.0-rc9.2` supports it. Common 3 types are not
+  interchangeable with the new default types.
 
 ## v0.13.0
 
