@@ -246,7 +246,16 @@ pub fn rho_from_nullifier(nf: orchard::note::Nullifier) -> orchard::note::Rho {
     any(feature = "orchard", feature = "lrz-orchard"),
     any(feature = "rand", feature = "lrz-rand"),
 ))]
-pub fn random_spending_key(rng: &mut impl rand::Rng) -> orchard::keys::SpendingKey {
+/// Samples a spending key using fresh cryptographic randomness.
+///
+/// ```compile_fail
+/// fn insecure(rng: &mut impl voting_crypto_deps::rand::Rng) {
+///     voting_crypto_deps::random_spending_key(rng);
+/// }
+/// ```
+pub fn random_spending_key(
+    rng: &mut (impl rand::Rng + rand::CryptoRng),
+) -> orchard::keys::SpendingKey {
     loop {
         let mut bytes = [0; 32];
         rng.fill_bytes(&mut bytes);
@@ -276,8 +285,9 @@ pub fn dummy_merkle_path(rng: &mut impl rand::Rng) -> orchard::tree::MerklePath 
     any(feature = "orchard", feature = "lrz-orchard"),
     any(feature = "rand", feature = "lrz-rand"),
 ))]
+/// Creates a zero-value fixture note and its fresh keys; never represents a chain note.
 pub fn dummy_note(
-    rng: &mut impl rand::Rng,
+    rng: &mut (impl rand::Rng + rand::CryptoRng),
     rho: Option<orchard::note::Rho>,
     version: orchard::note::NoteVersion,
 ) -> (
@@ -318,12 +328,13 @@ pub fn dummy_note(
     any(feature = "orchard", feature = "lrz-orchard"),
     any(feature = "rand", feature = "lrz-rand"),
 ))]
+/// Creates a note with fresh cryptographic seed material, retrying invalid seeds.
 pub fn new_note(
     recipient: orchard::Address,
     value: orchard::value::NoteValue,
     rho: orchard::note::Rho,
     version: orchard::note::NoteVersion,
-    rng: &mut impl rand::Rng,
+    rng: &mut (impl rand::Rng + rand::CryptoRng),
 ) -> orchard::note::Note {
     loop {
         let mut bytes = [0; 32];

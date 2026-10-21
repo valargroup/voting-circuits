@@ -37,7 +37,7 @@ fn make_real_note_inputs(
     values: &[u64],
     scopes: &[Scope],
     imt_provider: &impl ImtProvider,
-    rng: &mut impl voting_circuits::rand::Rng,
+    rng: &mut (impl voting_circuits::rand::Rng + voting_circuits::rand::CryptoRng),
 ) -> (Vec<RealNoteInput>, pallas::Base) {
     let n = values.len();
     assert!((1..=4).contains(&n));

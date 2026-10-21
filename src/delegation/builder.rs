@@ -1139,7 +1139,7 @@ mod tests {
         scopes: &[Scope],
         note_version: NoteVersion,
         imt_provider: &impl ImtProvider,
-        rng: &mut impl Rng,
+        rng: &mut (impl Rng + CryptoRng),
     ) -> (Vec<RealNoteInput>, pallas::Base) {
         let n = values.len();
         assert!((1..=circuit::MAX_REAL_NOTES).contains(&n));
@@ -1223,7 +1223,7 @@ mod tests {
         values: &[u64],
         scopes: &[Scope],
         imt_provider: &impl ImtProvider,
-        rng: &mut impl Rng,
+        rng: &mut (impl Rng + CryptoRng),
     ) -> (Vec<RealNoteInput>, pallas::Base) {
         make_real_note_inputs_with_version(
             fvk,
@@ -1513,7 +1513,7 @@ mod tests {
     /// Builds a real Orchard `Note` for use as ground truth in drift tests.
     fn fixture_real_note(
         scope: Scope,
-        rng: &mut impl Rng,
+        rng: &mut (impl Rng + CryptoRng),
     ) -> (FullViewingKey, SpendValidatingKey, Note) {
         let sk = voting_crypto_deps::random_spending_key(rng);
         let fvk: FullViewingKey = (&sk).into();
