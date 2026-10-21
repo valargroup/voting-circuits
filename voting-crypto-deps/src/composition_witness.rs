@@ -143,6 +143,9 @@ pub fn note_trapdoor(
 }
 
 /// Returns the sign-corrected spending scalar used by the governance witness.
+///
+/// This scalar permits spending. Keep it in the trusted signer; never send it to
+/// an untrusted proving service or include it in public inputs.
 pub fn spend_authorizing_scalar(sk: &orchard::keys::SpendingKey) -> pallas::Scalar {
     #[cfg(feature = "orchard")]
     {
