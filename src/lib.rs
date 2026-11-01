@@ -14,6 +14,7 @@ pub use voting_crypto_deps::{
 };
 
 mod domain_tags;
+mod encoding;
 mod gadgets;
 mod params;
 mod protocol_hash;

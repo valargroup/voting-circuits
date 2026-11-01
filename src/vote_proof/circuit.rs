@@ -1584,7 +1584,7 @@ impl Instance {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::PrimeFieldBits;
+    use crate::encoding::byte_bits;
     use crate::ff::{Field, PrimeField};
     use crate::gadgets::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
     use crate::group::{Curve, Group};
@@ -1677,8 +1677,8 @@ mod tests {
         let ivk_v = domain
             .short_commit(
                 iter::empty()
-                    .chain(ak_x.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
-                    .chain(nk.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE)),
+                    .chain(byte_bits(ak_x.to_repr()).take(L_ORCHARD_BASE))
+                    .chain(byte_bits(nk.to_repr()).take(L_ORCHARD_BASE)),
                 &rivk_v,
             )
             .expect("CommitIvk should not produce ⊥ for random inputs");
