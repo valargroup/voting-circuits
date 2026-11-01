@@ -726,7 +726,7 @@ pub fn build_vote_proof_from_delegation(
 
     // ---- Fast key-chain consistency checks (instant, no circuit) ----
     {
-        use crate::ff::PrimeFieldBits;
+        use crate::encoding::byte_bits;
         use core::iter;
         use voting_crypto_deps::composition::{COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
         use voting_crypto_deps::halo2_gadgets::sinsemilla::primitives::CommitDomain;
@@ -752,8 +752,8 @@ pub fn build_vote_proof_from_delegation(
         let ivk = domain
             .short_commit(
                 iter::empty()
-                    .chain(ak_x.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
-                    .chain(vsk_nk.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE)),
+                    .chain(byte_bits(ak_x.to_repr()).take(L_ORCHARD_BASE))
+                    .chain(byte_bits(vsk_nk.to_repr()).take(L_ORCHARD_BASE)),
                 &rivk_v,
             )
             .expect("CommitIvk must not produce bottom");
