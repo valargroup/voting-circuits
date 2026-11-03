@@ -9,6 +9,10 @@
 
 use std::vec::Vec;
 
+use voting_crypto_deps::composition::{
+    assign_free_advice, AddChip, AddConfig, AddInstruction, CommitIvkChip, CommitIvkConfig,
+    OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains,
+};
 use voting_crypto_deps::halo2_gadgets::{
     ecc::{
         chip::{EccChip, EccConfig},
@@ -24,16 +28,6 @@ use voting_crypto_deps::halo2_gadgets::{
 use voting_crypto_deps::halo2_proofs::{
     circuit::{floor_planner, AssignedCell, Layouter, Value},
     plonk::{self, Advice, Column, ConstraintSystem, Fixed, Instance as InstanceColumn},
-};
-use voting_crypto_deps::orchard::{
-    circuit::{
-        commit_ivk::{CommitIvkChip, CommitIvkConfig},
-        gadget::{
-            add_chip::{AddChip, AddConfig},
-            assign_free_advice, AddInstruction,
-        },
-    },
-    constants::{OrchardCommitDomains, OrchardFixedBases, OrchardHashDomains},
 };
 use voting_crypto_deps::pasta_curves::{pallas, vesta};
 
@@ -1058,13 +1052,11 @@ mod tests {
     use crate::share_reveal::ShareRevealBundle;
     use crate::shares_hash::{share_commitment, shares_hash};
     use core::iter;
+    use voting_crypto_deps::composition::{COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
     use voting_crypto_deps::halo2_gadgets::sinsemilla::primitives::CommitDomain;
     use voting_crypto_deps::halo2_proofs::{
         dev::{metadata, MockProver},
         plonk::Any,
-    };
-    use voting_crypto_deps::orchard::constants::{
-        fixed_bases::COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE,
     };
     use voting_crypto_deps::pasta_curves::arithmetic::CurveAffine;
 

@@ -6,6 +6,7 @@
 //! so the same inputs always rebuild the same delegation commitment.
 
 use std::string::String;
+use voting_crypto_deps::CircuitValue as _;
 
 use crate::ff::{Field, FromUniformBytes, PrimeField};
 use crate::group::{Curve, GroupEncoding};
@@ -274,11 +275,13 @@ pub fn build_proxy_delegation_proof(
 
     let vsk = extract_vsk(sk);
     let fvk: FullViewingKey = sk.into();
-    let vsk_nk = fvk.nk().inner();
-    let rivk_v = fvk.rivk(Scope::External).inner();
+    let vsk_nk = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
+    let rivk_v = voting_crypto_deps::viewing_randomness(&fvk, Scope::External).circuit_value();
     let address = fvk.address_at(address_index, Scope::External);
-    let vpk_g_d = address.g_d().to_affine();
-    let vpk_pk_d = address.pk_d().inner().to_affine();
+    let vpk_g_d = voting_crypto_deps::diversified_base(&address).to_affine();
+    let vpk_pk_d =
+        voting_crypto_deps::transmission_point(&voting_crypto_deps::transmission_key(&address))
+            .to_affine();
     let (g_d_x, _) =
         point_xy(vpk_g_d).expect("Orchard address g_d is non-identity by construction");
     let (pk_d_x, _) =
@@ -726,7 +729,11 @@ mod tests {
 
             assert_eq!(
                 instance.van_nullifier,
-                van_nullifier_hash(fvk.nk().inner(), test_round_id(), zkp2_van(10_000))
+                van_nullifier_hash(
+                    voting_crypto_deps::nullifier_key(&fvk).circuit_value(),
+                    test_round_id(),
+                    zkp2_van(10_000)
+                )
             );
             assert_eq!(instance.vote_authority_note_new, zkp2_van(5_200));
 
