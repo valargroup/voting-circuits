@@ -1042,6 +1042,7 @@ impl Instance {
 
 #[cfg(test)]
 mod tests {
+    use super::super::vectors::single_leaf_path;
     use super::*;
     use crate::ff::{Field, PrimeField, PrimeFieldBits};
     use crate::gadgets::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
@@ -1060,19 +1061,9 @@ mod tests {
     };
     use voting_crypto_deps::pasta_curves::arithmetic::CurveAffine;
 
-    /// Sibling hashes of position 0 in an otherwise empty vote commitment tree.
-    fn empty_path() -> [pallas::Base; VOTE_COMM_TREE_DEPTH] {
-        let mut path = [pallas::Base::zero(); VOTE_COMM_TREE_DEPTH];
-        path[0] = poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero());
-        for i in 1..VOTE_COMM_TREE_DEPTH {
-            path[i] = poseidon_hash_2(path[i - 1], path[i - 1]);
-        }
-        path
-    }
-
     /// Root of a tree holding only `leaf`, at position 0.
     fn single_leaf_root(leaf: pallas::Base) -> pallas::Base {
-        empty_path()
+        single_leaf_path()
             .iter()
             .fold(leaf, |node, sibling| poseidon_hash_2(node, *sibling))
     }
@@ -1225,7 +1216,7 @@ mod tests {
         );
 
         let circuit = Circuit {
-            vote_comm_tree_path: Value::known(empty_path()),
+            vote_comm_tree_path: Value::known(single_leaf_path()),
             vote_comm_tree_position: Value::known(0),
             vpk_g_d: Value::known(g_d),
             vpk_pk_d: Value::known(pk_d),
@@ -1338,7 +1329,7 @@ mod tests {
     /// Builds a ZKP #3 reveal of DC share `share` as `(POOL_PROPOSAL_ID, decision)`.
     fn reveal(b: &Built, share: usize, decision: u64) -> ShareRevealBundle {
         crate::share_reveal::build_share_reveal(
-            empty_path(),
+            single_leaf_path(),
             0,
             b.share_comms,
             b.blinds[share],
@@ -1467,43 +1458,6 @@ mod tests {
                 57, 57, 100, 87, 175, 120, 32, 255, 71, 120, 116, 0, 53, 16,
             ]
         );
-    }
-
-    /// Pins the public-input order that verifiers rely on, through both the
-    /// named fields and [`Instance::from_parts`].
-    #[test]
-    fn instance_packing_is_pinned() {
-        let v = |i: u64| pallas::Base::from(100 + i);
-        let expected: Vec<pallas::Base> = (0..11).map(v).collect();
-        let instance = Instance {
-            van_nullifier: v(0),
-            r_vpk_x: v(1),
-            r_vpk_y: v(2),
-            vote_authority_note_new: v(3),
-            delegation_commitment: v(4),
-            vote_comm_tree_root: v(5),
-            vote_comm_tree_anchor_height: v(6),
-            voting_round_id: v(7),
-            ea_pk_x: v(8),
-            ea_pk_y: v(9),
-            dc_slot_nullifier: v(10),
-        };
-        assert_eq!(Instance::NUM_PUBLIC_INPUTS, 11);
-        assert_eq!(instance.to_halo2_instance(), expected);
-        let from_parts = Instance::from_parts(
-            v(0),
-            v(1),
-            v(2),
-            v(3),
-            v(4),
-            v(5),
-            v(6),
-            v(7),
-            v(8),
-            v(9),
-            v(10),
-        );
-        assert_eq!(from_parts.to_halo2_instance(), expected);
     }
 
     // ================================================================

@@ -436,8 +436,8 @@ fn build(label: &str, delegation: &Delegation) -> ProxyDelegationBundle {
 }
 
 /// Siblings of position 0 in an otherwise empty vote commitment tree, whose
-/// empty leaf is `Poseidon(0, 0)`.
-fn single_leaf_path() -> [pallas::Base; VOTE_COMM_TREE_DEPTH] {
+/// empty leaf is `Poseidon(0, 0)`. Shared with the circuit tests.
+pub(super) fn single_leaf_path() -> [pallas::Base; VOTE_COMM_TREE_DEPTH] {
     let mut path =
         [poseidon_hash_2(pallas::Base::zero(), pallas::Base::zero()); VOTE_COMM_TREE_DEPTH];
     for level in 1..VOTE_COMM_TREE_DEPTH {

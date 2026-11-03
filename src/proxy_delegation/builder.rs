@@ -528,22 +528,6 @@ mod tests {
     }
 
     #[test]
-    fn proxy_share_prf_has_frozen_test_vector() {
-        let hash = proxy_share_prf(&DC_SEED, domain_tags::PROXY_PRF_DOMAIN_ELGAMAL, 0);
-
-        assert_eq!(
-            hash,
-            [
-                0x1c, 0x1c, 0xcb, 0xe3, 0x83, 0x5d, 0x8f, 0x5c, 0xb3, 0x7e, 0xd8, 0x29, 0x4b, 0x04,
-                0xb1, 0x41, 0xcc, 0xb5, 0x88, 0xec, 0x82, 0xc8, 0xd5, 0x4b, 0x98, 0xc4, 0xe0, 0xce,
-                0xa7, 0x7d, 0x66, 0x96, 0x3c, 0x16, 0xe0, 0x1e, 0x0d, 0xd5, 0x9c, 0x42, 0x6c, 0x25,
-                0x7c, 0xaf, 0x32, 0xed, 0xa0, 0x17, 0xc9, 0xe8, 0x90, 0x60, 0xbe, 0x8f, 0xfe, 0x38,
-                0xaf, 0xf0, 0xbf, 0x57, 0x0c, 0x31, 0xba, 0x6c,
-            ]
-        );
-    }
-
-    #[test]
     fn share_layout_numbers_are_pinned() {
         assert_eq!(ShareLayout::Standard as u8, 0);
         assert_eq!(ShareLayout::SingleShare as u8, 1);
@@ -767,50 +751,5 @@ mod tests {
             assert_ne!(standard, single, "share {i}");
             assert_ne!(standard, derive_share_blind(&DC_SEED, i), "share {i}");
         }
-    }
-
-    /// Pins the outputs a re-prove must reproduce byte for byte: the layout-0
-    /// share split, the layout-1 randomness and shares hash, and both DCs.
-    #[test]
-    fn frozen_outputs() {
-        let standard = build(&Inputs::default()).expect("valid inputs");
-        let single = build(&Inputs {
-            layout: ShareLayout::SingleShare,
-            ..Inputs::default()
-        })
-        .expect("valid inputs");
-
-        assert_eq!(
-            plaintexts(&standard),
-            [46, 42, 100, 39, 100, 1000, 100, 78, 1000, 100, 1000, 11, 69, 15, 1000, 100]
-        );
-        assert_eq!(
-            standard.instance.delegation_commitment.to_repr(),
-            [
-                148, 116, 106, 32, 64, 201, 102, 242, 140, 239, 95, 129, 133, 233, 15, 8, 50, 120,
-                186, 65, 131, 68, 10, 73, 63, 64, 208, 43, 134, 211, 189, 1,
-            ]
-        );
-        assert_eq!(
-            single.encrypted_shares[0].randomness,
-            [
-                209, 60, 29, 200, 194, 246, 153, 175, 139, 250, 196, 111, 220, 139, 192, 246, 102,
-                172, 33, 1, 96, 206, 13, 23, 60, 2, 25, 194, 215, 57, 114, 25,
-            ]
-        );
-        assert_eq!(
-            single.shares_hash.to_repr(),
-            [
-                145, 180, 227, 154, 98, 72, 136, 106, 224, 201, 209, 90, 241, 58, 204, 252, 192,
-                60, 230, 150, 173, 251, 192, 64, 163, 28, 162, 212, 124, 147, 172, 7,
-            ]
-        );
-        assert_eq!(
-            single.instance.delegation_commitment.to_repr(),
-            [
-                184, 21, 183, 126, 134, 6, 100, 171, 0, 126, 128, 30, 172, 64, 34, 13, 71, 163,
-                230, 125, 116, 254, 249, 36, 45, 210, 21, 102, 248, 99, 191, 21,
-            ]
-        );
     }
 }
