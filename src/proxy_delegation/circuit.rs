@@ -1461,24 +1461,54 @@ mod tests {
         );
     }
 
-    /// Asserts that condition 11 rejected share `i` on its own El Gamal track
-    /// and that the other track holds.
-    fn assert_rejected_on_track_of(b: &Built, i: usize, what: &str) {
-        let fails = built_failures(b);
-        assert_rejected_privately(&fails, what);
+    /// Region of condition 11's `C1 = [r] G` output.
+    const C1_REGION: &str = "Base-field elem fixed-base mul (complete addition)";
+    /// Region of condition 11's `C2 = [v] G + [r] ea_pk` output.
+    const C2_REGION: &str = "complete point addition";
+
+    /// Returns share `i`'s El Gamal track columns, then the other track's.
+    fn tracks_of(i: usize) -> ([Column<Advice>; 10], [Column<Advice>; 10]) {
         let config = config();
-        let (own, other) = if i < ELGAMAL_TRACK_SPLIT {
+        if i < ELGAMAL_TRACK_SPLIT {
             (config.elgamal_advices, config.elgamal_advices_b)
         } else {
             (config.elgamal_advices_b, config.elgamal_advices)
-        };
+        }
+    }
+
+    /// Asserts that condition 11 rejected share `i`'s `C2` on its own El
+    /// Gamal track and that the other track holds.
+    fn assert_rejected_on_track_of(b: &Built, i: usize, what: &str) {
+        let fails = built_failures(b);
+        assert_rejected_privately(&fails, what);
+        let (own, other) = tracks_of(i);
         assert!(
-            fails_in(&fails, "complete point addition", &own),
+            fails_in(&fails, C2_REGION, &own),
             "{what}: condition 11 must fail on share {i}'s track: {fails:?}"
         );
         assert!(
-            !fails_in(&fails, "complete point addition", &other),
+            !fails_in(&fails, C2_REGION, &other),
             "{what}: the other track must hold: {fails:?}"
+        );
+    }
+
+    /// Asserts that condition 11 rejected share `i`'s `C1` alone, on its own
+    /// track, while every `C2` holds.
+    fn assert_c1_rejected_on_track_of(b: &Built, i: usize, what: &str) {
+        let fails = built_failures(b);
+        assert_rejected_privately(&fails, what);
+        let (own, other) = tracks_of(i);
+        assert!(
+            fails_in(&fails, C1_REGION, &own),
+            "{what}: share {i}'s C1 binding must fail: {fails:?}"
+        );
+        assert!(
+            !fails_in(&fails, C1_REGION, &other),
+            "{what}: the other track must hold: {fails:?}"
+        );
+        assert!(
+            !fails_in(&fails, C2_REGION, &own) && !fails_in(&fails, C2_REGION, &other),
+            "{what}: C2 must hold: {fails:?}"
         );
     }
 
@@ -1936,6 +1966,29 @@ mod tests {
         }
     }
 
+    /// Condition 11 binds `C1` on its own: with `C2` honest, a `C1` from other
+    /// randomness, or with only its `y` negated, is rejected on each side of
+    /// the track split.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_rejects_c1_alone_not_from_the_witnesses() {
+        let fx = Fixture::default();
+        for i in [ELGAMAL_TRACK_SPLIT - 1, ELGAMAL_TRACK_SPLIT] {
+            let mut b = build(&fx);
+            let (_, c2x, _, c2y) = b.ciphertext(i);
+            let other_r = b.randomness[i] + pallas::Base::one();
+            let share = pallas::Base::from(fx.shares[i]);
+            let (c1x, _, c1y, _) = elgamal_encrypt(share, other_r, b.ea_pk).unwrap();
+            b.set_ciphertext(i, (c1x, c2x, c1y, c2y));
+            assert_c1_rejected_on_track_of(&b, i, "C1 from other randomness");
+
+            let mut b = build(&fx);
+            let (c1x, c2x, c1y, c2y) = b.ciphertext(i);
+            b.set_ciphertext(i, (c1x, c2x, -c1y, c2y));
+            assert_c1_rejected_on_track_of(&b, i, "C1 with negated y");
+        }
+    }
+
     /// Condition 11 encrypts share `i` into ciphertext `i`, so the shares on
     /// either side of the track split cannot trade ciphertexts or weight.
     #[test]
@@ -1962,7 +2015,7 @@ mod tests {
             assert_rejected_privately(&fails, what);
             for track in [config.elgamal_advices, config.elgamal_advices_b] {
                 assert!(
-                    fails_in(&fails, "complete point addition", &track),
+                    fails_in(&fails, C2_REGION, &track),
                     "{what}: both tracks must fail: {fails:?}"
                 );
             }
