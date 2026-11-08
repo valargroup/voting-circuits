@@ -527,6 +527,33 @@ mod tests {
         core::array::from_fn(|i| bundle.encrypted_shares[i].plaintext_value)
     }
 
+    /// Pins layout 1's shares hash, which the frozen vectors bind only
+    /// through the DC, and its share 0 randomness from PRF domain 0x14. A
+    /// re-prove must reproduce both byte for byte.
+    #[test]
+    fn single_share_shares_hash_is_pinned() {
+        let single = build(&Inputs {
+            layout: ShareLayout::SingleShare,
+            ..Inputs::default()
+        })
+        .expect("valid inputs");
+
+        assert_eq!(
+            single.encrypted_shares[0].randomness,
+            [
+                209, 60, 29, 200, 194, 246, 153, 175, 139, 250, 196, 111, 220, 139, 192, 246, 102,
+                172, 33, 1, 96, 206, 13, 23, 60, 2, 25, 194, 215, 57, 114, 25,
+            ]
+        );
+        assert_eq!(
+            single.shares_hash.to_repr(),
+            [
+                145, 180, 227, 154, 98, 72, 136, 106, 224, 201, 209, 90, 241, 58, 204, 252, 192,
+                60, 230, 150, 173, 251, 192, 64, 163, 28, 162, 212, 124, 147, 172, 7,
+            ]
+        );
+    }
+
     #[test]
     fn share_layout_numbers_are_pinned() {
         assert_eq!(ShareLayout::Standard as u8, 0);
