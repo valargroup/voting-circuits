@@ -45,6 +45,10 @@ pub enum ShareLayout {
     Standard = 0,
     /// Layout 1: all of `w` in share 0 and zero in shares 1 to 15, as in
     /// ZKP #2's last-moment single-share mode.
+    ///
+    /// Condition 9 keeps that share below `2^30`, so this layout delegates at
+    /// most `2^30 - 1` ballots. ZKP #1 can mint a VAN of exactly `2^30`, which
+    /// only [`ShareLayout::Standard`] delegates in full.
     SingleShare = 1,
 }
 
@@ -92,7 +96,8 @@ pub enum ProxyDelegationBuildError {
     },
     /// The VAN weight is above `2^30` ballots, which no VAN can hold.
     InvalidVanBallots(u64),
-    /// A share is not below `2^30`.
+    /// A share is not below `2^30`, as with a single-share DC of `2^30`
+    /// ballots.
     InvalidShares(String),
     /// The election authority's public key is the identity point.
     InvalidElectionPublicKey,
@@ -213,8 +218,9 @@ fn derive_share_blind(dc_seed: &[u8; 32], share_index: u8) -> pallas::Base {
 /// * `delegate_index` - The delegate `d`, at least 1. The circuit does not
 ///   bound it; the chain counts the shares only if `d` is a registered
 ///   delegate.
-/// * `delegated_ballots` - The weight `w` to delegate, in `[1, W]`. The
-///   successor VAN keeps `W - w`.
+/// * `delegated_ballots` - The weight `w` to delegate, in `[1, W]`, and
+///   below `2^30` in [`ShareLayout::SingleShare`]. The successor VAN keeps
+///   `W - w`.
 /// * `dc_slot` - This DC's slot in `[0, 8)` among the delegations of the VAN
 ///   chain in this round.
 /// * `dc_seed` - The seed of every share secret.
