@@ -90,6 +90,15 @@ jobs:
       - name: Check verifying-key fingerprints
         run: cargo test --locked vk_fingerprint_unchanged -- --ignored --test-threads=1
 
+      # The ZKP4 soundness negatives, and ZKP2's proposal 0 rejection that
+      # keeps delegate pools ZKP4-only. A fingerprint update alone must not
+      # let a circuit change skip them. Reuses the short-test build.
+      - name: Run proxy delegation circuit tests
+        run: >-
+          cargo test --locked --lib -- --ignored --skip row_budget
+          proxy_delegation::circuit::tests::
+          vote_proof::circuit::tests::proposal_id_zero_fails
+
       - name: Reject missing or mixed backend selections
         run: |
           if cargo check --locked -p voting-crypto-deps --no-default-features; then
