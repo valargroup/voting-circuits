@@ -1042,16 +1042,19 @@ impl Instance {
 
 #[cfg(test)]
 mod tests {
+    use super::super::builder::{build_proxy_delegation_proof, ProxyDelegationBundle, ShareLayout};
     use super::super::vectors::single_leaf_path;
     use super::*;
     use crate::ff::{Field, PrimeField, PrimeFieldBits};
     use crate::gadgets::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
     use crate::gadgets::van_integrity::van_integrity_hash;
     use crate::group::{Curve, Group};
+    use crate::params::BALLOT_DIVISOR;
     use crate::protocol_hash::poseidon_hash_2;
     use crate::rand::rngs::OsRng;
     use crate::share_reveal::ShareRevealBundle;
     use crate::shares_hash::{share_commitment, shares_hash};
+    use crate::vote_proof::{derive_vote_authority_transition, van_nullifier_hash};
     use core::iter;
     use voting_crypto_deps::composition::{COMMIT_IVK_PERSONALIZATION, L_ORCHARD_BASE};
     use voting_crypto_deps::halo2_gadgets::sinsemilla::primitives::CommitDomain;
@@ -1059,7 +1062,9 @@ mod tests {
         dev::{metadata, MockProver},
         plonk::Any,
     };
+    use voting_crypto_deps::orchard::keys::{FullViewingKey, SpendingKey};
     use voting_crypto_deps::pasta_curves::arithmetic::CurveAffine;
+    use voting_crypto_deps::CircuitValue as _;
 
     /// Root of a tree holding only `leaf`, at position 0.
     fn single_leaf_root(leaf: pallas::Base) -> pallas::Base {
@@ -1134,11 +1139,47 @@ mod tests {
         }
     }
 
+    /// The keys, round and VAN `rand` behind a statement. Statements about one
+    /// VAN chain share them.
+    #[derive(Clone, Copy)]
+    struct Secrets {
+        vsk: pallas::Scalar,
+        nk: pallas::Base,
+        rivk: pallas::Scalar,
+        alpha: pallas::Scalar,
+        round: pallas::Base,
+        rand: pallas::Base,
+    }
+
+    impl Secrets {
+        /// Draws every secret at random.
+        fn random() -> Self {
+            let mut rng = OsRng;
+            Secrets {
+                vsk: pallas::Scalar::random(&mut rng),
+                nk: pallas::Base::random(&mut rng),
+                rivk: pallas::Scalar::random(&mut rng),
+                alpha: pallas::Scalar::random(&mut rng),
+                round: pallas::Base::random(&mut rng),
+                rand: pallas::Base::random(&mut rng),
+            }
+        }
+    }
+
     /// A circuit and instance built from a [`Fixture`], plus the share data
-    /// ZKP #3 needs to reveal a DC share.
+    /// ZKP #3 needs to reveal a DC share and the openings that malicious
+    /// witness tests rebuild public inputs from.
     struct Built {
         circuit: Circuit,
         instance: Instance,
+        secrets: Secrets,
+        /// x-coordinates of the voting address `(g_d, pk_d)`.
+        address_x: (pallas::Base, pallas::Base),
+        /// The spent VAN.
+        van_old: pallas::Base,
+        ea_pk: pallas::Affine,
+        delegate_index: u64,
+        randomness: [pallas::Base; 16],
         share_comms: [pallas::Base; 16],
         blinds: [pallas::Base; 16],
         /// `(x, y)` of each share's `C1`.
@@ -1150,18 +1191,77 @@ mod tests {
         dc: pallas::Base,
     }
 
+    impl Built {
+        /// The full-authority VAN of this address in this round with `weight`
+        /// and `rand`.
+        fn van(&self, weight: pallas::Base, rand: pallas::Base) -> pallas::Base {
+            van_integrity_hash(
+                self.address_x.0,
+                self.address_x.1,
+                weight,
+                self.round,
+                pallas::Base::from(MAX_PROPOSAL_AUTHORITY),
+                rand,
+            )
+        }
+
+        /// Replaces share `i`'s ciphertext witness and rebinds the public DC
+        /// to the new ciphertexts, so conditions 10 and 13 still hold.
+        fn set_ciphertext(&mut self, i: usize, (c1x, c2x, c1y, c2y): CiphertextCoords) {
+            self.c1[i] = (c1x, c1y);
+            self.c2[i] = (c2x, c2y);
+            self.circuit.enc_share_c1_x[i] = Value::known(c1x);
+            self.circuit.enc_share_c2_x[i] = Value::known(c2x);
+            self.circuit.enc_share_c1_y[i] = Value::known(c1y);
+            self.circuit.enc_share_c2_y[i] = Value::known(c2y);
+            let sh = shares_hash(
+                self.blinds,
+                self.c1.map(|c| c.0),
+                self.c2.map(|c| c.0),
+                self.c1.map(|c| c.1),
+                self.c2.map(|c| c.1),
+            );
+            self.share_comms = core::array::from_fn(|j| {
+                share_commitment(
+                    self.blinds[j],
+                    self.c1[j].0,
+                    self.c2[j].0,
+                    self.c1[j].1,
+                    self.c2[j].1,
+                )
+            });
+            self.dc = delegation_commitment_hash(self.round, sh, self.delegate_index as u32);
+            self.instance.delegation_commitment = self.dc;
+        }
+
+        /// Share `i`'s ciphertext coordinates, in [`elgamal_encrypt`] order.
+        fn ciphertext(&self, i: usize) -> CiphertextCoords {
+            (self.c1[i].0, self.c2[i].0, self.c1[i].1, self.c2[i].1)
+        }
+    }
+
+    /// `(c1_x, c2_x, c1_y, c2_y)`, as [`elgamal_encrypt`] returns them.
+    type CiphertextCoords = (pallas::Base, pallas::Base, pallas::Base, pallas::Base);
+
     /// Builds the witnesses and public inputs for `fx`, with fresh keys.
     fn build(fx: &Fixture) -> Built {
+        build_with(fx, Secrets::random())
+    }
+
+    /// Builds the witnesses and public inputs for `fx` from `secrets`.
+    fn build_with(fx: &Fixture, secrets: Secrets) -> Built {
         let mut rng = OsRng;
-        let vsk = pallas::Scalar::random(&mut rng);
-        let nk = pallas::Base::random(&mut rng);
-        let rivk = pallas::Scalar::random(&mut rng);
-        let alpha = pallas::Scalar::random(&mut rng);
+        let Secrets {
+            vsk,
+            nk,
+            rivk,
+            alpha,
+            round,
+            rand,
+        } = secrets;
         let (g_d, pk_d) = derive_voting_address(vsk, nk, rivk);
         let g_d_x = *g_d.coordinates().unwrap().x();
         let pk_d_x = *pk_d.coordinates().unwrap().x();
-        let round = pallas::Base::random(&mut rng);
-        let rand = pallas::Base::random(&mut rng);
         let w: u64 = fx.shares.iter().sum();
         let total = pallas::Base::from(fx.total);
         let remaining = fx
@@ -1255,6 +1355,12 @@ mod tests {
         Built {
             circuit,
             instance,
+            secrets,
+            address_x: (g_d_x, pk_d_x),
+            van_old,
+            ea_pk,
+            delegate_index: fx.delegate_index,
+            randomness,
             share_comms,
             blinds,
             c1: core::array::from_fn(|i| (c1x[i], c1y[i])),
@@ -1267,8 +1373,18 @@ mod tests {
     /// Runs MockProver on `fx` and returns the rendered failures, which are
     /// empty when the statement holds.
     fn failures(fx: &Fixture) -> Vec<String> {
-        let b = build(fx);
-        let prover = MockProver::run(K, &b.circuit, vec![b.instance.to_halo2_instance()])
+        built_failures(&build(fx))
+    }
+
+    /// Runs MockProver on `b` and returns the rendered failures.
+    fn built_failures(b: &Built) -> Vec<String> {
+        mock_failures(&b.circuit, &b.instance)
+    }
+
+    /// Runs MockProver on `circuit` against `instance` and returns the
+    /// rendered failures.
+    fn mock_failures(circuit: &Circuit, instance: &Instance) -> Vec<String> {
+        let prover = MockProver::run(K, circuit, vec![instance.to_halo2_instance()])
             .expect("synthesis succeeds");
         match prover.verify() {
             Ok(()) => vec![],
@@ -1281,6 +1397,11 @@ mod tests {
         failures(fx).is_empty()
     }
 
+    /// Returns whether `b` verifies under MockProver.
+    fn built_verifies(b: &Built) -> bool {
+        built_failures(b).is_empty()
+    }
+
     /// Configures the circuit, to name its columns in failure checks.
     fn config() -> Config {
         <Circuit as plonk::Circuit<pallas::Base>>::configure(&mut ConstraintSystem::default())
@@ -1290,10 +1411,75 @@ mod tests {
     /// `column`: `advices[9]` for condition 9, `elgamal_advices_b[9]` for
     /// condition 7.
     fn range_check_fails_on(fails: &[String], column: Column<Advice>) -> bool {
-        let column = format!("{:?}", metadata::Column::from(Column::<Any>::from(column)));
+        let column = column_name(column);
         fails
             .iter()
             .any(|f| f.contains(&column) && f.contains("'3 words range check'"))
+    }
+
+    /// The name MockProver gives `column` in its failures.
+    fn column_name(column: impl Into<Column<Any>>) -> String {
+        format!("{:?}", metadata::Column::from(column.into()))
+    }
+
+    /// Returns whether `fails` include the public input at `offset`.
+    fn fails_at_public_input(fails: &[String], offset: usize) -> bool {
+        let column = column_name(config().primary);
+        let row = format!("on row {offset})");
+        fails
+            .iter()
+            .any(|f| f.contains(&column) && f.contains(&row))
+    }
+
+    /// Returns whether `fails` include a cell of region `region` on one of
+    /// `columns`.
+    fn fails_in(fails: &[String], region: &str, columns: &[Column<Advice>]) -> bool {
+        let region = format!("('{region}')");
+        fails
+            .iter()
+            .any(|f| f.contains(&region) && columns.iter().any(|c| f.contains(&column_name(*c))))
+    }
+
+    /// Asserts that `fails` is non-empty and that every public input is
+    /// consistent, so a private condition rejected the witness.
+    fn assert_rejected_privately(fails: &[String], what: &str) {
+        assert!(!fails.is_empty(), "{what} must be rejected");
+        let instance = column_name(config().primary);
+        assert!(
+            !fails.iter().any(|f| f.contains(&instance)),
+            "{what}: every public input must hold: {fails:?}"
+        );
+    }
+
+    /// Asserts that condition 3's `pk_d = [ivk] g_d` check rejected `b`.
+    fn assert_rejected_by_address_ownership(b: &Built) {
+        let fails = built_failures(b);
+        assert_rejected_privately(&fails, "a foreign address");
+        assert!(
+            fails_in(&fails, "variable-base scalar mul", &config().advices),
+            "condition 3 must fail: {fails:?}"
+        );
+    }
+
+    /// Asserts that condition 11 rejected share `i` on its own El Gamal track
+    /// and that the other track holds.
+    fn assert_rejected_on_track_of(b: &Built, i: usize, what: &str) {
+        let fails = built_failures(b);
+        assert_rejected_privately(&fails, what);
+        let config = config();
+        let (own, other) = if i < ELGAMAL_TRACK_SPLIT {
+            (config.elgamal_advices, config.elgamal_advices_b)
+        } else {
+            (config.elgamal_advices_b, config.elgamal_advices)
+        };
+        assert!(
+            fails_in(&fails, "complete point addition", &own),
+            "{what}: condition 11 must fail on share {i}'s track: {fails:?}"
+        );
+        assert!(
+            !fails_in(&fails, "complete point addition", &other),
+            "{what}: the other track must hold: {fails:?}"
+        );
     }
 
     /// Asserts that `fx` fails condition 9 while condition 7 holds. Condition
@@ -1620,6 +1806,308 @@ mod tests {
     fn zkp4_rejects_slot_15() {
         assert_rejected_by_slot_range_check(15);
         assert_rejected_by_slot_range_check(16);
+    }
+
+    // ================================================================
+    // Malicious witnesses
+    //
+    // Each test starts from an honest statement and changes witnesses, then
+    // recomputes every public input those witnesses feed, so only the
+    // targeted condition can reject it.
+    // ================================================================
+
+    /// Condition 3: a prover who knows a VAN's opening but not its keys cannot
+    /// spend it, even with self-consistent nullifiers and `r_vpk`.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_rejects_spend_without_the_address_keys() {
+        let fx = Fixture::default();
+        let mut b = build(&fx);
+        let thief = Secrets::random();
+        b.circuit.vsk = Value::known(thief.vsk);
+        b.circuit.vsk_nk = Value::known(thief.nk);
+        b.circuit.rivk_v = Value::known(thief.rivk);
+        b.circuit.alpha_v = Value::known(thief.alpha);
+        let r_vpk = (spend_auth_g_affine() * (thief.vsk + thief.alpha)).to_affine();
+        b.instance.r_vpk_x = *r_vpk.coordinates().unwrap().x();
+        b.instance.r_vpk_y = *r_vpk.coordinates().unwrap().y();
+        b.instance.van_nullifier = van_nullifier_hash(thief.nk, b.round, b.van_old);
+        b.instance.dc_slot_nullifier =
+            dc_slot_nullifier_hash(thief.nk, b.round, b.secrets.rand, fx.dc_slot as u8);
+        assert_rejected_by_address_ownership(&b);
+    }
+
+    /// Condition 3 binds `nk` to the address, so a fresh `nk` cannot mint a
+    /// fresh VAN nullifier (a double spend) or slot nullifier (a ninth DC).
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_rejects_nk_not_bound_to_the_address() {
+        let fx = Fixture::default();
+        let mut b = build(&fx);
+        let nk = pallas::Base::random(&mut OsRng);
+        b.circuit.vsk_nk = Value::known(nk);
+        b.instance.van_nullifier = van_nullifier_hash(nk, b.round, b.van_old);
+        b.instance.dc_slot_nullifier =
+            dc_slot_nullifier_hash(nk, b.round, b.secrets.rand, fx.dc_slot as u8);
+        assert_rejected_by_address_ownership(&b);
+    }
+
+    /// Condition 4: the public `r_vpk` must be `[vsk + alpha_v] G` for the
+    /// witnessed `alpha_v`.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_rejects_r_vpk_not_from_the_spend_key() {
+        let mut b = build(&Fixture::default());
+        b.circuit.alpha_v = Value::known(b.secrets.alpha + pallas::Scalar::one());
+        let fails = built_failures(&b);
+        assert!(
+            fails_at_public_input(&fails, R_VPK_X_PUBLIC_OFFSET),
+            "{fails:?}"
+        );
+        assert!(
+            fails_at_public_input(&fails, R_VPK_Y_PUBLIC_OFFSET),
+            "{fails:?}"
+        );
+    }
+
+    /// Condition 1: a VAN must be in the tree. An inflated copy of a real VAN
+    /// is not, and neither is the real VAN at another position.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_rejects_van_outside_the_tree() {
+        let secrets = Secrets::random();
+        let real = build_with(&Fixture::default(), secrets);
+        assert!(built_verifies(&real));
+
+        let mut inflated = build_with(
+            &Fixture {
+                total: 1 << 30,
+                ..Fixture::default()
+            },
+            secrets,
+        );
+        inflated.instance.vote_comm_tree_root = real.instance.vote_comm_tree_root;
+        let mut moved = real;
+        moved.circuit.vote_comm_tree_position = Value::known(1);
+        for (b, what) in [(inflated, "inflated VAN"), (moved, "moved VAN")] {
+            let fails = built_failures(&b);
+            assert!(
+                fails_at_public_input(&fails, VOTE_COMM_TREE_ROOT_PUBLIC_OFFSET),
+                "{what}: {fails:?}"
+            );
+        }
+    }
+
+    /// Condition 11 on both El Gamal tracks: a ciphertext of a different value
+    /// is rejected at the edges of each track, even with the DC rebound to it.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_rejects_ciphertext_of_another_value() {
+        let fx = Fixture::default();
+        for i in [0, ELGAMAL_TRACK_SPLIT - 1, ELGAMAL_TRACK_SPLIT, 15] {
+            let mut b = build(&fx);
+            let forged = pallas::Base::from(fx.shares[i] + 1);
+            b.set_ciphertext(
+                i,
+                elgamal_encrypt(forged, b.randomness[i], b.ea_pk).unwrap(),
+            );
+            assert_rejected_on_track_of(&b, i, "another value");
+        }
+    }
+
+    /// Condition 11 binds `C1` to the witnessed randomness and both `y`
+    /// coordinates, on each side of the track split.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_rejects_ciphertext_not_from_the_witnesses() {
+        let fx = Fixture::default();
+        for i in [ELGAMAL_TRACK_SPLIT - 1, ELGAMAL_TRACK_SPLIT] {
+            let mut b = build(&fx);
+            let other_r = b.randomness[i] + pallas::Base::one();
+            let share = pallas::Base::from(fx.shares[i]);
+            b.set_ciphertext(i, elgamal_encrypt(share, other_r, b.ea_pk).unwrap());
+            assert_rejected_on_track_of(&b, i, "other randomness");
+
+            // Negating C2 gives a valid point that encrypts -share.
+            let mut b = build(&fx);
+            let (c1x, c2x, c1y, c2y) = b.ciphertext(i);
+            b.set_ciphertext(i, (c1x, c2x, c1y, -c2y));
+            assert_rejected_on_track_of(&b, i, "negated C2");
+        }
+    }
+
+    /// Condition 11 encrypts share `i` into ciphertext `i`, so the shares on
+    /// either side of the track split cannot trade ciphertexts or weight.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_rejects_shares_crossed_between_tracks() {
+        let fx = Fixture::default();
+        let (a, z) = (ELGAMAL_TRACK_SPLIT - 1, ELGAMAL_TRACK_SPLIT);
+        assert_ne!(fx.shares[a], fx.shares[z]);
+
+        let mut b = build(&fx);
+        let (ca, cz) = (b.ciphertext(a), b.ciphertext(z));
+        b.set_ciphertext(a, cz);
+        b.set_ciphertext(z, ca);
+        let swapped = b;
+
+        // Moving weight from share 7 to share 8 keeps conditions 8 and 9.
+        let mut moved = build(&fx);
+        moved.circuit.shares[a] = Value::known(pallas::Base::from(fx.shares[a] - 5));
+        moved.circuit.shares[z] = Value::known(pallas::Base::from(fx.shares[z] + 5));
+
+        let config = config();
+        for (b, what) in [(swapped, "swapped ciphertexts"), (moved, "moved weight")] {
+            let fails = built_failures(&b);
+            assert_rejected_privately(&fails, what);
+            for track in [config.elgamal_advices, config.elgamal_advices_b] {
+                assert!(
+                    fails_in(&fails, "complete point addition", &track),
+                    "{what}: both tracks must fail: {fails:?}"
+                );
+            }
+        }
+    }
+
+    /// Condition 10: the DC binds each share's blind.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_rejects_unbound_share_blind() {
+        let mut b = build(&Fixture::default());
+        b.circuit.share_blinds[ELGAMAL_TRACK_SPLIT] =
+            Value::known(b.blinds[ELGAMAL_TRACK_SPLIT] + pallas::Base::one());
+        let fails = built_failures(&b);
+        assert!(
+            fails_at_public_input(&fails, DELEGATION_COMMITMENT_PUBLIC_OFFSET),
+            "{fails:?}"
+        );
+    }
+
+    /// Condition 6: the successor keeps the old VAN's `rand`, which keys
+    /// every slot nullifier, and its address.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_successor_keeps_rand_and_address() {
+        let fx = Fixture::default();
+        let remaining = pallas::Base::from(fx.total - fx.shares.iter().sum::<u64>());
+
+        let mut fresh_rand = build(&fx);
+        fresh_rand.instance.vote_authority_note_new =
+            fresh_rand.van(remaining, pallas::Base::random(&mut OsRng));
+
+        let mut moved = build(&fx);
+        let other = build(&fx);
+        moved.instance.vote_authority_note_new = other.van(remaining, moved.secrets.rand);
+
+        for (b, what) in [(fresh_rand, "fresh rand"), (moved, "other address")] {
+            let fails = built_failures(&b);
+            assert!(
+                fails_at_public_input(&fails, VOTE_AUTHORITY_NOTE_NEW_PUBLIC_OFFSET),
+                "{what}: {fails:?}"
+            );
+        }
+    }
+
+    /// ZKP #4 -> ZKP #4: the successor's DC for an already used slot publishes
+    /// the same slot nullifier, so the chain rejects it, while a new slot
+    /// gives a new one. No other slot nullifier verifies for that slot.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_slot_nullifier_is_stable_across_successors() {
+        let secrets = Secrets::random();
+        let first_fx = Fixture::default();
+        let first = build_with(&first_fx, secrets);
+        assert!(built_verifies(&first));
+
+        let successor_fx = |dc_slot| Fixture {
+            total: first_fx.total - first_fx.shares.iter().sum::<u64>(),
+            dc_slot,
+            ..Fixture::default()
+        };
+        let replay = build_with(&successor_fx(first_fx.dc_slot), secrets);
+        assert_eq!(replay.van_old, first.instance.vote_authority_note_new);
+        assert!(built_verifies(&replay));
+        assert_eq!(
+            replay.instance.dc_slot_nullifier,
+            first.instance.dc_slot_nullifier
+        );
+        assert_ne!(replay.instance.van_nullifier, first.instance.van_nullifier);
+
+        let next = build_with(&successor_fx(first_fx.dc_slot + 1), secrets);
+        assert!(built_verifies(&next));
+        assert_ne!(
+            next.instance.dc_slot_nullifier,
+            first.instance.dc_slot_nullifier
+        );
+
+        let mut fresh = build_with(&successor_fx(first_fx.dc_slot), secrets);
+        fresh.instance.dc_slot_nullifier = dc_slot_nullifier_hash(
+            secrets.nk,
+            secrets.round,
+            pallas::Base::random(&mut OsRng),
+            first_fx.dc_slot as u8,
+        );
+        let fails = built_failures(&fresh);
+        assert!(
+            fails_at_public_input(&fails, DC_SLOT_NULLIFIER_PUBLIC_OFFSET),
+            "{fails:?}"
+        );
+    }
+
+    /// ZKP #2 -> ZKP #4: the VAN that ZKP #2 emits after a vote cannot
+    /// delegate, because condition 2 fixes full authority.
+    #[test]
+    #[ignore = "long-running Halo2 circuit test; run with `cargo test -- --ignored`"]
+    fn zkp4_rejects_van_after_zkp2_vote() {
+        let sk = SpendingKey::from_bytes([0x42; 32]).expect("valid test spending key");
+        let fvk: FullViewingKey = (&sk).into();
+        let nk = voting_crypto_deps::nullifier_key(&fvk).circuit_value();
+        let (rand, round) = (
+            pallas::Base::from(0xDEAD_u64),
+            pallas::Base::from(0xCAFE_u64),
+        );
+        let w = 10_000;
+        let transition = derive_vote_authority_transition(
+            &sk,
+            1,
+            w * BALLOT_DIVISOR,
+            rand,
+            round,
+            1,
+            MAX_PROPOSAL_AUTHORITY,
+        )
+        .expect("valid ZKP #2 transition");
+
+        let mut b = build_proxy_delegation_proof(
+            &sk,
+            1,
+            w,
+            rand,
+            round,
+            single_leaf_path(),
+            0,
+            123,
+            (spend_auth_g_affine() * pallas::Scalar::from(42u64)).to_affine(),
+            pallas::Scalar::from(7u64),
+            17,
+            4_800,
+            0,
+            [0x5e; 32],
+            ShareLayout::Standard,
+        )
+        .expect("valid proxy delegation inputs");
+        let failures = |b: &ProxyDelegationBundle| mock_failures(&b.circuit, &b.instance);
+        assert_eq!(
+            b.instance.vote_comm_tree_root,
+            single_leaf_root(transition.vote_authority_note_old)
+        );
+        assert!(failures(&b).is_empty(), "the full-authority VAN delegates");
+
+        let voted = transition.vote_authority_note_new;
+        b.circuit.vote_authority_note_old = Value::known(voted);
+        b.instance.vote_comm_tree_root = single_leaf_root(voted);
+        b.instance.van_nullifier = van_nullifier_hash(nk, round, voted);
+        assert_rejected_privately(&failures(&b), "the voted VAN");
     }
 
     // ================================================================
