@@ -15,7 +15,9 @@
   delegate index, the delegated ballots, a DC slot, a `dc_seed` and a
   `ShareLayout`, together with `create_proxy_delegation_proof`,
   `verify_proxy_delegation_proof` and the cached-key, warm-up and
-  preparation helpers the other circuits have. Every share secret is derived
+  preparation helpers the other circuits have. `ProxyDelegationProver` holds
+  the same keys in a caller-owned handle, so a phased prover can free them
+  after its delegation phase. Every share secret is derived
   from `dc_seed` through PRF domains `0x10` to `0x14` under the
   `"ZcashVoteProxyEx"` personalization, so rebuilding with the same inputs
   reproduces the same delegation commitment.

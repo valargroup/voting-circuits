@@ -36,7 +36,8 @@ static PROXY_DELEGATION_KEYS_CACHE: std::sync::OnceLock<Result<ProxyDelegationKe
 ///
 /// Params generation and key generation are deterministic and expensive enough
 /// to dominate the first proof or verification call. Compute the full tuple
-/// once per process so warm-up covers both the SRS params and the keys.
+/// once per process so warm-up covers both the SRS params and the keys. A
+/// prover that must free them between phases uses [`ProxyDelegationProver`].
 pub fn proxy_delegation_cached_keys() -> Result<&'static ProxyDelegationKeys, ProveError> {
     match PROXY_DELEGATION_KEYS_CACHE.get_or_init(|| {
         let params = proxy_delegation_params();
@@ -101,6 +102,78 @@ pub fn warm_proxy_delegation_keys() -> Result<(), ProveError> {
 pub fn prepare_proxy_delegation_proving() -> Result<bool, ProveError> {
     proxy_delegation_cached_keys()
         .map(|(params, _pk, _vk)| crate::prove_error::prepare_commitments(params))
+}
+
+// ================================================================
+// Caller-owned keys
+// ================================================================
+
+/// Proxy delegation params and keys owned by the caller.
+///
+/// The keys behind [`proxy_delegation_cached_keys`] live for the rest of the
+/// process. A phased prover instead loads this handle for its ZKP #4 phase
+/// and drops it before the next phase, which frees the proving key and any
+/// prepared tables. Key generation is deterministic, so these are the same
+/// keys, and a proof from either verifies under both.
+pub struct ProxyDelegationProver {
+    keys: ProxyDelegationKeys,
+}
+
+impl core::fmt::Debug for ProxyDelegationProver {
+    // Keys are large, so they are left out.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ProxyDelegationProver")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProxyDelegationProver {
+    /// Generates the params and keys, as the first cached-key call does,
+    /// without touching that cache.
+    pub fn load() -> Result<Self, ProveError> {
+        let params = proxy_delegation_params();
+        let (pk, vk) = proxy_delegation_proving_key(&params)?;
+        Ok(ProxyDelegationProver {
+            keys: (params, pk, vk),
+        })
+    }
+
+    /// Arms the prepared commitment tables on this handle's params and
+    /// returns whether they were built, with the costs and semantics of
+    /// [`prepare_proxy_delegation_proving`]. The tables are freed with the
+    /// handle.
+    pub fn prepare(&self) -> bool {
+        crate::prove_error::prepare_commitments(&self.keys.0)
+    }
+
+    /// Proves as [`create_proxy_delegation_proof`] does, with this handle's
+    /// keys.
+    pub fn create_proof(
+        &self,
+        circuit: Circuit,
+        instance: &Instance,
+    ) -> Result<Vec<u8>, ProveError> {
+        let (params, pk, _vk) = &self.keys;
+        create_proof_bytes(params, pk, circuit, &instance.to_halo2_instance())
+    }
+
+    /// Verifies as [`verify_proxy_delegation_proof`] does, with this handle's
+    /// keys. Its caller contract applies unchanged.
+    pub fn verify_proof(&self, proof: &[u8], instance: &Instance) -> Result<(), String> {
+        let (params, _pk, vk) = &self.keys;
+        verify_proof_bytes(
+            "proxy delegation",
+            params,
+            vk,
+            proof,
+            &instance.to_halo2_instance(),
+        )
+    }
+
+    /// The params and keys this handle owns.
+    pub fn keys(&self) -> &ProxyDelegationKeys {
+        &self.keys
+    }
 }
 
 // ================================================================
@@ -306,6 +379,23 @@ mod tests {
         assert!(matches!(err, ProveError::Halo2(plonk::Error::Synthesis)));
     }
 
+    /// The pinned fingerprint of the proxy delegation VK.
+    const EXPECTED_VK_FINGERPRINT: [u8; 32] = [
+        0x4e, 0xc7, 0xe2, 0x4b, 0x9b, 0xbf, 0x27, 0x58, 0x07, 0xa6, 0x13, 0xd3, 0xd3, 0xea, 0x94,
+        0xcf, 0xae, 0x21, 0x50, 0x83, 0xb7, 0xaa, 0x91, 0x37, 0x4b, 0x79, 0xde, 0x52, 0xbf, 0x7d,
+        0x35, 0xaa,
+    ];
+
+    /// Hashes the `PinnedVerificationKey` debug repr of `vk`.
+    fn vk_fingerprint(vk: &plonk::VerifyingKey<EqAffine>) -> Vec<u8> {
+        let pinned = format!("{:?}", vk.pinned());
+        blake2b_simd::Params::new()
+            .hash_length(32)
+            .hash(pinned.as_bytes())
+            .as_bytes()
+            .to_vec()
+    }
+
     /// VK-stability tripwire: hashes the `PinnedVerificationKey` debug repr. A
     /// mismatch means the circuit shape changed, so the verifying key must be
     /// regenerated and redistributed, or that it drifted unintentionally.
@@ -313,24 +403,48 @@ mod tests {
     #[ignore = "runs K=11 keygen; run with `cargo test -- --ignored vk_fingerprint_unchanged`"]
     fn vk_fingerprint_unchanged() {
         let (_, _, vk) = proxy_delegation_cached_keys().expect("proxy delegation keys");
-        let pinned = format!("{:?}", vk.pinned());
-        let fingerprint = blake2b_simd::Params::new()
-            .hash_length(32)
-            .hash(pinned.as_bytes());
-        let actual: &[u8] = fingerprint.as_bytes();
-
-        let expected: [u8; 32] = [
-            0x4e, 0xc7, 0xe2, 0x4b, 0x9b, 0xbf, 0x27, 0x58, 0x07, 0xa6, 0x13, 0xd3, 0xd3, 0xea,
-            0x94, 0xcf, 0xae, 0x21, 0x50, 0x83, 0xb7, 0xaa, 0x91, 0x37, 0x4b, 0x79, 0xde, 0x52,
-            0xbf, 0x7d, 0x35, 0xaa,
-        ];
+        let actual = vk_fingerprint(vk);
 
         assert_eq!(
             actual,
-            expected.as_slice(),
-            "proxy delegation VK fingerprint changed; if intentional, update `expected` to:\n{:02x?}",
+            EXPECTED_VK_FINGERPRINT.as_slice(),
+            "proxy delegation VK fingerprint changed; if intentional, update `EXPECTED_VK_FINGERPRINT` to:\n{:02x?}",
             actual,
         );
+    }
+
+    /// The caller-owned prover loads the pinned VK, and its proofs and the
+    /// cached keys' proofs verify under both. Dropping it and loading again
+    /// gives a working prover.
+    #[test]
+    #[ignore = "long-running real proof roundtrip; run with `cargo test -- --ignored owned_prover`"]
+    fn owned_prover_matches_the_cached_keys() {
+        fn is_send_sync<T: Send + Sync>() {}
+        is_send_sync::<ProxyDelegationProver>();
+
+        let ProxyDelegationBundle {
+            circuit, instance, ..
+        } = valid_bundle(ShareLayout::Standard);
+        let prover = ProxyDelegationProver::load().expect("load the owned keys");
+        assert_eq!(vk_fingerprint(&prover.keys().2), EXPECTED_VK_FINGERPRINT);
+        assert_eq!(prover.prepare(), !cfg!(feature = "lrz"));
+        let owned = prover
+            .create_proof(circuit.clone(), &instance)
+            .expect("owned proof");
+        prover
+            .verify_proof(&owned, &instance)
+            .expect("owned verifier");
+        verify_proxy_delegation_proof(&owned, &instance).expect("cached verifier");
+        drop(prover);
+
+        let cached = create_proxy_delegation_proof(circuit, &instance).expect("cached proof");
+        let prover = ProxyDelegationProver::load().expect("reload the owned keys");
+        prover
+            .verify_proof(&cached, &instance)
+            .expect("owned verifier, cached proof");
+        let mut wrong_dc = instance.clone();
+        wrong_dc.delegation_commitment += pallas::Base::one();
+        assert!(prover.verify_proof(&owned, &wrong_dc).is_err());
     }
 
     #[test]

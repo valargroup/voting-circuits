@@ -46,5 +46,5 @@ pub use circuit::{dc_slot_nullifier_hash, delegation_commitment_hash, Circuit, I
 pub use prove::{
     create_proxy_delegation_proof, prepare_proxy_delegation_proving, proxy_delegation_cached_keys,
     proxy_delegation_params, proxy_delegation_proving_key, verify_proxy_delegation_proof,
-    warm_proxy_delegation_keys, ProxyDelegationKeys,
+    warm_proxy_delegation_keys, ProxyDelegationKeys, ProxyDelegationProver,
 };
