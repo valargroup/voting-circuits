@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## v0.15.0
+
+### Changed
+
+- Updated the default backend to published Common 5.4.0 and
+  `voting-crypto-deps 0.5.0`. All Common packages resolve from crates.io;
+  no Git overrides are needed. The independent LRZ backend is retained.
+- Common 5 removes the field-bit API, so commitment inputs now expand each
+  canonical field encoding least-significant bit first. This yields the same
+  bits, and the circuit constraints and verification-key fixtures are unchanged.
+- The default backend's public Orchard types now belong to Common 5.
+  Consumers sharing notes, keys, or witnesses must use the same family;
+  `zakura-wallet-lib 0.1.0-rc9.7` supports it. Common 4 types are not
+  interchangeable with the new default types.
+
 ## v0.14.0
 
 ### Changed

@@ -6,20 +6,20 @@ used by Valar's shielded-voting crates.
 The default features select the Zakura packages:
 
 ```toml
-voting-crypto-deps = "0.4"
+voting-crypto-deps = "0.5"
 ```
 
 LRZ consumers select the crates.io Zcash packages explicitly:
 
 ```toml
-voting-crypto-deps = { version = "0.4", default-features = false, features = ["lrz"] }
+voting-crypto-deps = { version = "0.5", default-features = false, features = ["lrz"] }
 ```
 
 Consumers that only need the Vote Commitment Tree (VCT) dependency graph can
 select just Pasta and the Halo2 gadgets facade from the default Zakura family:
 
 ```toml
-voting-crypto-deps = { version = "0.4", default-features = false, features = ["vct"] }
+voting-crypto-deps = { version = "0.5", default-features = false, features = ["vct"] }
 ```
 
 The equivalent `lrz-vct` feature selects the LRZ packages. Individual default
@@ -49,7 +49,7 @@ witness encodings. This facade decodes those encodings at the circuit boundary;
 application voting policy remains in voting-circuits. LRZ retains its own native
 accessors behind the same facade functions.
 
-Version 0.4 selects the published Common 4.0.0 family. Applications exchanging
+Version 0.5 selects the published Common 5.4.0 family. Applications exchanging
 Orchard values with wallet-libraries must use that same registry family;
-`zakura-wallet-lib 0.1.0-rc9.2` allows Common 4.0.0. Do not mix these types with
-the Common 3 types exposed by facade 0.3.
+`zakura-wallet-lib 0.1.0-rc9.7` allows Common 5.4.0. Do not mix these types with
+the Common 4 types exposed by facade 0.4.

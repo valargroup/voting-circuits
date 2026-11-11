@@ -9,7 +9,8 @@
 use std::{iter, vec::Vec};
 use voting_crypto_deps::CircuitValue as _;
 
-use crate::ff::{Field, PrimeField, PrimeFieldBits};
+use crate::encoding::byte_bits;
+use crate::ff::{Field, PrimeField};
 use crate::group::{Curve, GroupEncoding};
 use crate::rand::{CryptoRng, Rng};
 use voting_crypto_deps::composition::{
@@ -126,15 +127,6 @@ fn point_x_opt(point: &pallas::Point) -> Option<pallas::Base> {
         .map(|coords| *coords.x())
 }
 
-// Expands a 32-byte compressed encoding into a stream of little-endian bits.
-// Orchard’s note commitment hashes `g_d` and `pk_d` as
-// little-endian bits of their 32-byte compressed encodings.
-fn byte_bits(bytes: [u8; 32]) -> impl Iterator<Item = bool> {
-    bytes
-        .into_iter()
-        .flat_map(|byte| (0..8).map(move |bit| ((byte >> bit) & 1) == 1))
-}
-
 // Expands a 64-bit little-endian integer into a stream of little-endian bits.
 // Orchard’s note commitment hashes `value` as a 64-bit little-endian integer.
 fn u64_bits(value: u64) -> impl Iterator<Item = bool> {
@@ -159,14 +151,14 @@ fn external_ivk_scalar(fvk: &FullViewingKey, ak: &SpendValidatingKey) -> pallas:
     let ivk = domain
         .short_commit(
             iter::empty()
-                .chain(ak_x.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
+                .chain(byte_bits(ak_x.to_repr()).take(L_ORCHARD_BASE))
                 .chain(
-                    voting_crypto_deps::nullifier_key(&fvk)
-                        .circuit_value()
-                        .to_le_bits()
-                        .iter()
-                        .by_vals()
-                        .take(L_ORCHARD_BASE),
+                    byte_bits(
+                        voting_crypto_deps::nullifier_key(&fvk)
+                            .circuit_value()
+                            .to_repr(),
+                    )
+                    .take(L_ORCHARD_BASE),
                 ),
             &rivk,
         )
@@ -263,8 +255,8 @@ fn note_commitment_point(
                 .chain(byte_bits(g_d.to_bytes()))
                 .chain(byte_bits(pk_d.to_bytes()))
                 .chain(u64_bits(value.inner()).take(L_VALUE))
-                .chain(rho.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
-                .chain(psi.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE)),
+                .chain(byte_bits(rho.to_repr()).take(L_ORCHARD_BASE))
+                .chain(byte_bits(psi.to_repr()).take(L_ORCHARD_BASE)),
             &rcm,
         )
         .into_option()
