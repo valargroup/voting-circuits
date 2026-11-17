@@ -1045,7 +1045,8 @@ mod tests {
     use super::super::builder::{build_proxy_delegation_proof, ProxyDelegationBundle, ShareLayout};
     use super::super::vectors::single_leaf_path;
     use super::*;
-    use crate::ff::{Field, PrimeField, PrimeFieldBits};
+    use crate::encoding::byte_bits;
+    use crate::ff::{Field, PrimeField};
     use crate::gadgets::elgamal::{base_to_scalar, elgamal_encrypt, spend_auth_g_affine};
     use crate::gadgets::van_integrity::van_integrity_hash;
     use crate::group::{Curve, Group};
@@ -1088,8 +1089,8 @@ mod tests {
         let ivk_v = CommitDomain::new(COMMIT_IVK_PERSONALIZATION)
             .short_commit(
                 iter::empty()
-                    .chain(ak_x.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE))
-                    .chain(nk.to_le_bits().iter().by_vals().take(L_ORCHARD_BASE)),
+                    .chain(byte_bits(ak_x.to_repr()).take(L_ORCHARD_BASE))
+                    .chain(byte_bits(nk.to_repr()).take(L_ORCHARD_BASE)),
                 &rivk_v,
             )
             .unwrap();
