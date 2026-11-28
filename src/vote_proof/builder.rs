@@ -71,23 +71,42 @@ const _: () = assert!(
     "need at least 7 remainder slots for PRF-weighted distribution"
 );
 
-/// Decompose `num_ballots` into [`NUM_SHARES`] shares using a greedy
-/// denomination strategy with randomized remainder distribution.
-///
-/// 1. **Greedy fill**: place the largest standard denominations that fit,
-///    consuming up to [`MAX_DENOM_SHARES`] slots.
-/// 2. **Remainder split**: if a non-zero remainder exists, distribute it
-///    across all free slots using deterministic PRF-derived weights.
-/// 3. The caller then shuffles the result via [`deterministic_shuffle`].
-///
-/// The randomized remainder prevents a single non-standard value from
-/// fingerprinting the voter's exact balance.
+/// [`denomination_split_with`], weighted by the vote PRF's remainder stream.
 fn denomination_split(
     num_ballots: u64,
     sk: &SpendingKey,
     round_id: pallas::Base,
     proposal_id: u64,
     van_commitment: pallas::Base,
+) -> [u64; NUM_SHARES] {
+    denomination_split_with(num_ballots, |slot| {
+        vote_share_prf(
+            sk,
+            domain_tags::VOTE_PRF_DOMAIN_REMAINDER,
+            round_id,
+            proposal_id,
+            van_commitment,
+            slot,
+        )
+    })
+}
+
+/// Decompose `num_ballots` into [`NUM_SHARES`] shares using a greedy
+/// denomination strategy with randomized remainder distribution.
+///
+/// 1. **Greedy fill**: place the largest standard denominations that fit,
+///    consuming up to [`MAX_DENOM_SHARES`] slots.
+/// 2. **Remainder split**: if a non-zero remainder exists, distribute it
+///    across all free slots, weighting share slot `s` by the 64-byte PRF
+///    output `remainder_prf(s)`.
+/// 3. The caller then shuffles the result via [`shuffle_with_seed`].
+///
+/// The randomized remainder prevents a single non-standard value from
+/// fingerprinting the voter's exact balance. ZKP #4 reuses this split with its
+/// own PRF.
+pub(crate) fn denomination_split_with(
+    num_ballots: u64,
+    remainder_prf: impl Fn(u8) -> [u8; 64],
 ) -> [u64; NUM_SHARES] {
     let mut shares = [0u64; NUM_SHARES];
     let mut remaining = num_ballots;
@@ -109,15 +128,7 @@ fn denomination_split(
     // PRF-derived weights so no single non-standard value fingerprints the
     // exact balance.
     if remaining > 0 {
-        distribute_remainder(
-            &mut shares[idx..],
-            remaining,
-            sk,
-            round_id,
-            proposal_id,
-            van_commitment,
-            idx as u8,
-        );
+        distribute_remainder(&mut shares[idx..], remaining, idx as u8, &remainder_prf);
     }
 
     shares
@@ -125,17 +136,16 @@ fn denomination_split(
 
 /// Spread `remainder` across `slots` using PRF-derived weights.
 ///
+/// `slots[i]` is share slot `base_index + i`, weighted by
+/// `remainder_prf(base_index + i)`.
 /// Each slot gets `floor(remainder * weight_i / total_weight)` with any
 /// rounding residual added one-per-slot to the first slots. Every slot
 /// receives at least 1 to maximize dispersion across all available slots.
 fn distribute_remainder(
     slots: &mut [u64],
     remainder: u64,
-    sk: &SpendingKey,
-    round_id: pallas::Base,
-    proposal_id: u64,
-    van_commitment: pallas::Base,
     base_index: u8,
+    remainder_prf: &impl Fn(u8) -> [u8; 64],
 ) {
     let n = slots.len() as u64;
     // The greedy phase fills at most MAX_DENOM_SHARES (9) slots, so
@@ -160,19 +170,13 @@ fn distribute_remainder(
     let distributable = remainder - n;
 
     // Derive a PRF weight per slot. Each weight is a 32-bit pseudorandom
-    // value from BLAKE2b, unique per (voter, VAN, proposal, slot index).
+    // value from BLAKE2b, unique per PRF stream and slot index (for votes,
+    // per voter, VAN, proposal and slot).
     // The `| 1` ensures no weight is zero (avoids a slot getting nothing).
     let mut weights = Vec::with_capacity(slots.len());
     let mut total_weight: u64 = 0;
     for i in 0..slots.len() {
-        let hash = vote_share_prf(
-            sk,
-            domain_tags::VOTE_PRF_DOMAIN_REMAINDER,
-            round_id,
-            proposal_id,
-            van_commitment,
-            base_index.wrapping_add(i as u8),
-        );
+        let hash = remainder_prf(base_index.wrapping_add(i as u8));
         let w = u32::from_le_bytes(hash[0..4].try_into().unwrap()) as u64 | 1;
         weights.push(w);
         total_weight += w;
@@ -197,7 +201,7 @@ fn distribute_remainder(
     }
 }
 
-/// Encrypted share output from the vote proof builder.
+/// Encrypted share output from the vote proof and proxy delegation builders.
 ///
 /// Contains the El Gamal ciphertext components (compressed point bytes),
 /// plaintext share value, and encryption randomness. Returned so the caller
@@ -214,7 +218,8 @@ pub struct EncryptedShareOutput {
     pub plaintext_value: u64,
     /// El Gamal randomness r (32 bytes, LE pallas::Base repr).
     /// Deterministically derived from (sk, share_layout, round_id, proposal_id,
-    /// van_commitment, share_index).
+    /// van_commitment, share_index) for a vote, and from (dc_seed, layout,
+    /// share_index) for a delegation commitment.
     pub randomness: [u8; 32],
 }
 
@@ -384,7 +389,7 @@ fn encrypted_share_coordinates(
 ///
 /// This replicates the sign-correction logic from `SpendAuthorizingKey::from`:
 /// `ask = PRF_expand(sk)`, then negate if the resulting ak has ỹ = 1.
-fn extract_vsk(sk: &SpendingKey) -> pallas::Scalar {
+pub(crate) fn extract_vsk(sk: &SpendingKey) -> pallas::Scalar {
     voting_crypto_deps::spend_authorizing_scalar(sk)
 }
 
@@ -610,6 +615,12 @@ fn deterministic_shuffle(
         van_commitment,
         0,
     );
+    shuffle_with_seed(shares, &seed);
+}
+
+/// Fisher-Yates shuffle of `shares`, drawing each index from the next 4 bytes
+/// of a 64-byte PRF `seed`. ZKP #4 reuses it with its own shuffle seed.
+pub(crate) fn shuffle_with_seed(shares: &mut [u64; NUM_SHARES], seed: &[u8; 64]) {
     for i in (1..NUM_SHARES).rev() {
         // Each iteration consumes the next 4-byte slice of the seed as a
         // random u32: i=15 reads seed[0..4], i=14 reads seed[4..8], …,

@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Added
+
+- Added the proxy delegation circuit in `voting_circuits::proxy_delegation`.
+  It spends a VAN that has not voted, emits a successor VAN with the weight
+  left over, and publishes a delegation commitment that the share reveal
+  circuit opens as proposal 0 into the delegate's pool. The statement has 14
+  conditions and 11 public inputs at K=11, and registers the
+  `"proxy delegation slot"` domain tag.
+- Added `proxy_delegation::build_proxy_delegation_proof`, which builds the
+  proxy delegation circuit and public inputs from a VAN spend witness, the
+  delegate index, the delegated ballots, a DC slot, a `dc_seed` and a
+  `ShareLayout`, together with `create_proxy_delegation_proof`,
+  `verify_proxy_delegation_proof` and the cached-key, warm-up and
+  preparation helpers the other circuits have. `ProxyDelegationProver` holds
+  the same keys in a caller-owned handle, so a phased prover can free them
+  after its delegation phase. Every share secret is derived
+  from `dc_seed` through PRF domains `0x10` to `0x14` under the
+  `"ZcashVoteProxyEx"` personalization, so rebuilding with the same inputs
+  reproduces the same delegation commitment.
+- Added the proxy delegation circuit vectors,
+  `test-vectors/proxy_delegation_circuit_v1.json`, which ship with the crate.
+  `zkp4_instance` pins the public-input packing and `share_secrets` pins the
+  share secrets derived from `dc_seed`. The tests recompute every case, and
+  `VOTING_CIRCUITS_WRITE_VECTORS=1 cargo test --locked --lib
+  write_circuit_vectors -- --ignored` rewrites the file as a contract change.
+
 ## v0.15.0
 
 ### Changed

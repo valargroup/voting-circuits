@@ -1,9 +1,10 @@
 //! VAN (Vote Authority Note) integrity gadget.
 //!
 //! Authoritative in-tree definition of the two-layer Poseidon hash used by
-//! both ZKP #1 (delegation, condition 7) and ZKP #2 (vote proof, conditions 2
-//! and 7). README prose should cite this module instead of restating the
-//! preimage shape as an independent source of truth:
+//! ZKP #1 (delegation, condition 7), ZKP #2 (vote proof, conditions 2 and 7)
+//! and ZKP #4 (proxy delegation, conditions 2 and 6). README prose should cite
+//! this module instead of restating the preimage shape as an independent
+//! source of truth:
 //!
 //! ```text
 //! van_comm_core = Poseidon(DOMAIN_VAN, g_d_x, pk_d_x, value,
@@ -99,7 +100,8 @@ pub(crate) fn van_integrity_hash(
 /// In ZKP #1 (delegation, condition 7) `proposal_authority` is
 /// `MAX_PROPOSAL_AUTHORITY` (fresh delegation). In ZKP #2 (vote
 /// proof) condition 2 passes `_old`, condition 7 passes `_new`
-/// (from condition 5's decrement).
+/// (from condition 5's decrement). ZKP #4 (proxy delegation) passes
+/// `MAX_PROPOSAL_AUTHORITY` in both conditions 2 and 6.
 pub(crate) fn van_integrity_poseidon(
     poseidon_config: &PoseidonConfig<pallas::Base, 3, 2>,
     layouter: &mut impl Layouter<pallas::Base>,

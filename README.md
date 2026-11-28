@@ -1,6 +1,6 @@
 # voting-circuits
 
-Governance ZKP circuits (delegation, vote proof, share reveal) for the Zcash shielded-voting protocol.
+Governance ZKP circuits (delegation, vote proof, share reveal, proxy delegation) for the Zcash shielded-voting protocol.
 
 Built with [Halo2](https://github.com/zcash/halo2) and
 [`orchard`](https://github.com/zcash/orchard) through the Zakura package
@@ -21,6 +21,7 @@ Ironwood Notes ──► Delegation (ZKP 1) ──► Vote Authority Notes (VANs
 1. [**Delegation**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) spends Ironwood V3 notes and mints VANs that carry delegated voting weight.
 2. [**Vote Proof**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) spends a VAN to cast a vote, producing El Gamal-encrypted shares and a vote commitment.
 3. [**Share Reveal**](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) opens a single encrypted share and proves it belongs to a registered vote commitment.
+4. [**Proxy Delegation**](src/proxy_delegation/mod.rs) spends a VAN that has not voted to delegate part of its weight to a public delegate. It produces a successor VAN and a delegation commitment, whose shares Share Reveal opens as proposal 0 into the delegate's pool.
 
 ## Usage
 
@@ -56,7 +57,7 @@ Protocol domain-separation tags are registered in [`src/domain_tags.rs`](src/dom
 
 ```
 src/
-├── lib.rs                        # Crate root — re-exports the three circuits
+├── lib.rs                        # Crate root — re-exports the four circuits
 ├── circuit/                      # Shared gadgets used across circuits
 │   ├── address_ownership.rs      #   CommitIvk + diversified-address integrity
 │   ├── elgamal.rs                #   El Gamal encryption (vote proof condition 11)
@@ -80,9 +81,15 @@ src/
 │   ├── authority_decrement.rs    #   Proposal-authority decrement gadget
 │   └── README.md                 #   Detailed specification
 │
-└── share_reveal/                 # ZKP #3 — Share Reveal circuit (K=10)
-    ├── circuit.rs                #   5-condition halo2 circuit
-    ├── builder.rs                #   Builder
+├── share_reveal/                 # ZKP #3 — Share Reveal circuit (K=10)
+│   ├── circuit.rs                #   5-condition halo2 circuit
+│   ├── builder.rs                #   Builder
+│   └── prove.rs                  #   Prove / verify helpers
+│
+└── proxy_delegation/             # ZKP #4 — Proxy Delegation circuit (K=11)
+    ├── mod.rs                    #   Statement (conditions) and exports
+    ├── circuit.rs                #   14-condition halo2 circuit
+    ├── builder.rs                #   Builder producing ProxyDelegationBundle
     └── prove.rs                  #   Prove / verify helpers
 
 benches/
@@ -110,6 +117,7 @@ Reusable halo2 gadgets that appear in more than one circuit:
 | Delegation | 12 | 4 096 | 15 | [ZKP #1](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp1-delegation-proof) |
 | Vote Proof | 11 | 2 048 | 12 | [ZKP #2](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp2-vote-proof) |
 | Share Reveal | 10 | 1 024 | 5 | [ZKP #3](https://valargroup.gitbook.io/shielded-vote-docs/zkp-specifications/zkp3-vote-reveal-proof) |
+| Proxy Delegation | 11 | 2 048 | 14 | [Module docs](src/proxy_delegation/mod.rs) |
 
 ## Dependency on Orchard
 
@@ -161,7 +169,7 @@ cargo test cost_breakdown -- --ignored --nocapture
 
 The long tests are slow because they synthesize Halo 2 circuits and run
 `MockProver` verification over the configured `K` domain (`delegation` uses
-K=12, `vote_proof` uses K=11, and `share_reveal` uses K=10). Some gadget
+K=12, `vote_proof` and `proxy_delegation` use K=11, and `share_reveal` uses K=10). Some gadget
 stress tests are also long-running because they repeat many `MockProver`
 checks, for example one K=12 shares-hash test runs 16 separate prover checks.
 The real proof roundtrip also performs proving-key/proof generation and
